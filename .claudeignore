@@ -1,0 +1,65 @@
+# ===== 个人笔记 =====
+# 你的个人学习备忘录，不需要 AI 读取
+notes/
+
+# ===== 依赖目录 =====
+# 这些目录包含大量第三方代码，不需要 Claude 读取
+node_modules/
+.pnp/
+.pnp.js
+
+# ===== 构建产物 =====
+# 生成的文件，不包含源代码信息
+dist/
+build/
+.next/
+out/
+.vite/
+*.tsbuildinfo
+
+# ===== 日志文件 =====
+# 运行时生成的日志，对理解项目无帮助
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ===== 测试相关 =====
+# 测试覆盖率报告、coverage 数据
+coverage/
+.nyc_output/
+
+# ===== 编辑器/IDE =====
+# 编辑器配置和临时文件
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ===== 系统文件 =====
+# macOS、Windows 系统文件
+.DS_Store
+Thumbs.db
+
+# ===== 大型资源文件 =====
+# 图片、视频等二进制文件，Claude 无法从中获取有用信息
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.mp4
+*.webm
+
+# ===== 锁文件（可选） =====
+# 如果你不需要 Claude 分析依赖版本，可以取消注释
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml

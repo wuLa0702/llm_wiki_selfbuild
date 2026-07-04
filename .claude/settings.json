@@ -1,0 +1,40 @@
+{
+  "rules": {
+    "sources": [
+      {
+        "type": "file",
+        "path": ".claude/rules/00-security.md"
+      },
+      {
+        "type": "file",
+        "path": ".claude/rules/01-coding-style.md"
+      },
+      {
+        "type": "file",
+        "path": ".claude/rules/10-api.md"
+      },
+      {
+        "type": "file",
+        "path": ".claude/rules/11-frontend.md"
+      },
+      {
+        "type": "file",
+        "path": ".claude/rules/12-backend.md"
+      },
+      {
+        "type": "file",
+        "path": ".claude/rules/20-testing.md"
+      }
+    ]
+  },
+  "mcpServers": {
+    "git-mcp": {
+      "command": "npx",
+      "args": [
+        "@selfagency/git-mcp",
+        "--repo-path",
+        "D:\\gtiHub\\llm_wiki_selfbuild"
+      ]
+    }
+  }
+}
