@@ -5,6 +5,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+def pytest_configure(config):
+    """注册自定义 markers"""
+    config.addinivalue_line(
+        "markers", "real: 真实 API 调用测试（需要 .env 中配置 API Key）"
+    )
+
+
 @pytest.fixture
 def client():
     """FastAPI 测试客户端"""
