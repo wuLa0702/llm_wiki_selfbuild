@@ -1,46 +1,163 @@
 """
 数据访问层 — SQLite 操作
 """
+import json
 import sqlite3
-from pathlib import Path
 
 
 class WikiRepository:
     """Wiki 元数据的数据访问层"""
 
-    def __init__(self, db_path: str = "wiki.db"):
+    def __init__(self, db_path: str = "wiki.db") -> None:
+        """
+        Args:
+            db_path: SQLite 数据库文件路径（支持 :memory: 用于测试）
+        """
         self.db_path = db_path
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
-    def _init_db(self):
+    def _init_db(self) -> None:
         """初始化数据库表"""
         from src.db.schema import CREATE_TABLES
+
         conn = self._get_connection()
         conn.executescript(CREATE_TABLES)
         conn.commit()
         conn.close()
 
-    def add_page(self, path: str, title: str, page_type: str, tags: list[str] = None):
-        """添加或更新页面记录"""
-        raise NotImplementedError("Phase 1 实现")
+    # ------------------------------------------------------------------
+    # 内部工具
+    # ------------------------------------------------------------------
 
-    def add_link(self, source: str, target: str):
-        """添加页面间链接关系"""
-        raise NotImplementedError("Phase 1 实现")
+    @staticmethod
+    def _tags_to_json(tags: list[str] | None) -> str:
+        """将标签列表序列化为 JSON 字符串"""
+        return json.dumps(tags or [], ensure_ascii=False)
 
-    def get_page(self, path: str) -> dict:
-        """获取页面信息"""
-        raise NotImplementedError("Phase 1 实现")
+    @staticmethod
+    def _tags_from_json(raw: str) -> list[str]:
+        """从 JSON 字符串反序列化标签列表"""
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def _log_operation(self, action: str, detail: dict | None = None) -> None:
+        """记录操作到 operation_log"""
+        conn = self._get_connection()
+        conn.execute(
+            "INSERT INTO operation_log (action, detail) VALUES (?, ?)",
+            (action, json.dumps(detail or {}, ensure_ascii=False)),
+        )
+        conn.commit()
+        conn.close()
+
+    # ------------------------------------------------------------------
+    # 页面 CRUD
+    # ------------------------------------------------------------------
+
+    def add_page(
+        self,
+        path: str,
+        title: str,
+        page_type: str,
+        tags: list[str] | None = None,
+        word_count: int = 0,
+    ) -> None:
+        """
+        添加或更新页面记录（UPSERT）
+
+        Args:
+            path: 页面相对路径，如 "entities/python.md"
+            title: 页面标题
+            page_type: 类型（entity / concept / source / query）
+            tags: 标签列表
+            word_count: 字数
+        """
+        conn = self._get_connection()
+        tags_json = self._tags_to_json(tags)
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO wiki_pages
+                (path, title, page_type, tags, word_count, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """,
+            (path, title, page_type, tags_json, word_count),
+        )
+        conn.commit()
+        conn.close()
+
+        self._log_operation("add_page", {"path": path, "title": title})
+
+    def add_link(self, source: str, target: str) -> None:
+        """
+        添加页面间链接关系（已存在则忽略）
+
+        Args:
+            source: 来源页面路径
+            target: 目标页面路径
+        """
+        conn = self._get_connection()
+        conn.execute(
+            "INSERT OR IGNORE INTO page_links (source_path, target_path) VALUES (?, ?)",
+            (source, target),
+        )
+        conn.commit()
+        conn.close()
+
+        self._log_operation("add_link", {"source": source, "target": target})
+
+    def get_page(self, path: str) -> dict | None:
+        """
+        获取页面信息（含反向链接）
+
+        Args:
+            path: 页面路径
+
+        Returns:
+            页面字典，不存在则返回 None
+        """
+        conn = self._get_connection()
+
+        row = conn.execute(
+            "SELECT * FROM wiki_pages WHERE path = ?", (path,)
+        ).fetchone()
+
+        if row is None:
+            conn.close()
+            return None
+
+        # 转为 dict
+        result = dict(row)
+        result["tags"] = self._tags_from_json(result["tags"])
+
+        # 反向链接：哪些页面指向了当前页面
+        backlinks = conn.execute(
+            "SELECT source_path FROM page_links WHERE target_path = ?",
+            (path,),
+        ).fetchall()
+        result["backlinks"] = [r["source_path"] for r in backlinks]
+
+        # 正向链接：当前页面指向了哪些页面
+        forward = conn.execute(
+            "SELECT target_path FROM page_links WHERE source_path = ?",
+            (path,),
+        ).fetchall()
+        result["links"] = [r["target_path"] for r in forward]
+
+        conn.close()
+        return result
 
     def search_pages(self, keyword: str) -> list[dict]:
-        """搜索页面"""
+        """搜索页面（Phase 2 实现）"""
         raise NotImplementedError("Phase 2 实现")
 
     def get_orphan_pages(self) -> list[str]:
-        """获取孤儿页"""
+        """获取孤儿页（Phase 2 实现）"""
         raise NotImplementedError("Phase 2 实现")
