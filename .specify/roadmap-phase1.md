@@ -1,5 +1,8 @@
 # Phase 1 MVP — 实现路线图
 
+> 📌 **注意**：完整开发路线图已移至 [roadmap.md](roadmap.md)，包含 Phase 1-5 全部阶段。
+> 本文档保留 Phase 1 的详细任务分解，作为日常开发参考。
+
 > 目标：从原始素材（raw/）"编译"为结构化 Wiki 页面（wiki/），完成 Ingest 端到端流程。
 
 ## 依赖链
