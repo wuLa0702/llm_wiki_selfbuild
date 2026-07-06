@@ -67,6 +67,85 @@ def test_chat_without_system_prompt(mocker):
 
 
 # ============================================================================
+# chat_template — ChatPromptTemplate 支持
+# ============================================================================
+
+
+def test_chat_template_returns_string(mocker):
+    """chat_template 使用模板变量生成消息并返回结果"""
+    from langchain_core.prompts import ChatPromptTemplate
+
+    template = ChatPromptTemplate.from_messages([
+        ("system", "You are {role}."),
+        ("human", "Tell me about {topic}"),
+    ])
+
+    mock_llm_instance = mocker.MagicMock()
+    mock_llm_instance.invoke.return_value = mocker.MagicMock(content="Result")
+    mocker.patch("src.llm.adapter.ChatOpenAI", return_value=mock_llm_instance)
+    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+
+    adapter = LLMAdapter("deepseek")
+    result = adapter.chat_template(template, role="teacher", topic="Python")
+
+    assert result == "Result"
+    call_messages = mock_llm_instance.invoke.call_args[0][0]
+    assert len(call_messages) == 2
+    assert "teacher" in call_messages[0].content
+    assert "Python" in call_messages[1].content
+
+
+def test_chat_template_missing_variable_raises(mocker):
+    """缺少模板变量时 LangChain 抛出 KeyError"""
+    from langchain_core.prompts import ChatPromptTemplate
+
+    template = ChatPromptTemplate.from_messages([
+        ("human", "Topic: {topic}"),
+    ])
+
+    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+    adapter = LLMAdapter("deepseek")
+
+    with pytest.raises(KeyError):
+        adapter.chat_template(template)
+
+
+def test_chat_template_empty_rendered_raises(mocker):
+    """模板渲染为空时抛出 ValueError"""
+    from langchain_core.prompts import ChatPromptTemplate
+
+    template = ChatPromptTemplate.from_messages([
+        ("system", ""),
+        ("human", ""),
+    ])
+
+    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+    adapter = LLMAdapter("deepseek")
+
+    with pytest.raises(ValueError, match="empty"):
+        adapter.chat_template(template)
+
+
+def test_chat_template_llm_error(mocker):
+    """模板调用 LLM 失败时抛 LLMError"""
+    from langchain_core.prompts import ChatPromptTemplate
+
+    template = ChatPromptTemplate.from_messages([
+        ("human", "Hello"),
+    ])
+
+    mock_llm_instance = mocker.MagicMock()
+    mock_llm_instance.invoke.side_effect = Exception("Boom")
+    mocker.patch("src.llm.adapter.ChatOpenAI", return_value=mock_llm_instance)
+    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+
+    adapter = LLMAdapter("deepseek")
+
+    with pytest.raises(LLMError, match="LLM call failed"):
+        adapter.chat_template(template)
+
+
+# ============================================================================
 # 边界条件 — DeepSeek
 # ============================================================================
 
@@ -231,6 +310,70 @@ def test_init_reads_default_provider_from_env(mocker):
 
     adapter = LLMAdapter()
     assert adapter.provider == "deepseek"
+
+
+# ============================================================================
+# chat_structured — 结构化 JSON 输出
+# ============================================================================
+
+
+def test_chat_structured_returns_dict(mocker):
+    """chat_structured 调用 LLM 并返回解析后的 dict"""
+    mocker.patch("src.llm.adapter.ChatOpenAI").return_value.invoke.return_value = (
+        mocker.MagicMock(content='{"key": "value"}')
+    )
+    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+
+    adapter = LLMAdapter("deepseek")
+    result = adapter.chat_structured(prompt="Give me JSON")
+
+    assert isinstance(result, dict)
+    assert result == {"key": "value"}
+
+
+def test_chat_structured_with_code_block(mocker):
+    """LLM 返回 ```json``` 代码块中的 JSON 也能解析"""
+    mocker.patch("src.llm.adapter.ChatOpenAI").return_value.invoke.return_value = (
+        mocker.MagicMock(content='```json\n{"a": 1}\n```')
+    )
+    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+
+    adapter = LLMAdapter("deepseek")
+    result = adapter.chat_structured(prompt="Give me JSON")
+    assert result == {"a": 1}
+
+
+def test_chat_structured_empty_prompt_raises(mocker):
+    """空 prompt 抛出 ValueError"""
+    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+    adapter = LLMAdapter("deepseek")
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        adapter.chat_structured("")
+
+
+def test_chat_structured_invalid_json_raises(mocker):
+    """LLM 返回无效 JSON 时抛出 LLMError"""
+    mocker.patch("src.llm.adapter.ChatOpenAI").return_value.invoke.return_value = (
+        mocker.MagicMock(content="not json at all")
+    )
+    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+
+    adapter = LLMAdapter("deepseek")
+    with pytest.raises(LLMError, match="Failed to parse"):
+        adapter.chat_structured(prompt="Give me JSON")
+
+
+def test_chat_structured_api_error_raises(mocker):
+    """API 调用失败抛出 LLMError"""
+    mocker.patch("src.llm.adapter.ChatOpenAI").return_value.invoke.side_effect = (
+        Exception("connection refused")
+    )
+    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+
+    adapter = LLMAdapter("deepseek")
+    with pytest.raises(LLMError, match="LLM call failed"):
+        adapter.chat_structured(prompt="Hello")
 
 
 # ============================================================================

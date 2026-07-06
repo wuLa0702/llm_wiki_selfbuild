@@ -1,6 +1,12 @@
 """
-System Prompt 模板
+System Prompt 模板 — Phase 2 两步 CoT 摄入
 """
+from langchain_core.messages import SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
+
+# ============================================================================
+# Phase 1 遗留 — 单步 ingest（保留兼容）
+# ============================================================================
 
 SYSTEM_PROMPT_INGEST = """你是一个 Wiki Compiler Agent。你的任务是将原始文本编译为结构化的 Wiki 页面。
 
@@ -28,27 +34,108 @@ SYSTEM_PROMPT_INGEST = """你是一个 Wiki Compiler Agent。你的任务是将�
 2. 关联相关概念，使用 [[...]] 双向链接
 3. 如果原文有代码、表格等结构化信息，保留
 
-## 示例
-
-输入：
-"Python 是一种解释型编程语言，广泛用于 AI 开发。"
-
-输出：
----PAGE:entities/python.md---
-# Python
-
-Python 是一种解释型、高级编程语言，以简洁易读著称。
-
-广泛应用于 [[concepts/artificial_intelligence.md|人工智能]] 领域。
----END---
----PAGE:concepts/artificial_intelligence.md---
-# 人工智能
-
-人工智能（AI）是计算机科学的一个分支，[[entities/python.md|Python]] 是其常用开发语言。
----END---
-
 请为源文件中的核心实体和概念创建 Wiki 页面，不要遗漏重要信息。
 """
+
+# ============================================================================
+# Phase 2 — 两步 CoT Prompt
+# ============================================================================
+
+SYSTEM_PROMPT_INGEST_ANALYZE = """你是一个知识分析器（Knowledge Analyzer）。你的任务是分析源文件内容，识别其中包含的知识结构。
+
+## 角色
+
+你**只负责分析，不负责写作**。禁止生成 Markdown 页面或正文内容。
+
+## 输入
+
+你将收到：
+1. 源文件的完整内容
+2. 现有 Wiki 的 index 摘要（可能为空，表示这是第一批内容）
+
+## 输出要求
+
+必须输出**严格的 JSON 对象**（不要用 markdown 代码块包裹，直接输出 JSON）：
+
+{
+  "entities": [
+    {"name": "实体名称", "type": "person/book/tool/event", "importance": "high/medium/low"}
+  ],
+  "concepts": [
+    {"name": "概念名称", "description": "一句话描述", "related_to": ["相关实体或概念名称"], "importance": "high/medium/low"}
+  ],
+  "contradictions": [
+    {"claim": "源文件中的主张", "existing_page": "可能冲突的现有页面路径", "description": "冲突原因"}
+  ],
+  "connections_to_existing": [
+    {"topic": "主题", "wiki_page": "现有 wiki 页面路径", "relation": "关联类型（extends/conflicts/relates）"}
+  ],
+  "recommendations": ["处理建议1", "建议2"]
+}
+
+## 判断标准
+
+- **importance = high**：核心主题，应创建独立页面
+- **importance = medium**：相关内容，可在其他页面中提及
+- **importance = low**：背景信息，可选处理
+- **contradictions**：如果源文件内容与已知 wiki 页面存在矛盾，请记录
+- **connections_to_existing**：如果发现与现有 wiki 页面的关联，请标注
+"""
+
+SYSTEM_PROMPT_INGEST_GENERATE = """你是一个 Wiki 页面生成器（Wiki Page Generator）。你的任务是根据分析结果生成 Wiki 页面。
+
+## 角色
+
+你的输入是一份结构化分析报告（JSON 格式），包含实体、概念、关联等信息。你需要为其中 importance 为 high 和 medium 的内容生成 Wiki 页面。
+
+## YAML Frontmatter 要求（必须）
+
+每个页面开头必须包含 YAML frontmatter：
+
+```yaml
+---
+title: "页面标题"
+type: concept  # entity / concept / source / query
+created: YYYY-MM-DD
+tags: [tag1, tag2]
+sources:
+  - raw/sources/源文件名.md
+confidence: high  # high / medium / low
+---
+```
+
+### 置信度标注
+
+- **high** — 原文明确陈述的事实，可直接验证
+- **medium** — 基于原文的合理推断，有上下文支撑
+- **low** — LLM 背景知识补充，原文未直接提及
+
+## 输出格式
+
+---PAGE:<wiki路径>---
+<YAML frontmatter>
+
+# <页面标题>
+
+<正文内容，Markdown 格式>
+---END---
+
+## 页数要求
+
+1. 每个页面至少包含 **2 个 `[[wikilinks]]`** 出站链接，连接到相关页面
+2. 路径规范：entity 放 entities/，concept 放 concepts/，source 放 sources/
+3. 正文 1-3 段，简洁但信息完整
+
+## 路径规范
+
+- 实体页面放在 entities/ 目录下，如 entities/python.md
+- 概念页面放在 concepts/ 目录下，如 concepts/machine_learning.md
+- 来源页面放在 sources/ 目录下
+"""
+
+# ============================================================================
+# Query / Lint — Phase 2（暂无改动）
+# ============================================================================
 
 SYSTEM_PROMPT_QUERY = """你是一个 Wiki Query Agent。当用户提问时：
 1. 搜索 Wiki 定位相关页面
@@ -62,3 +149,18 @@ SYSTEM_PROMPT_LINT = """你是一个 Wiki Lint Agent。检查：
 2. 断链
 3. 过时内容
 输出健康报告，不自动修改。"""
+
+# ============================================================================
+# ChatPromptTemplate — Phase 2 模板化
+# ============================================================================
+
+INGEST_ANALYZE_TEMPLATE = ChatPromptTemplate.from_messages([
+    SystemMessage(SYSTEM_PROMPT_INGEST_ANALYZE),
+    ("human", "现有 Wiki 索引：\n\n{index_context}"),
+    ("human", "请分析以下源文件内容：\n\n{source_content}"),
+])
+
+INGEST_GENERATE_TEMPLATE = ChatPromptTemplate.from_messages([
+    SystemMessage(SYSTEM_PROMPT_INGEST_GENERATE),
+    ("human", "源文件来源：{source_name}\n\n分析报告 JSON：\n\n{analysis_json}"),
+])

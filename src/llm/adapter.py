@@ -6,7 +6,10 @@ import os
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
 
 from src.core.logging_config import get_logger
 
@@ -143,7 +146,128 @@ class LLMAdapter:
         )
         return content
 
-    def chat_structured(self, prompt: str, schema: dict) -> dict:
-        """调用 LLM 并返回结构化输出（JSON Schema）"""
-        logger.warning("chat_structured 被调用，但尚未实现（Phase 2）")
-        raise NotImplementedError("Phase 2 实现")
+    def chat_template(self, template: ChatPromptTemplate, **kwargs: str) -> str:
+        """
+        使用 ChatPromptTemplate 调用 LLM
+
+        模板变量通过 kwargs 传入，自动填充。
+        变量缺失时 LangChain 会抛出 KeyError。
+
+        Args:
+            template: ChatPromptTemplate 实例
+            **kwargs: 模板变量名和值
+
+        Returns:
+            模型回复文本
+
+        Raises:
+            LLMError: API 调用失败时抛出
+            ValueError: prompt 为空时抛出
+        """
+        messages = template.format_messages(**kwargs)
+
+        # 校验非空
+        all_text = " ".join(m.content for m in messages if hasattr(m, "content"))
+        if not all_text.strip():
+            raise ValueError("Template rendered empty prompt")
+
+        logger.debug(
+            "chat_template 开始 | provider=%s messages=%d",
+            self.provider,
+            len(messages),
+        )
+
+        try:
+            response = self._llm.invoke(messages)
+        except Exception as exc:
+            logger.error(
+                "chat_template 失败 | provider=%s error=%s", self.provider, exc
+            )
+            raise LLMError(
+                f"LLM call failed for provider '{self.provider}': {exc}"
+            ) from exc
+
+        content = response.content if hasattr(response, "content") else str(response)
+        logger.info(
+            "chat_template 成功 | provider=%s output_len=%d",
+            self.provider,
+            len(content),
+        )
+        return content
+
+    def chat_structured(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        output_schema: type[BaseModel] | None = None,
+    ) -> dict:
+        """
+        调用 LLM 并返回结构化输出（JSON）
+
+        使用 LangChain JsonOutputParser：
+          1. 自动注入格式说明到 prompt
+          2. 调用 LLM
+          3. 解析 JSON（支持 ```json``` 代码块）
+          4. Pydantic 校验（如果提供 output_schema）
+
+        Args:
+            prompt: 用户提示
+            system_prompt: 系统提示词
+            output_schema: 可选的 Pydantic 模型类，用于校验输出
+
+        Returns:
+            解析后的 dict
+
+        Raises:
+            ValueError: prompt 为空
+            LLMError: API 调用失败或 JSON 解析失败
+        """
+        if not prompt or not prompt.strip():
+            raise ValueError("Prompt must not be empty")
+
+        parser = JsonOutputParser(pydantic_object=output_schema)
+        format_instructions = parser.get_format_instructions()
+        full_prompt = f"{prompt}\n\n{format_instructions}"
+
+        messages = []
+        if system_prompt:
+            messages.append(SystemMessage(content=system_prompt))
+        messages.append(HumanMessage(content=full_prompt))
+
+        logger.debug(
+            "chat_structured 开始 | provider=%s schema=%s",
+            self.provider,
+            output_schema.__name__ if output_schema else "dict",
+        )
+
+        try:
+            response = self._llm.invoke(messages)
+        except Exception as exc:
+            logger.error(
+                "chat_structured 调用失败 | provider=%s error=%s",
+                self.provider, exc,
+            )
+            raise LLMError(
+                f"LLM call failed for provider '{self.provider}': {exc}"
+            ) from exc
+
+        content = response.content if hasattr(response, "content") else str(response)
+
+        try:
+            result = parser.parse(content)
+        except Exception as exc:
+            logger.error(
+                "chat_structured JSON 解析失败 | provider=%s error=%s",
+                self.provider, exc,
+            )
+            raise LLMError(
+                f"Failed to parse structured output for "
+                f"provider '{self.provider}': {exc}"
+            ) from exc
+
+        logger.info(
+            "chat_structured 成功 | provider=%s keys=%s",
+            self.provider,
+            list(result.keys()) if isinstance(result, dict) else "?",
+        )
+        return result
