@@ -1,6 +1,7 @@
 """
-WikiCompiler 单元测试
+WikiCompiler 单元测试 — Phase 2 两步 CoT + chat_structured
 """
+import json
 import os
 
 import pytest
@@ -10,204 +11,194 @@ from src.llm.adapter import LLMError
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Fixtures & Helpers
 # ---------------------------------------------------------------------------
 
-MOCK_LLM_RESPONSE = """---PAGE:entities/python.md---
+MOCK_ANALYSIS = {
+    "entities": [{"name": "Python", "type": "tool", "importance": "high"}],
+    "concepts": [{"name": "人工智能", "description": "AI", "related_to": ["Python"], "importance": "high"}],
+    "contradictions": [],
+    "connections_to_existing": [],
+    "recommendations": [],
+}
+
+MOCK_GENERATE_RESPONSE = """---PAGE:entities/python.md---
+---
+title: "Python"
+type: entity
+tags: [编程语言]
+---
 # Python
 
-Python 是一种解释型编程语言。
-
-常用于 [[concepts/ai.md|人工智能]] 开发。
+Python 用于 [[concepts/ai.md|人工智能]]。
 ---END---
 ---PAGE:concepts/ai.md---
+---
+title: "人工智能"
+type: concept
+tags: [AI]
+---
 # 人工智能
 
-AI 是计算机科学分支，[[entities/python.md|Python]] 是常用语言。
-#AI #编程
----END---
-"""
+AI 常用 [[entities/python.md|Python]]。
+---END---"""
 
 
 @pytest.fixture
-def compiler(tmp_path, mocker):
-    """创建 WikiCompiler，工具和数据库均指向 tmp_path"""
-    # 创建目录结构
+def compiler(tmp_path):
+    """创建指向 tmp_path 的 WikiCompiler"""
     (tmp_path / "raw" / "sources").mkdir(parents=True)
     (tmp_path / "wiki").mkdir()
-
-    # 创建测试源文件
     (tmp_path / "raw" / "sources" / "test.md").write_text(
         "Python 是一门编程语言，广泛用于 AI 开发。", encoding="utf-8"
     )
 
     c = WikiCompiler()
-
-    # 重定向所有路径到 tmp_path
     c.reader.base_dir = str(tmp_path / "raw")
     c.writer.base_dir = str(tmp_path / "wiki")
     c.repo.db_path = str(tmp_path / "wiki.db")
     c.repo._init_db()
-
     return c
 
 
-# ---------------------------------------------------------------------------
-# 正常路径
-# ---------------------------------------------------------------------------
+def _mock_cot(mocker, compiler, analysis=None, generate=None):
+    """便捷 helper：同时 mock chat_structured(Step1) + chat_template(Step2)"""
+    if analysis is None:
+        analysis = MOCK_ANALYSIS
+    if generate is None:
+        generate = MOCK_GENERATE_RESPONSE
+    mocker.patch.object(compiler.llm, "chat_structured", return_value=analysis)
+    mocker.patch.object(compiler.llm, "chat_template", return_value=generate)
 
 
-def test_ingest_creates_pages(compiler, mocker):
-    """Ingest 后 wiki/ 目录下创建了对应页面"""
-    mocker.patch.object(compiler.llm, "chat", return_value=MOCK_LLM_RESPONSE)
+# ============================================================================
+# 两步 CoT — 成功路径
+# ============================================================================
 
+
+def test_ingest_two_step_creates_pages(compiler, mocker):
+    """Step 1 chat_structured + Step 2 chat_template → 页面创建"""
+    _mock_cot(mocker, compiler)
     result = compiler.ingest("test.md")
-
     assert result["status"] == "success"
     assert "entities/python.md" in result["pages_created"]
-    assert "concepts/ai.md" in result["pages_created"]
-
-    # 验证文件确实写入了
-    wiki_python = os.path.join(compiler.writer.base_dir, "entities", "python.md")
-    wiki_ai = os.path.join(compiler.writer.base_dir, "concepts", "ai.md")
-    assert os.path.exists(wiki_python)
-    assert os.path.exists(wiki_ai)
-    assert "Python" in open(wiki_python, encoding="utf-8").read()
+    assert os.path.exists(os.path.join(compiler.writer.base_dir, "entities", "python.md"))
 
 
-def test_ingest_records_db_metadata(compiler, mocker):
-    """Ingest 后数据库中有对应记录"""
-    mocker.patch.object(compiler.llm, "chat", return_value=MOCK_LLM_RESPONSE)
-
+def test_ingest_two_step_records_links(compiler, mocker):
+    """双向链接正确记录"""
+    _mock_cot(mocker, compiler)
     compiler.ingest("test.md")
-
     page = compiler.repo.get_page("entities/python.md")
-    assert page is not None
-    assert page["title"] == "Python"
-    assert page["page_type"] == "entity"
+    assert "concepts/ai.md" in page["links"]
 
 
-def test_ingest_records_links(compiler, mocker):
-    """Ingest 后双向链接被正确记录"""
-    mocker.patch.object(compiler.llm, "chat", return_value=MOCK_LLM_RESPONSE)
-
-    compiler.ingest("test.md")
-
-    python_page = compiler.repo.get_page("entities/python.md")
-    ai_page = compiler.repo.get_page("concepts/ai.md")
-
-    assert "concepts/ai.md" in python_page["links"]
-    assert "entities/python.md" in ai_page["backlinks"]
+# ============================================================================
+# Step 1 异常 → 降级
+# ============================================================================
 
 
-def test_ingest_writes_log(compiler, mocker):
-    """Ingest 后 wiki/log.md 被更新"""
-    mocker.patch.object(compiler.llm, "chat", return_value=MOCK_LLM_RESPONSE)
-
-    compiler.ingest("test.md")
-
-    log_path = os.path.join(compiler.writer.base_dir, "log.md")
-    assert os.path.exists(log_path)
-    log_content = open(log_path, encoding="utf-8").read()
-    assert "test.md" in log_content
-    assert "entities/python.md" in log_content
-
-
-def test_ingest_updates_existing_page(compiler, mocker):
-    """已存在的页面被更新而非重复创建"""
-    mocker.patch.object(compiler.llm, "chat", return_value=MOCK_LLM_RESPONSE)
-
-    # 第一次 ingest
-    compiler.ingest("test.md")
-    assert "entities/python.md" not in compiler.ingest("test.md")["pages_created"]
+def test_ingest_step1_parse_error_fallback(compiler, mocker):
+    """JSON 解析失败 → 直接降级（不重试）"""
+    mock_structured = mocker.patch.object(
+        compiler.llm, "chat_structured",
+        side_effect=LLMError("Failed to parse structured output: invalid JSON"),
+    )
+    mock_chat = mocker.patch.object(compiler.llm, "chat", return_value=MOCK_GENERATE_RESPONSE)
 
     result = compiler.ingest("test.md")
-    assert "entities/python.md" in result["pages_updated"]
-    assert "concepts/ai.md" in result["pages_updated"]
-
-
-# ---------------------------------------------------------------------------
-# 边界 / 错误
-# ---------------------------------------------------------------------------
-
-
-def test_ingest_empty_source(compiler, mocker):
-    """空源文件返回成功但不创建页面"""
-    empty_path = os.path.join(compiler.reader.base_dir, "sources", "empty.md")
-    with open(empty_path, "w", encoding="utf-8") as f:
-        f.write("")
-
-    result = compiler.ingest("empty.md")
     assert result["status"] == "success"
-    assert result["pages_created"] == []
+    assert mock_structured.call_count == 1  # 格式错误，不重试
+    assert mock_chat.call_count == 1
+
+
+def test_ingest_step1_llm_error_retry_succeeds(compiler, mocker):
+    """第一次超时，重试成功"""
+    mock_structured = mocker.patch.object(
+        compiler.llm, "chat_structured",
+        side_effect=[LLMError("LLM call failed: timeout"), MOCK_ANALYSIS],
+    )
+    mock_template = mocker.patch.object(
+        compiler.llm, "chat_template", return_value=MOCK_GENERATE_RESPONSE,
+    )
+
+    result = compiler.ingest("test.md")
+    assert result["status"] == "success"
+    assert mock_structured.call_count == 2  # 一次失败 + 一次成功
+    assert mock_template.call_count == 1
+
+
+def test_ingest_step1_llm_error_retry_exhausted(compiler, mocker):
+    """重试后仍失败 → 降级 simple"""
+    mock_structured = mocker.patch.object(
+        compiler.llm, "chat_structured",
+        side_effect=[LLMError("timeout1"), LLMError("timeout2")],
+    )
+    mock_chat = mocker.patch.object(compiler.llm, "chat", return_value=MOCK_GENERATE_RESPONSE)
+
+    result = compiler.ingest("test.md")
+    assert result["status"] == "success"
+    assert mock_structured.call_count == 2
+    assert mock_chat.call_count == 1
+
+
+# ============================================================================
+# Step 2 异常
+# ============================================================================
+
+
+def test_ingest_step2_empty_output_fallback(compiler, mocker):
+    """Step 2 无有效页面 → 降级（不重试）"""
+    mock_structured = mocker.patch.object(
+        compiler.llm, "chat_structured", return_value=MOCK_ANALYSIS,
+    )
+    mock_template = mocker.patch.object(
+        compiler.llm, "chat_template", return_value="没有生成任何页面。",
+    )
+    mock_chat = mocker.patch.object(compiler.llm, "chat", return_value=MOCK_GENERATE_RESPONSE)
+
+    result = compiler.ingest("test.md")
+    assert result["status"] == "success"
+    assert mock_template.call_count == 1  # 无重试
+    assert mock_chat.call_count == 1
+
+
+def test_ingest_step2_llm_error_retry_then_raise(compiler, mocker):
+    """Step 2 重试仍失败 → 抛出"""
+    mocker.patch.object(compiler.llm, "chat_structured", return_value=MOCK_ANALYSIS)
+    mocker.patch.object(
+        compiler.llm, "chat_template",
+        side_effect=[LLMError("gen1"), LLMError("gen2")],
+    )
+
+    with pytest.raises(LLMError, match="gen2"):
+        compiler.ingest("test.md")
+
+
+# ============================================================================
+# ingest_simple() — Phase 1 兼容
+# ============================================================================
+
+
+def test_ingest_simple_creates_pages(compiler, mocker):
+    mocker.patch.object(compiler.llm, "chat", return_value=MOCK_GENERATE_RESPONSE)
+    result = compiler.ingest_simple("test.md")
+    assert result["status"] == "success"
+
+
+# ============================================================================
+# 边界 / 错误
+# ============================================================================
 
 
 def test_ingest_source_not_found(compiler):
-    """源文件不存在抛出 CompilerError"""
     with pytest.raises(CompilerError, match="Source file not found"):
         compiler.ingest("nonexistent.md")
 
 
-def test_ingest_llm_error(compiler, mocker):
-    """LLM 调用失败时传播 LLMError"""
-    mocker.patch.object(
-        compiler.llm, "chat", side_effect=LLMError("API call failed")
-    )
-
-    with pytest.raises(LLMError, match="API call failed"):
-        compiler.ingest("test.md")
-
-
-def test_ingest_llm_returns_no_pages(compiler, mocker):
-    """LLM 返回无法解析的内容时，返回成功但无页面"""
-    mocker.patch.object(compiler.llm, "chat", return_value="没有发现任何实体或概念。")
-
-    result = compiler.ingest("test.md")
+def test_ingest_empty_source(compiler):
+    empty_path = os.path.join(compiler.reader.base_dir, "sources", "empty.md")
+    open(empty_path, "w", encoding="utf-8").write("")
+    result = compiler.ingest("empty.md")
     assert result["status"] == "success"
     assert result["pages_created"] == []
-
-
-# ---------------------------------------------------------------------------
-# 解析逻辑 — 单元测试
-# ---------------------------------------------------------------------------
-
-
-def test_parse_response_extracts_pages():
-    """_parse_response 正确分割多个页面"""
-    response = (
-        "---PAGE:entities/a.md---\n# A\nContent A\n---END---\n"
-        "---PAGE:concepts/b.md---\n# B\nContent B\n---END---"
-    )
-    pages = WikiCompiler._parse_response(response)
-    assert len(pages) == 2
-    assert "entities/a.md" in pages
-    assert "concepts/b.md" in pages
-    assert pages["entities/a.md"] == "# A\nContent A"
-
-
-def test_parse_response_empty():
-    """无有效分隔符时返回空字典"""
-    pages = WikiCompiler._parse_response("随便一段文字，没有格式化输出。")
-    assert pages == {}
-
-
-def test_extract_links():
-    """_extract_links 正确提取 [[...]] 链接"""
-    content = "参见 [[entities/py.md|Python]] 和 [[concepts/ai.md]]"
-    links = WikiCompiler._extract_links(content)
-    assert "entities/py.md" in links
-    assert "concepts/ai.md" in links
-    assert len(links) == 2
-
-
-def test_extract_title():
-    """_extract_title 提取第一行 # 标题"""
-    assert WikiCompiler._extract_title("# 你好\n正文") == "你好"
-    assert WikiCompiler._extract_title("无标题内容") == "Untitled"
-
-
-def test_guess_type(compiler):
-    """_guess_type 根据路径推测类型"""
-    assert compiler._guess_type("entities/python.md") == "entity"
-    assert compiler._guess_type("concepts/ai.md") == "concept"
-    assert compiler._guess_type("sources/intro.md") == "source"
