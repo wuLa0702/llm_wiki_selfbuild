@@ -361,6 +361,76 @@ confidence: high
 
 ---
 
+### 16. LangChain 在本项目中的角色
+
+**项目定位**：本项目使用 LangChain 作为 LLM 调用的**标准封装层**，而非全套框架。
+
+**核心理念**：用 LangChain 的"乐高积木"，但不被 LangChain 的"整套玩法"绑架。
+
+**为什么选 LangChain 而不是直接调 HTTP API**：
+
+| 对比 | 直接调 HTTP API | 用 LangChain |
+|------|----------------|-------------|
+| Provider 切换 | 每个 Provider 写一套代码 | 统一接口，改个参数即可 |
+| Prompt 管理 | 字符串拼接，难以维护 | `ChatPromptTemplate` 模板化管理 |
+| 结构化输出 | 手动解析 JSON | `StructuredOutputParser` + Pydantic |
+| 可观测性 | 自己写日志 | LangSmith / Callbacks 自动追踪 |
+| 学习成本 | 低 | 中（但本项目只用子集） |
+
+**本项目的 LangChain 使用策略**：
+
+```
+只用这些 ────────────────────── 不用这些
+✅ ChatOpenAI / ChatDeepSeek    ❌ LangChain Agents
+✅ ChatPromptTemplate           ❌ LangGraph
+✅ SystemMessage/HumanMessage   ❌ LCEL 复杂链
+✅ StrOutputParser              ❌ VectorStore (本项目不用)
+✅ StructuredOutputParser       ❌ LangChain Hub
+✅ Callbacks (Phase 4+)         ❌ Memory (本项目自己管理)
+```
+
+**面试怎么讲**：
+> "项目中我用 LangChain 做了一个薄封装层，主要目的是 Provider 抽象和 Prompt 模板化管理。很多人用 LangChain 会把整套 Agents、Chains、Memory 全引进来，但我有意保持克制——只用了模型调用、Prompt 管理、输出解析这三个核心能力。这样既享受了 LangChain 的标准化优势，又不会因为框架太厚重导致调试困难。"
+
+**每阶段 LangChain 学习重点**：
+
+| 阶段 | 需要学的 LangChain 概念 | 用在哪里 |
+|------|------------------------|---------|
+| **Phase 1** | `ChatOpenAI`、`ChatDeepSeek`、`.invoke()` | 基础 LLM 调用（已实现） |
+| **Phase 2** | `ChatPromptTemplate`、`SystemMessage`、`HumanMessage`、`StrOutputParser` | 管理 ingest prompt 模板 |
+| **Phase 3** | `StructuredOutputParser`、`PydanticOutputParser` | 让 LLM 输出结构化 JSON（实体列表、分析结果） |
+| **Phase 4** | `RunnableSequence`（简单链式调用） | 两步 CoT 的串联 |
+| **Phase 5** | `BaseCallbackHandler` | 日志追踪、token 统计、LLM 调用耗时监控 |
+
+**学习路线建议**：
+
+```
+Phase 1-2：先看 LangChain 官方 Quickstart
+  └── https://python.langchain.com/docs/get_started/quickstart
+
+Phase 2-3：重点学 PromptTemplate + OutputParser
+  └── https://python.langchain.com/docs/modules/model_io/prompts/
+  └── https://python.langchain.com/docs/modules/model_io/output_parsers/
+
+Phase 4-5：学 Callbacks 做可观测性
+  └── https://python.langchain.com/docs/modules/callbacks/
+```
+
+**⚠️ LangChain 学习中的坑（避免浪费时间）**：
+
+1. **不要学 LangChain Expression Language (LCEL) 的复杂用法** — 你的链最多 2-3 步，不需要 `|` 管道嵌套
+2. **不要学 LangChain Agents / Tools 体系** — 你已经有自己的 Tool 层（ReadTool/WriteTool），不需要 LangChain 的 Agent 框架
+3. **不要学 LangGraph** — 那是给复杂多 Agent 工作流用的，本项目不需要
+4. **不要追 LangChain 版本更新** — 锁定一个稳定版本（如 0.3.x），专注于你需要的功能
+
+**参考链接**：
+- [LangChain 官方 Quickstart](https://python.langchain.com/docs/get_started/quickstart)
+- [LangChain Prompt Templates](https://python.langchain.com/docs/modules/model_io/prompts/)
+- [LangChain Output Parsers](https://python.langchain.com/docs/modules/model_io/output_parsers/)
+- [LangChain Callbacks](https://python.langchain.com/docs/modules/callbacks/)
+
+---
+
 ## 第四部分：面试高频问题准备
 
 ### Q1："你的项目和 LangChain 的 RAG 有什么不同？"
@@ -405,6 +475,14 @@ confidence: high
 4. **重试机制**：LLM 调用有 timeout 和 max_retries
 5. **两步 CoT**：分离分析和生成，每步更聚焦
 
+### Q6："你为什么用 LangChain？直接用 OpenAI/DeepSeek 的 HTTP API 不行吗？"
+
+**回答框架**：
+1. **Provider 抽象**：LangChain 统一了 OpenAI、DeepSeek、豆包等多家的调用接口。换模型只改变量，不改代码
+2. **Prompt 管理**：`ChatPromptTemplate` 让 system prompt 和 user prompt 分离管理，比字符串拼接更专业
+3. **但保持克制**：我只用了 LangChain 的模型调用、Prompt 管理、输出解析三个核心模块。故意没有用 Agents、Chains、Memory——那些会让项目过度依赖框架
+4. **面试官追问"为什么不直接用 HTTP API"**：可以说 "LangChain 的 PromptTemplate 和 OutputParser 帮我省了大量字符串解析和格式化代码。而且结构化输出（配合 Pydantic）让 LLM 返回的不再是自由文本，而是可以程序化处理的 JSON——这对两步 CoT 摄入至关重要"
+
 ---
 
 ## 第五部分：推荐学习资源
@@ -438,6 +516,10 @@ confidence: high
 | Chain-of-Thought 论文 | https://arxiv.org/abs/2201.11903 | CoT 理论基础 |
 | Louvain 社区发现 | https://arxiv.org/abs/0803.0476 | 图谱聚类算法 |
 | RRF 融合 | https://plg.uwaterloo.ca/~gvcormac/cormacksig09-rrf.pdf | 混合搜索融合 |
+| LangChain Quickstart | https://python.langchain.com/docs/get_started/quickstart | LangChain 快速入门 |
+| LangChain Prompt Templates | https://python.langchain.com/docs/modules/model_io/prompts/ | Prompt 模板化管理 |
+| LangChain Output Parsers | https://python.langchain.com/docs/modules/model_io/output_parsers/ | 结构化输出解析 |
+| LangChain Callbacks | https://python.langchain.com/docs/modules/callbacks/ | LLM 调用追踪与监控 |
 
 ---
 

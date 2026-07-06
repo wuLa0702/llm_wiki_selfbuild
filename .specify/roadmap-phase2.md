@@ -314,6 +314,164 @@ Phase 1 产物（WikiCompiler.ingest + API + SQLite）
 - [ ] 写入不带 frontmatter 的内容 → 抛出异常（或警告日志）
 - [ ] 正常内容 → 写入成功
 
+### 5.3 隐私标记与访问控制
+
+> 核心原则：**不拦截，全量生成，按标记限制访问。**
+
+**设计理念**：内容不管公开还是隐私，知识价值是一样的——区别只在于"谁能看"。
+
+**与之前方案的关键差异**：
+
+| | 旧方案（5.3+5.4） | 新方案 |
+|---|---|---|
+| Ingest 行为 | 隐私内容拦截，不生成 wiki | ✅ 全量生成，不拦截 |
+| 谁能决定隐私 | LLM 判断 | ✅ **用户定义规则**（API 录入） |
+| 关联行为 | — | 常规页面可 `[[wikilink]]` 关联，但点击跳转需密码 |
+| 密码 | Phase 4 一起做 | Phase 2 **不实现**密码验证 |
+
+#### 5.3.1 用户定义隐私规则
+
+**当前版本（Phase 2）**：使用默认关键词库，初始化项目时自动写入数据库。
+
+**默认隐私关键词**：
+
+```yaml
+# 情感与关系
+emotion:
+  - 情感    - 恋爱    - 失恋    - 暗恋    - 分手
+  - 情侣    - 配偶    - 前任    - 相亲    - 表白
+  - 心碎    - 孤独感  - 抑郁    - 焦虑症  - 心理诊断
+
+# 财务
+financial:
+  - 银行卡   - 账户金额 - 存款    - 工资    - 理财
+  - 信用卡   - 贷款    - 负债    - 投资    - 密码
+  - 支付宝   - 微信支付
+
+# 个人身份
+identity:
+  - 身份证   - 手机号   - 住址    - 户籍
+  - 护照     - 车牌号   - 社保号  - 学号
+
+# 健康
+health:
+  - 病历     - 体检    - 手术    - 诊断书
+  - 药物     - 过敏史  - 家族病史
+```
+
+**未来版本（Phase 4+）**：支持用户手动确认和编辑规则。
+
+- [ ] `GET /v1/privacy/rules` — 查看当前规则（含默认 + 用户自定义）
+- [ ] `POST /v1/privacy/rules/confirm` — 用户确认/修改默认规则
+  ```json
+  {
+    "keyword": "情感",
+    "action": "keep"   // keep | remove | recategorize
+  }
+  ```
+- [ ] 默认关键词初始化逻辑与用户修改记录分离（`is_default` 字段标记）
+
+- [ ] 隐私规则存储到 SQLite（`src/db/schema.py` 新增表）：
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS privacy_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      keyword TEXT NOT NULL UNIQUE,
+      category TEXT DEFAULT 'general',
+      is_default INTEGER DEFAULT 1,   -- 1=默认规则，0=用户自定义
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS privacy_categories (
+      name TEXT PRIMARY KEY,
+      label TEXT NOT NULL
+  );
+  ```
+
+- [ ] 实现 `PrivacyManager`（`src/core/privacy.py`）：
+
+  ```python
+  class PrivacyManager:
+      """隐私规则管理器"""
+
+      def add_rule(self, keyword: str, category: str = "general") -> None: ...
+      def remove_rule(self, keyword: str) -> None: ...
+      def list_rules(self) -> list[dict]: ...
+      def match(self, content: str) -> list[dict]:
+          """
+          检测内容命中的隐私规则
+
+          Returns:
+              [{"keyword": "恋爱", "category": "relationship"}, ...]
+              空列表表示未命中任何隐私规则
+          """
+  ```
+
+#### 5.3.2 Ingest 流程整合
+
+**全部识别，全部生成，按标记区分：**
+
+```
+源文件
+  → Step 1 分析
+  → PrivacyManager.match()  ← 用户定义的规则
+      ├── 命中 → 标记为 restricted
+      └── 未命中 → 正常 ingest
+  → Step 2 生成 wiki 页面
+      ├── 普通页面：frontmatter visibility: public
+      └── 隐私页面：frontmatter visibility: restricted + privacy_categories: ["emotion"]
+```
+
+- [ ] 隐私页面的 frontmatter 标记：
+
+  ```yaml
+  ---
+  title: "情感管理笔记"
+  type: concept
+  visibility: restricted              # 关键字段
+  privacy_categories: [emotion]        # 命中的隐私类别
+  sources:
+    - raw/sources/personal-journal.md
+  confidence: medium
+  ---
+  ```
+
+#### 5.3.3 页面关联规则
+
+**常规页面可以 `[[wikilink]]` 关联隐私页面，链接存在但不跳转：**
+
+```markdown
+# 常规页面：时间管理
+
+时间管理和 [[concepts/情绪管理.md|情绪]] 密切相关。
+  ↑
+  这个 wikilink 被正常渲染为链接
+  但点击后 → 密码验证 → 通过才可查看
+```
+
+- [ ] API 读取 `visibility: restricted` 的页面时：
+  - `GET /v1/pages/{path}` → 返回 `{"status": "locked", "message": "此页面为个人隐私存储，需要密码验证"}`
+  - 验证密码后返回正文内容
+
+- [ ] `_extract_links()` 正常提取 wikilinks（不论目标页面是什么 visibility）
+  - 链接关系照常存入 `page_links` 表
+  - 知识图谱中显示为"受限关联"（虚线边）
+
+#### 5.3.4 本阶段交付 vs 延后
+
+| 功能 | Phase 2 | 说明 |
+|------|---------|------|
+| ✅ 隐私规则 API（CRUD） | 实现 | `POST/GET/DELETE /v1/privacy/rules` |
+| ✅ 规则存储 | 实现 | SQLite `privacy_rules` + `privacy_categories` |
+| ✅ PrivacyManager | 实现 | 关键词匹配 + 语义分类 |
+| ✅ Ingest 标记 | 实现 | frontmatter `visibility: restricted` |
+| ✅ wikilink 关联 | 实现 | 正常关联，不阻断 |
+| ❌ 密码验证 | **延时** | Phase 4 的 `auth.py`，含 API 中间件 |
+| ❌ 页面加密存储 | **延时** | Phase 5+，当前明文 |
+| ❌ 密码管理 UI | **延时** | 本阶段仅 API |
+
+> 密码功能的具体实现放在 Phase 4，参见 [roadmap.md Phase 4 密码保护条目](roadmap.md)。
+
 ---
 
 ## 第六步：配置与质量信号

@@ -4,7 +4,15 @@
 >
 > **技术栈**：Python 3.11+ / FastAPI / LangChain / SQLite / Markdown
 >
-> **差异化定位**：Python 全栈 + 独立 API 服务 + 完整安全模型（大多数 LLM Wiki 框架要么是 Agent Skill 形态，要么是桌面应用）
+> **差异化定位**：Python 全栈 + 独立 API 服务 + 完整安全模型
+>
+> 📂 **本目录文件关系**：
+> - `roadmap.md`（本文件）— 全局路线图：阶段目标 + 功能概览 + 面试要点 + 开发约定
+> - `roadmap-phase1.md` — Phase 1 详细任务分解（日常开发的 checklist）
+> - `001-整体架构设计.md` — 项目自身的技术架构设计
+> - `llm-wiki-commons.md` — 外部参考：7+ 个框架的共性设计模式
+> - `knowledge-reference.md` — 知识点手册：概念解释 + 面试话术 + 参考链接
+> - `interview-notes/` — 每阶段结束后的面试复盘记录
 
 ---
 
@@ -29,8 +37,8 @@
 ### 阶段总览
 
 ```
-Phase 1（当前）  ████████░░░░░░░░░░░░  40%  ← 你在的位置
-Phase 2          ░░░░░░░░░░░░░░░░░░░░   0%  基础 Ingest 闭环 + 元数据
+Phase 1          ████████████████████  100% ✅
+Phase 2（当前）    ████░░░░░░░░░░░░░░░░   20%  ← 你在的位置
 Phase 3          ░░░░░░░░░░░░░░░░░░░░   0%  增强摄入 + Query 查询
 Phase 4          ░░░░░░░░░░░░░░░░░░░░   0%  知识图谱 + Lint 检查
 Phase 5          ░░░░░░░░░░░░░░░░░░░░   0%  搜索 + MCP + 面试打磨
@@ -40,47 +48,39 @@ Phase 5          ░░░░░░░░░░░░░░░░░░░░   
 
 ---
 
-## Phase 1：基础 Ingest 闭环（当前）
+## Phase 1：基础 Ingest 闭环 ✅
 
-> **状态**：🟡 进行中
+> **状态**：✅ 已完成
 > **对标**：nashsu v0.1 / cobusgreyling v0.1
+> **详细任务清单**：[roadmap-phase1.md](roadmap-phase1.md)
+
+### 核心目标
+
+LLM 能读取 raw/ 下的源文件，编译后写入 wiki/，并记录元数据到 SQLite。通过 `POST /v1/ingest` API 调用，端到端跑通。
 
 ### 已完成 ✅
 
-- [x] LLMAdapter — DeepSeek 调用 + Provider 抽象
-- [x] ReadTool — raw/ 只读 + 路径安全
-- [x] WriteTool — wiki/ 写入 + 路径安全
-- [x] WikiRepository — SQLite 元数据存储（pages / links / operation_log）
-- [x] 日志系统 — 结构化日志
-- [x] 安全规则 — 路径校验、权限隔离
+- LLMAdapter — DeepSeek 调用 + Provider 抽象
+- ReadTool — raw/ 只读 + 路径安全
+- WriteTool — wiki/ 写入 + 路径安全
+- WikiRepository — SQLite 元数据存储
+- 日志系统 + 安全规则
 
 ### 待完成 📋
 
-- [ ] **WikiCompiler.ingest()** — 核心编排逻辑
-  - ReadTool 读 raw/ 源文件
-  - LLMAdapter 编译为 wiki 页面
-  - WriteTool 写入 wiki/
-  - WikiRepository 记录元数据
-- [ ] **POST /v1/ingest** — API 端点
-  - Pydantic 请求/响应模型
-  - 错误处理（400/403/404/500）
-- [ ] **集成测试** — 端到端 ingest 流程
-- [ ] **pytest 全部通过**
+- WikiCompiler.ingest() 核心编排逻辑
+- POST /v1/ingest API 端点
+- 集成测试 + pytest 全部通过
 
-### 验证标准
-```bash
-curl -X POST http://localhost:8000/v1/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"source_path": "sources/test.md"}'
-# → wiki/ 下生成页面，SQLite 有记录
-```
+> 详见 [roadmap-phase1.md](roadmap-phase1.md) 了解每个任务的依赖关系和具体文件路径。
 
 ---
 
 ## Phase 2：增强摄入 + 元数据完善
 
-> **状态**：⬜ 未开始
+> **状态**：🟡 进行中
 > **对标**：nashsu v0.2 / cobusgreyling v0.2
+> **详细任务清单**：[roadmap-phase2.md](roadmap-phase2.md)（日常开发参考，含依赖链和验证命令）
 
 ### 目标
 
@@ -155,6 +155,7 @@ wiki 写进去了，要能查出来——实现基于 index.md 的导航式查�
 | **GET /v1/lint** | `src/main.py` | API 端点，返回检查报告 |
 | **GET /v1/graph** | `src/main.py` | API 端点，返回图谱数据 |
 | **矛盾标记系统** | LLM prompt + frontmatter | 摄入时标记 ⚠️ 矛盾 |
+| **密码保护** | `src/core/auth.py`（新） | 私人数据密码验证解锁，API 中间件 |
 
 ### 知识图谱两遍构建
 
@@ -266,23 +267,40 @@ wiki 写进去了，要能查出来——实现基于 index.md 的导航式查�
 
 **触发时机**：Phase 3 完成时（或 Phase 3 中期）。
 
-**做什么**：
+**方法论**：
+
+```
+第一轮：AI 先做架构梳理
+  1. Claude 分析参考项目的目录结构、模块划分、数据流
+  2. 输出参考项目的"模块清单 + 功能点清单"
+
+第二轮：逐模块比对
+  对每个模块分类：
+    ├── ❌ 我没有 → 列为 Phase 4-5 开发候选
+    └── ✅ 我也有 → 比对实现方式差异，记录谁的设计更好、为什么
+
+第三轮：差距总结
+  输出对比报告，调整 Phase 4-5 优先级
+```
+
+**具体执行**：
 
 1. 下载并本地运行 **nashsu/llm_wiki**（桌面应用）或 **cobusgreyling/llm-wiki**（Python CLI）
-2. 用相同的测试数据（10-20 篇源文件），分别在两个系统上执行 Ingest
-3. 对比分析：
+2. Claude 先抓取参考项目的源码结构，梳理出完整的模块清单
+3. 用相同的测试数据（10-20 篇源文件），分别在两个系统上执行 Ingest
+4. 逐模块对比：
 
-| 对比维度 | 我的项目 | 参考项目 | 差距/不足 |
-|----------|---------|---------|----------|
-| Ingest 质量 | ? | ? | ? |
-| 页面结构 | ? | ? | ? |
-| Wikilinks 密度 | ? | ? | ? |
-| 元数据完整度 | ? | ? | ? |
-| 查询体验 | ? | ? | ? |
-| 知识图谱 | ? | ? | ? |
-| Lint 能力 | ? | ? | ? |
+| 对比维度 | 我的项目 | 参考项目 | 分类 | 行动 |
+|----------|---------|---------|------|------|
+| Ingest 质量 | ? | ? | ✅/❌ | 参考 / 开发 |
+| 页面结构 | ? | ? | ✅/❌ | 参考 / 开发 |
+| Wikilinks 密度 | ? | ? | ✅/❌ | ... |
+| 元数据完整度 | ? | ? | ✅/❌ | ... |
+| 查询体验 | ? | ? | ✅/❌ | ... |
+| 知识图谱 | ? | ? | ✅/❌ | ... |
+| Lint 能力 | ? | ? | ✅/❌ | ... |
 
-4. 根据对比结果，调整 Phase 4-5 的优先级
+5. 输出对比报告 → 调整 Phase 4-5 的优先级
 
 **为什么是 Phase 3 结束后**：
 
