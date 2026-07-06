@@ -27,6 +27,8 @@ SYSTEM_PROMPT_INGEST = """你是一个 Wiki Compiler Agent。你的任务是将�
 - 实体页面放在 entities/ 目录下，如 entities/python.md
 - 概念页面放在 concepts/ 目录下，如 concepts/machine_learning.md
 - 来源页面放在 sources/ 目录下
+- **标题优先使用中文**：中文源文件 → 中文标题 + 中文文件名（如 `entities/注意力机制.md`）
+- 英文专业术语保留原文（如 `GPT`、`Transformer`），不强行翻译
 
 ## 页面内容要求
 
@@ -131,6 +133,8 @@ confidence: high  # high / medium / low
 - 实体页面放在 entities/ 目录下，如 entities/python.md
 - 概念页面放在 concepts/ 目录下，如 concepts/machine_learning.md
 - 来源页面放在 sources/ 目录下
+- **标题优先使用中文**：中文源文件 → 中文标题 + 中文文件名（如 `entities/注意力机制.md`）
+- 英文专业术语保留原文（如 `GPT`、`Transformer`），不强行翻译
 """
 
 # ============================================================================

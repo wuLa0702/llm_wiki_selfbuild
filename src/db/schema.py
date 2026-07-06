@@ -35,3 +35,16 @@ CREATE TABLE IF NOT EXISTS ingest_cache (
     ingested_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS privacy_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    keyword TEXT NOT NULL UNIQUE,
+    category TEXT DEFAULT 'general',
+    is_default INTEGER DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS privacy_categories (
+    name TEXT PRIMARY KEY,
+    label TEXT NOT NULL
+);
+"""
