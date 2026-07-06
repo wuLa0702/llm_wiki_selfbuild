@@ -34,4 +34,4 @@ CREATE TABLE IF NOT EXISTS ingest_cache (
     sha256_hash TEXT NOT NULL,
     ingested_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-"""
+
