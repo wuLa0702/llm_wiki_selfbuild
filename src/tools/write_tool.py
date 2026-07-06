@@ -3,6 +3,7 @@
 """
 import os
 
+from src.core.validator import WikiValidator
 from src.tools.path_utils import safe_path
 
 
@@ -16,20 +17,25 @@ class WriteTool:
         """
         self.base_dir = base_dir
 
-    def write_page(self, relative_path: str, content: str) -> str:
+    def write_page(self, relative_path: str, content: str, validate: bool = True) -> str:
         """
         写入 wiki 页面
 
         Args:
             relative_path: 相对于 base_dir 的文件路径
             content: 要写入的内容
+            validate: 是否执行内容质量校验（默认 True）
 
         Returns:
             写入完成的相对路径
 
         Raises:
             PermissionError: 路径越权或穿越攻击
+            ValidatorError: 内容校验失败
         """
+        if validate:
+            WikiValidator.validate_all(relative_path, content)
+
         full_path = safe_path(self.base_dir, relative_path)
 
         # 自动创建中间目录
