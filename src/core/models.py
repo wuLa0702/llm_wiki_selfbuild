@@ -30,6 +30,7 @@ class IngestResponse(BaseModel):
     pages_created: list[str] = []
     pages_updated: list[str] = []
     message: str = ""
+    confidence_summary: dict[str, int] = {}
 
 
 class QueryRequest(BaseModel):
