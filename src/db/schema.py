@@ -28,4 +28,10 @@ CREATE TABLE IF NOT EXISTS operation_log (
     detail TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS ingest_cache (
+    source_path TEXT PRIMARY KEY,
+    sha256_hash TEXT NOT NULL,
+    ingested_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
