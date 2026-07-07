@@ -9,6 +9,7 @@ from datetime import datetime
 
 from src.core.cache import IngestCache
 from src.core.graph import WikiGraph
+from src.core.linter import LintTool
 from src.core.logging_config import get_logger
 from src.core.models import AnalysisOutput, IngestResponse
 from src.core.privacy import PrivacyManager
@@ -582,4 +583,19 @@ class WikiCompiler:
     # ------------------------------------------------------------------
 
     def lint(self) -> dict:
-        raise NotImplementedError("Phase 3 Step 5 实现")
+        """运行静态 Lint 检查（零 LLM 成本）
+
+        Returns:
+            {
+                "broken_links": [...],
+                "broken_links_count": 3,
+                "orphan_pages": [...],
+                "orphan_pages_count": 1,
+                "index_gaps": [...],
+                "index_gaps_count": 2,
+                "health_score": 85,
+                "summary": "检测摘要文本"
+            }
+        """
+        linter = LintTool(wiki_dir=self.writer.base_dir)
+        return linter.run_all()

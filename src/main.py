@@ -108,9 +108,10 @@ async def query(request: QueryRequest):
 
 @app.get("/v1/lint")
 async def lint():
-    """Check wiki health (to be implemented)"""
-    logger.info("GET /v1/lint 被调用（桩代码）")
-    return {"message": "Lint endpoint — not yet implemented"}
+    """运行 Wiki 健康检查（静态 — 断链 + 孤页 + 索引缺失 + 健康评分）"""
+    logger.info("GET /v1/lint")
+    compiler = WikiCompiler()
+    return compiler.lint()
 
 
 @app.get("/v1/graph")
