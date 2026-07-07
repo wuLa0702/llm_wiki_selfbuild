@@ -47,4 +47,25 @@ CREATE TABLE IF NOT EXISTS privacy_categories (
     name TEXT PRIMARY KEY,
     label TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS token_usage_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    total_tokens INTEGER NOT NULL,
+    model TEXT NOT NULL,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS model_pricing (
+    model TEXT PRIMARY KEY,
+    provider TEXT NOT NULL DEFAULT 'unknown',
+    input_price REAL NOT NULL,
+    output_price REAL NOT NULL,
+    cache_hit_price REAL DEFAULT 0,
+    currency TEXT DEFAULT 'CNY',
+    source_url TEXT,
+    fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """

@@ -3,6 +3,7 @@ LLM 适配器 — 统一模型调用接口
 支持多 Provider（DeepSeek / 豆包 / OpenAI / Claude）
 """
 import os
+from datetime import datetime
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -46,13 +47,16 @@ class LLMError(Exception):
 class LLMAdapter:
     """统一的 LLM 模型适配器，支持切换 Provider"""
 
-    def __init__(self, provider: str | None = None) -> None:
+    def __init__(
+        self, provider: str | None = None, token_tracker: object | None = None
+    ) -> None:
         """
         初始化 LLM 适配器
 
         Args:
             provider: LLM Provider 标识（deepseek / doubao）。
                       不传则取环境变量 LLM_PROVIDER，默认 deepseek。
+            token_tracker: 可选的 TokenTracker 实例（Phase 3 注入）。
 
         Raises:
             ValueError: provider 不支持，或对应 API Key 未设置时抛出
@@ -82,6 +86,10 @@ class LLMAdapter:
             config["base_url_env"], config["default_base_url"]
         )
 
+        self._model_name = model
+        self._last_usage: dict | None = None
+        self._token_tracker = token_tracker
+
         self._llm = ChatOpenAI(
             model=model,
             api_key=api_key,
@@ -95,6 +103,43 @@ class LLMAdapter:
             provider,
             model,
             base_url,
+        )
+
+    @property
+    def last_usage(self) -> dict | None:
+        """最近一次 LLM 调用的 token 用量"""
+        return self._last_usage
+
+    def _record_usage(self, operation: str, response) -> None:
+        """
+        从 LLM 响应中提取 token 用量并记录
+
+        Args:
+            operation: 操作类型标识（chat / chat_template / chat_structured）
+            response: LLM 返回的 AIMessage 对象
+        """
+        meta = getattr(response, "response_metadata", {}) or {}
+        usage = meta.get("token_usage", {})
+        if not usage:
+            return
+
+        self._last_usage = {
+            "input_tokens": usage["prompt_tokens"],
+            "output_tokens": usage["completion_tokens"],
+            "total_tokens": usage["total_tokens"],
+            "model": self._model_name,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        if self._token_tracker:
+            self._token_tracker.record(operation, self._last_usage)
+
+        logger.debug(
+            "token_usage recorded | operation=%s input=%d output=%d total=%d",
+            operation,
+            usage["prompt_tokens"],
+            usage["completion_tokens"],
+            usage["total_tokens"],
         )
 
     def chat(self, prompt: str, system_prompt: str = "") -> str:
@@ -137,6 +182,8 @@ class LLMAdapter:
             raise LLMError(
                 f"LLM call failed for provider '{self.provider}': {exc}"
             ) from exc
+
+        self._record_usage("chat", response)
 
         content = response.content if hasattr(response, "content") else str(response)
         logger.info(
@@ -186,6 +233,8 @@ class LLMAdapter:
             raise LLMError(
                 f"LLM call failed for provider '{self.provider}': {exc}"
             ) from exc
+
+        self._record_usage("chat_template", response)
 
         content = response.content if hasattr(response, "content") else str(response)
         logger.info(
@@ -250,6 +299,9 @@ class LLMAdapter:
             raise LLMError(
                 f"LLM call failed for provider '{self.provider}': {exc}"
             ) from exc
+
+        # 先记录 token 用量，再解析 JSON（解析失败也要记录）
+        self._record_usage("chat_structured", response)
 
         content = response.content if hasattr(response, "content") else str(response)
 

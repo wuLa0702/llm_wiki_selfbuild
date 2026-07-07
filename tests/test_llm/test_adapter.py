@@ -443,6 +443,83 @@ def test_chat_rate_limit_error(mocker):
 
 
 # ============================================================================
+# Token 用量提取
+# ============================================================================
+
+
+def test_chat_records_token_usage(mocker):
+    """chat() 后 _last_usage 包含 token 用量"""
+    mock_response = mocker.MagicMock()
+    mock_response.response_metadata = {
+        "token_usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "total_tokens": 150,
+        },
+    }
+    mock_response.content = "Hello, world!"
+    mock_llm_instance = mocker.MagicMock()
+    mock_llm_instance.invoke.return_value = mock_response
+    mocker.patch("src.llm.adapter.ChatOpenAI", return_value=mock_llm_instance)
+    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+
+    adapter = LLMAdapter("deepseek")
+    adapter.chat("Hi there")
+
+    assert adapter.last_usage is not None
+    assert adapter.last_usage["input_tokens"] == 100
+    assert adapter.last_usage["output_tokens"] == 50
+    assert adapter.last_usage["total_tokens"] == 150
+    assert adapter.last_usage["model"] == "deepseek-v4-flash"  # 默认值
+    assert "timestamp" in adapter.last_usage
+
+
+def test_chat_no_token_usage_graceful(mocker):
+    """response_metadata 不含 token_usage 时不抛异常，_last_usage 保持 None 或未设置"""
+    mock_response = mocker.MagicMock()
+    mock_response.response_metadata = {}  # 空的 metadata
+    mock_response.content = "No usage info"
+    mock_llm_instance = mocker.MagicMock()
+    mock_llm_instance.invoke.return_value = mock_response
+    mocker.patch("src.llm.adapter.ChatOpenAI", return_value=mock_llm_instance)
+    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+
+    adapter = LLMAdapter("deepseek")
+    adapter.chat("Hi")
+
+    assert adapter.last_usage is None
+
+
+def test_chat_template_records_token_usage(mocker):
+    """chat_template() 后 _last_usage 正确填充"""
+    from langchain_core.prompts import ChatPromptTemplate
+
+    template = ChatPromptTemplate.from_messages([
+        ("human", "Question: {q}"),
+    ])
+
+    mock_response = mocker.MagicMock()
+    mock_response.response_metadata = {
+        "token_usage": {
+            "prompt_tokens": 80,
+            "completion_tokens": 30,
+            "total_tokens": 110,
+        },
+    }
+    mock_response.content = "42"
+    mock_llm_instance = mocker.MagicMock()
+    mock_llm_instance.invoke.return_value = mock_response
+    mocker.patch("src.llm.adapter.ChatOpenAI", return_value=mock_llm_instance)
+    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+
+    adapter = LLMAdapter("deepseek")
+    adapter.chat_template(template, q="meaning of life?")
+
+    assert adapter.last_usage is not None
+    assert adapter.last_usage["total_tokens"] == 110
+
+
+# ============================================================================
 # 真实 API 调用测试（需要 .env 中配置对应的 API Key）
 # ============================================================================
 
