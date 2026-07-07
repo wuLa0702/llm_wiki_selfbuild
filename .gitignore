@@ -220,3 +220,6 @@ __marimo__/
 /wiki/
 /raw/
 /wiki/
+
+# SQLite database
+wiki.db
