@@ -303,8 +303,14 @@ class WikiCompiler:
     # Phase 2 — 两步 CoT
     # ==================================================================
 
-    def ingest(self, source_path: str) -> dict:
-        """两步 CoT：先分析再生成，带重试和降级"""
+    def ingest(self, source_path: str, max_source_chars: int | None = None) -> dict:
+        """两步 CoT：先分析再生成，带重试和降级
+
+        Args:
+            source_path: 源文件路径（相对于 raw/sources/）
+            max_source_chars: 源文件最大字符数，超出则截断。
+                              默认从环境变量 DEBUG_MAX_CHARS 读取（0=不限制）。
+        """
         # 0. 增量缓存 — 内容未变则跳过
         if not self.cache.has_changed(source_path):
             logger.info("缓存命中，跳过 ingest | source=%s", source_path)
@@ -325,6 +331,17 @@ class WikiCompiler:
                 status="success",
                 message=f"Source file '{source_path}' is empty, nothing to ingest.",
             ).model_dump()
+
+        if max_source_chars is None:
+            raw = os.environ.get("DEBUG_MAX_CHARS", "0")
+            max_source_chars = int(raw) if raw.isdigit() else 0
+
+        if max_source_chars > 0 and len(content) > max_source_chars:
+            logger.info(
+                "源文件过长，截断 | source=%s %d→%d chars",
+                source_path, len(content), max_source_chars,
+            )
+            content = content[:max_source_chars] + f"\n\n_（内容截断，仅前 {max_source_chars} 字符）_"
 
         # 0.5 隐私检测
         privacy_matches = self.privacy.match(content)
@@ -418,7 +435,8 @@ class WikiCompiler:
     # Phase 1 遗留 — 单步模式（降级兼容）
     # ==================================================================
 
-    def ingest_simple(self, source_path: str, privacy_matches: list[dict] | None = None) -> dict:
+    def ingest_simple(self, source_path: str, privacy_matches: list[dict] | None = None,
+                       max_source_chars: int | None = None) -> dict:
         # 4. 缓存检查
         if not self.cache.has_changed(source_path):
             logger.info("缓存命中，跳过 simple ingest | source=%s", source_path)
@@ -439,6 +457,14 @@ class WikiCompiler:
                 status="success",
                 message=f"Source file '{source_path}' is empty, nothing to ingest.",
             ).model_dump()
+
+        # 截断
+        if max_source_chars is None:
+            raw = os.environ.get("DEBUG_MAX_CHARS", "0")
+            max_source_chars = int(raw) if raw.isdigit() else 0
+        if max_source_chars > 0 and len(content) > max_source_chars:
+            logger.info("源文件过长，截断 (simple) | %d→%d", len(content), max_source_chars)
+            content = content[:max_source_chars] + f"\n\n_（内容截断，仅前 {max_source_chars} 字符）_"
 
         if privacy_matches is None:
             privacy_matches = self.privacy.match(content)

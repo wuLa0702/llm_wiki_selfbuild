@@ -27,7 +27,7 @@ PROVIDER_CONFIG: dict[str, dict[str, str]] = {
         "base_url_env": "DEEPSEEK_API_BASE",
         "model_env": "DEEPSEEK_MODEL",
         "default_base_url": "https://api.deepseek.com/v1",
-        "default_model": "deepseek-chat",
+        "default_model": "deepseek-v4-flash",
     },
     "doubao": {
         "api_key_env": "ARK_API_KEY",

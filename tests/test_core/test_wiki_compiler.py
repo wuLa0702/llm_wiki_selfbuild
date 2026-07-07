@@ -282,6 +282,23 @@ def test_purpose_md_exists():
     assert len(content) > 100
 
 
+def test_ingest_truncates_long_source(compiler, mocker):
+    """max_source_chars 截断超长源文件"""
+    src = os.path.join(compiler.reader.base_dir, "sources", "long.md")
+    with open(src, "w", encoding="utf-8") as f:
+        f.write("A" * 5000 + "\n有效内容 [[concepts/ai.md]]。")
+
+    mocker.patch.object(compiler.llm, "chat_structured", return_value=MOCK_ANALYSIS)
+    mocker.patch.object(compiler.llm, "chat_template", return_value=MOCK_GENERATE_RESPONSE)
+    mocker.patch.object(compiler, "_update_overview")
+
+    result = compiler.ingest("long.md", max_source_chars=500)
+    assert result["status"] == "success"
+    prompt = compiler.llm.chat_structured.call_args[1]["prompt"]
+    assert "内容截断" in prompt
+    assert len(prompt) < 1500
+
+
 # ============================================================================
 # SHA256 增量缓存
 # ============================================================================

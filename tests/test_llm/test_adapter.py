@@ -179,18 +179,25 @@ def test_init_missing_api_key(mocker):
         LLMAdapter("deepseek")
 
 
-def test_init_defaults_when_env_vars_missing(mocker):
-    """model/base_url 环境变量缺失时使用默认值（DeepSeek）"""
+def test_init_reads_model_from_env(mocker):
+    """从环境变量读取 DEEPSEEK_MODEL"""
     mock_llm_class = mocker.patch("src.llm.adapter.ChatOpenAI")
     mock_llm_instance = mocker.MagicMock()
     mock_llm_class.return_value = mock_llm_instance
     mock_llm_instance.invoke.return_value = mocker.MagicMock(content="ok")
-    mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+    mocker.patch.dict(
+        os.environ,
+        {
+            "DEEPSEEK_API_KEY": "test-key",
+            "DEEPSEEK_MODEL": "deepseek-v4-flash",
+            "DEEPSEEK_API_BASE": "https://api.deepseek.com/v1",
+        },
+    )
 
     LLMAdapter("deepseek")
 
     mock_llm_class.assert_called_once_with(
-        model="deepseek-chat",
+        model="deepseek-v4-flash",
         api_key="test-key",
         base_url="https://api.deepseek.com/v1",
         timeout=30,
