@@ -579,7 +579,14 @@ class WikiCompiler:
         Returns:
             {"answer": "...", "sources": [...], "confidence": "...", "archived": ...}
         """
-        return self.query_engine.query(question, max_pages=max_pages, archive=archive)
+        result = self.query_engine.query(
+            question, max_pages=max_pages, archive=archive
+        )
+        # 归档后更新 index + 重建图，让新 query 页面出现在索引和图结构中
+        if result.get("archived"):
+            self._update_index()
+            self.graph.build()
+        return result
 
     # ------------------------------------------------------------------
     # Lint — Phase 3 Step 5

@@ -418,3 +418,51 @@ def test_ingest_builds_graph(compiler, mocker):
     assert "entities/python.md" in nodes
     assert "concepts/ai.md" in nodes
 
+
+# ============================================================================
+# Query 答案归档 — 索引与图更新
+# ============================================================================
+
+
+def test_query_archive_updates_index(compiler, mocker):
+    """query 归档后自动更新 index 和 graph"""
+    mocker.patch.object(
+        compiler.query_engine, "query",
+        return_value={
+            "answer": "Python 是一种编程语言。",
+            "sources": ["entities/python.md"],
+            "confidence": "high",
+            "gaps": [],
+            "archived": "queries/python-shi-shi.md",
+        },
+    )
+    index_spy = mocker.spy(compiler, "_update_index")
+    graph_spy = mocker.spy(compiler.graph, "build")
+
+    result = compiler.query("Python 是什么？", archive=True)
+
+    assert result["archived"] == "queries/python-shi-shi.md"
+    index_spy.assert_called_once()
+    graph_spy.assert_called_once()
+
+
+def test_query_no_archive_skips_update(compiler, mocker):
+    """query 不归档时跳过 index 和 graph 更新"""
+    mocker.patch.object(
+        compiler.query_engine, "query",
+        return_value={
+            "answer": "Python 是一种编程语言。",
+            "sources": ["entities/python.md"],
+            "confidence": "high",
+            "gaps": [],
+            "archived": None,
+        },
+    )
+    index_spy = mocker.spy(compiler, "_update_index")
+    graph_spy = mocker.spy(compiler.graph, "build")
+
+    compiler.query("Python 是什么？", archive=False)
+
+    index_spy.assert_not_called()
+    graph_spy.assert_not_called()
+
