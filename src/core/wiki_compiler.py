@@ -279,7 +279,7 @@ class WikiCompiler:
         )
 
         try:
-            overview = self.llm.chat(prompt=prompt, system_prompt=overview_prompt)
+            overview = self.llm.chat(prompt=prompt, system_prompt=overview_prompt, operation="overview")
         except LLMError:
             overview = "_（LLM 生成综述失败，下次 ingest 时重试）_"
 
@@ -416,6 +416,7 @@ class WikiCompiler:
                     prompt=step1_prompt,
                     system_prompt=SYSTEM_PROMPT_INGEST_ANALYZE,
                     output_schema=AnalysisOutput,
+                    operation="ingest_step1",
                 )
                 s1 = self.llm.last_usage  # 捕获 Step 1 token 用量
                 break
@@ -438,6 +439,7 @@ class WikiCompiler:
             try:
                 raw_pages = self.llm.chat_template(
                     INGEST_GENERATE_TEMPLATE,
+                    operation="ingest_step2",
                     source_name=f"raw/sources/{source_path}",
                     analysis_json=analysis_str,
                 )
@@ -534,6 +536,7 @@ class WikiCompiler:
         response = self.llm.chat(
             prompt=f"请处理以下源文件内容：\n\n{content}",
             system_prompt=SYSTEM_PROMPT_INGEST,
+            operation="ingest_simple",
         )
 
         pages = self._parse_response(response)

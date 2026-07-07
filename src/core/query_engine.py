@@ -155,7 +155,7 @@ class QueryEngine:
             f"（每行一个，不要编号，不要多余文字）：\n\n{index_content}"
         )
         try:
-            raw = self.llm.chat(prompt=prompt, system_prompt="你是一个知识库导航员。从索引中列出最相关的 3-5 个页面路径，每行一个。")
+            raw = self.llm.chat(prompt=prompt, system_prompt="你是一个知识库导航员。从索引中列出最相关的 3-5 个页面路径，每行一个。", operation="query_suggest_pages")
             paths = []
             for line in raw.strip().split("\n"):
                 line = line.strip().strip("-*").strip()
@@ -230,6 +230,7 @@ class QueryEngine:
                 prompt=prompt,
                 system_prompt=SYSTEM_PROMPT_QUERY,
                 output_schema=QueryOutput,
+                operation="query_synthesize",
             )
         except Exception as exc:
             logger.error("Query LLM 调用失败 | %s", exc)

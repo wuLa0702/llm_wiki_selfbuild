@@ -142,13 +142,15 @@ class LLMAdapter:
             usage["total_tokens"],
         )
 
-    def chat(self, prompt: str, system_prompt: str = "") -> str:
+    def chat(self, prompt: str, system_prompt: str = "", operation: str = "chat") -> str:
         """
         调用 LLM 模型
 
         Args:
             prompt: 用户提示
             system_prompt: 系统提示词
+            operation: 业务操作标识（如 query_suggest_pages, overview），
+                       用于 token 用量追踪
 
         Returns:
             模型回复文本
@@ -162,10 +164,11 @@ class LLMAdapter:
             raise ValueError("Prompt must not be empty")
 
         logger.debug(
-            "chat 开始 | provider=%s prompt_len=%d system_prompt_len=%d",
+            "chat 开始 | provider=%s prompt_len=%d system_prompt_len=%d operation=%s",
             self.provider,
             len(prompt),
             len(system_prompt),
+            operation,
         )
 
         messages = []
@@ -183,7 +186,7 @@ class LLMAdapter:
                 f"LLM call failed for provider '{self.provider}': {exc}"
             ) from exc
 
-        self._record_usage("chat", response)
+        self._record_usage(operation, response)
 
         content = response.content if hasattr(response, "content") else str(response)
         logger.info(
@@ -193,7 +196,7 @@ class LLMAdapter:
         )
         return content
 
-    def chat_template(self, template: ChatPromptTemplate, **kwargs: str) -> str:
+    def chat_template(self, template: ChatPromptTemplate, operation: str = "chat_template", **kwargs: str) -> str:
         """
         使用 ChatPromptTemplate 调用 LLM
 
@@ -202,6 +205,7 @@ class LLMAdapter:
 
         Args:
             template: ChatPromptTemplate 实例
+            operation: 业务操作标识（如 ingest_step2），用于 token 用量追踪
             **kwargs: 模板变量名和值
 
         Returns:
@@ -219,9 +223,10 @@ class LLMAdapter:
             raise ValueError("Template rendered empty prompt")
 
         logger.debug(
-            "chat_template 开始 | provider=%s messages=%d",
+            "chat_template 开始 | provider=%s messages=%d operation=%s",
             self.provider,
             len(messages),
+            operation,
         )
 
         try:
@@ -234,7 +239,7 @@ class LLMAdapter:
                 f"LLM call failed for provider '{self.provider}': {exc}"
             ) from exc
 
-        self._record_usage("chat_template", response)
+        self._record_usage(operation, response)
 
         content = response.content if hasattr(response, "content") else str(response)
         logger.info(
@@ -249,6 +254,7 @@ class LLMAdapter:
         prompt: str,
         system_prompt: str = "",
         output_schema: type[BaseModel] | None = None,
+        operation: str = "chat_structured",
     ) -> dict:
         """
         调用 LLM 并返回结构化输出（JSON）
@@ -263,6 +269,8 @@ class LLMAdapter:
             prompt: 用户提示
             system_prompt: 系统提示词
             output_schema: 可选的 Pydantic 模型类，用于校验输出
+            operation: 业务操作标识（如 query_synthesize, ingest_step1），
+                       用于 token 用量追踪
 
         Returns:
             解析后的 dict
@@ -284,9 +292,10 @@ class LLMAdapter:
         messages.append(HumanMessage(content=full_prompt))
 
         logger.debug(
-            "chat_structured 开始 | provider=%s schema=%s",
+            "chat_structured 开始 | provider=%s schema=%s operation=%s",
             self.provider,
             output_schema.__name__ if output_schema else "dict",
+            operation,
         )
 
         try:
@@ -301,7 +310,7 @@ class LLMAdapter:
             ) from exc
 
         # 先记录 token 用量，再解析 JSON（解析失败也要记录）
-        self._record_usage("chat_structured", response)
+        self._record_usage(operation, response)
 
         content = response.content if hasattr(response, "content") else str(response)
 
