@@ -128,6 +128,59 @@ def test_add_page_logs_operation(repo):
     assert len(rows) >= 1
 
 
+# ============================================================================
+# 搜索
+# ============================================================================
+
+
+def test_search_pages_by_title(repo):
+    """search_pages 按标题匹配"""
+    repo.add_page("entities/python.md", "Python 语言", "entity", tags=["编程"])
+    repo.add_page("entities/java.md", "Java 语言", "entity", tags=["编程"])
+
+    results = repo.search_pages("Python")
+    assert len(results) >= 1
+    assert results[0]["path"] == "entities/python.md"
+
+
+def test_search_pages_by_path(repo):
+    """search_pages 按路径匹配"""
+    repo.add_page("concepts/deep_learning.md", "深度学习", "concept")
+
+    results = repo.search_pages("deep_learning")
+    assert len(results) >= 1
+
+
+def test_search_pages_by_tags(repo):
+    """search_pages 按标签匹配"""
+    repo.add_page("entities/transformer.md", "Transformer", "entity",
+                  tags=["deep-learning", "attention"])
+
+    results = repo.search_pages("attention")
+    assert len(results) >= 1
+
+
+def test_search_pages_no_match(repo):
+    """无匹配时返回空列表"""
+    results = repo.search_pages("xyznonexistent12345")
+    assert results == []
+
+
+def test_search_pages_limit(repo):
+    """limit 参数限制返回数量"""
+    for i in range(5):
+        repo.add_page(f"entities/p{i}.md", f"Python {i}", "entity")
+    results = repo.search_pages("Python", limit=3)
+    assert len(results) == 3
+
+
+def test_search_pages_case_insensitive(repo):
+    """SQLite LIKE 默认不区分大小写"""
+    repo.add_page("entities/python.md", "Python Language", "entity")
+    results = repo.search_pages("python")
+    assert len(results) >= 1
+
+
 def test_add_link_logs_operation(repo):
     """add_link 会自动写入 operation_log"""
     repo.add_page("entities/a.md", "A", "entity")
@@ -142,3 +195,56 @@ def test_add_link_logs_operation(repo):
     conn.close()
 
     assert len(rows) >= 1
+
+
+# ============================================================================
+# 搜索
+# ============================================================================
+
+
+def test_search_pages_by_title(repo):
+    """search_pages 按标题匹配"""
+    repo.add_page("entities/python.md", "Python 语言", "entity", tags=["编程"])
+    repo.add_page("entities/java.md", "Java 语言", "entity", tags=["编程"])
+
+    results = repo.search_pages("Python")
+    assert len(results) >= 1
+    assert results[0]["path"] == "entities/python.md"
+
+
+def test_search_pages_by_path(repo):
+    """search_pages 按路径匹配"""
+    repo.add_page("concepts/deep_learning.md", "深度学习", "concept")
+
+    results = repo.search_pages("deep_learning")
+    assert len(results) >= 1
+
+
+def test_search_pages_by_tags(repo):
+    """search_pages 按标签匹配"""
+    repo.add_page("entities/transformer.md", "Transformer", "entity",
+                  tags=["deep-learning", "attention"])
+
+    results = repo.search_pages("attention")
+    assert len(results) >= 1
+
+
+def test_search_pages_no_match(repo):
+    """无匹配时返回空列表"""
+    results = repo.search_pages("xyznonexistent12345")
+    assert results == []
+
+
+def test_search_pages_limit(repo):
+    """limit 参数限制返回数量"""
+    for i in range(5):
+        repo.add_page(f"entities/p{i}.md", f"Python {i}", "entity")
+    results = repo.search_pages("Python", limit=3)
+    assert len(results) == 3
+
+
+def test_search_pages_case_insensitive(repo):
+    """SQLite LIKE 默认不区分大小写"""
+    repo.add_page("entities/python.md", "Python Language", "entity")
+    results = repo.search_pages("python")
+    assert len(results) >= 1

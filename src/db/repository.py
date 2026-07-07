@@ -154,9 +154,38 @@ class WikiRepository:
         conn.close()
         return result
 
-    def search_pages(self, keyword: str) -> list[dict]:
-        """搜索页面（Phase 2 实现）"""
-        raise NotImplementedError("Phase 2 实现")
+    def search_pages(self, keyword: str, limit: int = 20) -> list[dict]:
+        """
+        搜索页面（SQLite LIKE）
+
+        Args:
+            keyword: 搜索关键词（大小写不敏感）
+            limit: 最大返回条数
+
+        Returns:
+            匹配的页面列表，每项包含 {path, title, page_type, tags, updated_at}
+        """
+        conn = self._get_connection()
+        pattern = f"%{keyword}%"
+        rows = conn.execute(
+            """
+            SELECT path, title, page_type, tags, updated_at
+            FROM wiki_pages
+            WHERE title LIKE ? OR path LIKE ? OR tags LIKE ?
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (pattern, pattern, pattern, limit),
+        ).fetchall()
+
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["tags"] = self._tags_from_json(d["tags"])
+            result.append(d)
+
+        conn.close()
+        return result
 
     def get_orphan_pages(self) -> list[str]:
         """获取孤儿页（Phase 2 实现）"""
