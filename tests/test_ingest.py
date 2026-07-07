@@ -10,12 +10,17 @@ import pytest
 
 
 def test_ingest_endpoint_success(client, mocker):
-    """有效请求返回 200 + IngestResponse"""
+    """有效请求返回 200 + IngestResponse（含 token_usage）"""
     mock_result = {
         "status": "success",
         "pages_created": ["entities/test.md"],
         "pages_updated": [],
         "message": "Ingested 'test.md': 1 created, 0 updated.",
+        "token_usage": {
+            "step1_input": 800,
+            "step1_output": 200,
+            "total": 1000,
+        },
     }
     mocker.patch(
         "src.main.WikiCompiler.ingest",
@@ -27,6 +32,7 @@ def test_ingest_endpoint_success(client, mocker):
     data = response.json()
     assert data["status"] == "success"
     assert "entities/test.md" in data["pages_created"]
+    assert data["token_usage"]["total"] == 1000
 
 
 def test_ingest_endpoint_creates_and_updates(client, mocker):

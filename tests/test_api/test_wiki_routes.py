@@ -141,3 +141,44 @@ class TestWikiRoutes:
 
         result = _convert_wikilinks("[[a.md]] 和 [[b.md|B]] 和 [[c.md]]")
         assert result.count('<a href="/wiki/') == 3
+
+
+class TestGraphViz:
+    """GET /wiki/graph 图谱可视化页面"""
+
+    def test_graph_viz_returns_html(self, client, mocker):
+        """/wiki/graph 返回 HTML 页面"""
+        mocker.patch("src.core.graph.WikiGraph.to_dict", return_value={
+            "nodes": [{"id": "a.md", "degree": {"in": 1, "out": 0}}],
+            "edges": [{"source": "b.md", "target": "a.md"}],
+            "stats": {"total_nodes": 1, "total_edges": 1, "avg_degree": 1.0},
+        })
+
+        response = client.get("/wiki/graph")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert "vis-network" in response.text
+        assert "/v1/graph" in response.text
+
+
+class TestGraphEndpoint:
+    """GET /v1/graph 端点测试"""
+
+    def test_graph_returns_json(self, client, mocker):
+        """/v1/graph 返回图 JSON"""
+        mock_dict = {
+            "nodes": [{"id": "a.md", "degree": {"in": 1, "out": 0}}],
+            "edges": [{"source": "b.md", "target": "a.md"}],
+            "stats": {"total_nodes": 1, "total_edges": 1, "avg_degree": 1.0},
+        }
+        mocker.patch(
+            "src.core.graph.WikiGraph.to_dict",
+            return_value=mock_dict,
+        )
+
+        response = client.get("/v1/graph")
+        assert response.status_code == 200
+        data = response.json()
+        assert "nodes" in data
+        assert "edges" in data
+        assert "stats" in data

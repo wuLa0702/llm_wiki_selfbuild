@@ -8,9 +8,12 @@ import re
 from datetime import datetime
 
 from src.core.cache import IngestCache
+from src.core.graph import WikiGraph
 from src.core.logging_config import get_logger
 from src.core.models import AnalysisOutput, IngestResponse
 from src.core.privacy import PrivacyManager
+from src.core.query_engine import QueryEngine
+from src.core.token_tracker import TokenTracker
 from src.db.repository import WikiRepository
 from src.llm.adapter import LLMAdapter, LLMError
 from src.llm.prompts import (
@@ -19,6 +22,7 @@ from src.llm.prompts import (
     INGEST_GENERATE_TEMPLATE,
 )
 from src.tools.read_tool import ReadTool
+from src.tools.search_tool import SearchTool
 from src.tools.write_tool import WriteTool
 
 logger = get_logger("compiler")
@@ -34,10 +38,21 @@ class WikiCompiler:
     def __init__(self) -> None:
         self.reader = ReadTool("raw")
         self.writer = WriteTool("wiki")
-        self.llm = LLMAdapter()
+        self.token_tracker = TokenTracker()
+        self.llm = LLMAdapter(token_tracker=self.token_tracker)
         self.repo = WikiRepository()
         self.cache = IngestCache()
         self.privacy = PrivacyManager()
+        self.graph = WikiGraph()
+        self.search_tool = SearchTool()
+        self.query_engine = QueryEngine(
+            repo=self.repo,
+            search_tool=self.search_tool,
+            graph=self.graph,
+            llm=self.llm,
+            writer=self.writer,
+            token_tracker=self.token_tracker,
+        )
 
     # ------------------------------------------------------------------
     # 内部工具 — 静态方法
@@ -299,6 +314,38 @@ class WikiCompiler:
         self._update_index()
         self._update_overview()
 
+    @staticmethod
+    def _build_token_usage(
+        s1: dict | None, s2: dict | None, ov: dict | None
+    ) -> dict | None:
+        """
+        组装 token_usage 摘要字典
+
+        Args:
+            s1: Step 1 的 last_usage（chat_structured）
+            s2: Step 2 的 last_usage（chat_template）
+            ov: overview 的 last_usage（chat）
+
+        Returns:
+            {"step1_input": N, "step1_output": N, "step2_input": N, ...} 或 None
+        """
+        usage: dict[str, int] = {}
+        if s1:
+            usage["step1_input"] = s1.get("input_tokens", 0)
+            usage["step1_output"] = s1.get("output_tokens", 0)
+        if s2:
+            usage["step2_input"] = s2.get("input_tokens", 0)
+            usage["step2_output"] = s2.get("output_tokens", 0)
+        if ov and ov != s2:
+            usage["overview_input"] = ov.get("input_tokens", 0)
+            usage["overview_output"] = ov.get("output_tokens", 0)
+
+        if not usage:
+            return None
+
+        usage["total"] = sum(v for v in usage.values())
+        return usage
+
     # ==================================================================
     # Phase 2 — 两步 CoT
     # ==================================================================
@@ -361,6 +408,7 @@ class WikiCompiler:
             f"现有 Wiki 索引:\n\n{index_context}\n\n"
             f"请分析以下源文件内容:\n\n{content}"
         )
+        s1 = None
         for attempt in range(2):
             try:
                 analysis = self.llm.chat_structured(
@@ -368,6 +416,7 @@ class WikiCompiler:
                     system_prompt=SYSTEM_PROMPT_INGEST_ANALYZE,
                     output_schema=AnalysisOutput,
                 )
+                s1 = self.llm.last_usage  # 捕获 Step 1 token 用量
                 break
             except LLMError as e:
                 if "Failed to parse" in str(e):
@@ -406,8 +455,19 @@ class WikiCompiler:
 
         confidence_summary = self._extract_confidence_summary(pages)
         created, updated = self._write_pages(pages, privacy_matches)
+
+        # 捕获 Step 2 的 token 用量
+        s2 = self.llm.last_usage
+
         self._update_nav_files(source_path, pages)
         self.cache.mark_ingested(source_path)
+        self.graph.build()
+
+        # 捕获 overview 的 token 用量（如果调了 LLM）
+        ov = self.llm.last_usage if self.llm.last_usage != s2 else None
+
+        # 组装 token_usage 摘要
+        token_usage = self._build_token_usage(s1, s2, ov)
 
         logger.info("两步 CoT 完成 | created=%d updated=%d", len(created), len(updated))
         return IngestResponse(
@@ -417,6 +477,7 @@ class WikiCompiler:
             message=f"Ingested '{source_path}': "
             f"{len(created)} created, {len(updated)} updated.",
             confidence_summary=confidence_summary,
+            token_usage=token_usage,
         ).model_dump()
 
     @staticmethod
@@ -481,9 +542,14 @@ class WikiCompiler:
                 message=f"No entities/concepts were extracted from '{source_path}'.",
             ).model_dump()
 
+        s1 = self.llm.last_usage  # 单步的模式，算作 step1
         created, updated = self._write_pages(pages, privacy_matches)
         self._update_nav_files(source_path, pages)
+        ov = self.llm.last_usage if self.llm.last_usage != s1 else None
+
         self.cache.mark_ingested(source_path)
+        self.graph.build()
+        token_usage = self._build_token_usage(s1, None, ov)
 
         return IngestResponse(
             status="success",
@@ -491,14 +557,29 @@ class WikiCompiler:
             pages_updated=updated,
             message=f"Ingested '{source_path}': "
             f"{len(created)} created, {len(updated)} updated.",
+            token_usage=token_usage,
         ).model_dump()
 
     # ------------------------------------------------------------------
-    # Query / Lint — Phase 2
+    # Query — Phase 3 Step 4
     # ------------------------------------------------------------------
 
-    def query(self, question: str) -> dict:
-        raise NotImplementedError("Phase 2 实现")
+    def query(self, question: str, max_pages: int = 10, archive: bool = False) -> dict:
+        """基于 wikilinks 图扩展的 Wiki 导航查询
+
+        Args:
+            question: 用户问题
+            max_pages: 最多加载的候选页面数
+            archive: 是否将答案归档到 wiki/queries/
+
+        Returns:
+            {"answer": "...", "sources": [...], "confidence": "...", "archived": ...}
+        """
+        return self.query_engine.query(question, max_pages=max_pages, archive=archive)
+
+    # ------------------------------------------------------------------
+    # Lint — Phase 3 Step 5
+    # ------------------------------------------------------------------
 
     def lint(self) -> dict:
-        raise NotImplementedError("Phase 2 实现")
+        raise NotImplementedError("Phase 3 Step 5 实现")

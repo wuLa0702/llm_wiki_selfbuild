@@ -346,3 +346,75 @@ def test_ingest_cache_marks_after_simple(compiler, mocker):
 
     result = compiler.ingest("test.md")  # 第二次应跳过
     assert result["status"] == "skipped"
+
+
+# ============================================================================
+# Token 用量集成
+# ============================================================================
+
+
+def test_ingest_returns_token_usage(compiler, mocker):
+    """两步 CoT ingest 返回 token_usage"""
+    import json
+
+    mock_llm = mocker.MagicMock()
+    mock_response1 = mocker.MagicMock()
+    mock_response1.content = json.dumps(MOCK_ANALYSIS)
+    mock_response1.response_metadata = {
+        "token_usage": {"prompt_tokens": 80, "completion_tokens": 20, "total_tokens": 100},
+    }
+    mock_response2 = mocker.MagicMock()
+    mock_response2.content = MOCK_GENERATE_RESPONSE
+    mock_response2.response_metadata = {
+        "token_usage": {"prompt_tokens": 200, "completion_tokens": 100, "total_tokens": 300},
+    }
+    mock_llm.invoke.side_effect = [mock_response1, mock_response2]
+    compiler.llm._llm = mock_llm
+
+    mocker.patch.object(compiler, "_update_overview")
+
+    result = compiler.ingest("test.md")
+    assert result["status"] == "success"
+    assert result["token_usage"] is not None
+    assert result["token_usage"]["step1_input"] == 80
+    assert result["token_usage"]["step1_output"] == 20
+    assert result["token_usage"]["step2_input"] == 200
+    assert result["token_usage"]["step2_output"] == 100
+    assert result["token_usage"]["total"] == 400  # 80+20 + 200+100
+
+
+def test_ingest_simple_returns_token_usage(compiler, mocker):
+    """ingest_simple 也返回 token_usage"""
+    mock_llm = mocker.MagicMock()
+    mock_response = mocker.MagicMock()
+    mock_response.content = MOCK_GENERATE_RESPONSE
+    mock_response.response_metadata = {
+        "token_usage": {"prompt_tokens": 50, "completion_tokens": 25, "total_tokens": 75},
+    }
+    mock_llm.invoke.return_value = mock_response
+    compiler.llm._llm = mock_llm
+
+    mocker.patch.object(compiler, "_update_overview")
+
+    result = compiler.ingest_simple("test.md")
+    assert result["status"] == "success"
+    assert result["token_usage"] is not None
+    assert result["token_usage"]["step1_input"] == 50
+    assert result["token_usage"]["step1_output"] == 25
+
+
+# ============================================================================
+# WikiGraph 集成
+# ============================================================================
+
+
+def test_ingest_builds_graph(compiler, mocker):
+    """ingest 后 graph 被构建且包含新页面"""
+    _mock_cot(mocker, compiler)
+    compiler.graph.wiki_dir = compiler.writer.base_dir
+
+    compiler.ingest("test.md")
+    nodes = compiler.graph.nodes()
+    assert "entities/python.md" in nodes
+    assert "concepts/ai.md" in nodes
+

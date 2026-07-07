@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.core.logging_config import configure_logging, get_logger
-from src.core.models import IngestRequest, IngestResponse
+from src.core.models import IngestRequest, IngestResponse, QueryRequest, QueryResponse
 from src.core.privacy import PrivacyManager
 from src.core.wiki_compiler import CompilerError, WikiCompiler
 from src.db.repository import WikiRepository
@@ -77,11 +77,33 @@ async def ingest(request: IngestRequest):
         )
 
 
-@app.get("/v1/query")
-async def query():
-    """Query the wiki knowledge base (to be implemented)"""
-    logger.info("GET /v1/query 被调用（桩代码）")
-    return {"message": "Query endpoint — not yet implemented"}
+@app.post("/v1/query", response_model=QueryResponse)
+async def query(request: QueryRequest):
+    """查询 Wiki 知识库，返回带 [[引用]] 的综合回答"""
+    logger.info("POST /v1/query | question=%s archive=%s", request.question, request.archive)
+
+    compiler = WikiCompiler()
+    try:
+        result = compiler.query(request.question, archive=request.archive)
+        return QueryResponse(
+            answer=result.get("answer", ""),
+            sources=result.get("sources", []),
+            confidence=result.get("confidence", "low"),
+            gaps=result.get("gaps", []),
+            archived=result.get("archived"),
+        )
+    except LLMError as e:
+        logger.error("Query 失败 (LLM): %s", e)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "LLM call failed", "detail": str(e), "code": "LLM_ERROR"},
+        )
+    except Exception as e:
+        logger.error("Query 失败 (unexpected): %s", e)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal error", "detail": str(e), "code": "INTERNAL"},
+        )
 
 
 @app.get("/v1/lint")
@@ -89,6 +111,14 @@ async def lint():
     """Check wiki health (to be implemented)"""
     logger.info("GET /v1/lint 被调用（桩代码）")
     return {"message": "Lint endpoint — not yet implemented"}
+
+
+@app.get("/v1/graph")
+async def wiki_graph():
+    """返回 Wiki 页面的 wikilinks 关系图（JSON）"""
+    logger.info("GET /v1/graph")
+    compiler = WikiCompiler()
+    return compiler.graph.to_dict()
 
 
 # ==================================================================
@@ -251,12 +281,104 @@ async def wiki_index():
 </head>
 <body>
 <h1>LLM Wiki 知识库</h1>
-<p>共 {len(all_files)} 个页面</p>
+<p>共 {len(all_files)} 个页面 · <a href="/wiki/graph" class="wikilink">图谱视图</a></p>
 {''.join(sections)}
 </body>
 </html>"""
     return html
 
+
+@app.get("/wiki/graph", response_class=HTMLResponse)
+async def wiki_graph_viz():
+    """Wiki 图谱可视化 — 交互式力导向图"""
+    return HTMLResponse("""<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wiki 图谱 — LLM Wiki</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.6/dist/vis-network.min.js"></script>
+<style>
+  body { margin: 0; font-family: -apple-system, sans-serif; }
+  #toolbar { position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+             background: #fff; border-bottom: 1px solid #ddd;
+             padding: 8px 20px; display: flex; align-items: center; gap: 16px;
+             font-size: 14px; }
+  #toolbar a { color: #2a5db0; text-decoration: none; }
+  #toolbar a:hover { text-decoration: underline; }
+  #stats { color: #888; font-size: 13px; }
+  #mynetwork { position: fixed; top: 41px; left: 0; right: 0; bottom: 0; }
+  .vis-network:focus { outline: none; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <a href="/wiki">&larr; Wiki 首页</a>
+  <span id="stats">加载中...</span>
+</div>
+<div id="mynetwork"></div>
+<script>
+fetch('/v1/graph')
+  .then(r => r.json())
+  .then(data => {
+    const typeColors = {
+      entity: '#3498db', concept: '#2ecc71', source: '#f39c12',
+      query: '#9b59b6', other: '#95a5a6',
+    };
+    const nodes = data.nodes.map(n => {
+      const parts = n.id.split('/');
+      const type = parts.length > 1 ? parts[0] : 'other';
+      let label = parts.pop().replace(/\\.md$/, '');
+      const deg = n.degree.out + n.degree.in;
+      const size = Math.max(12, Math.min(40, 8 + deg * 3));
+      return {
+        id: n.id, label, title: `${n.id}\\n出度: ${n.degree.out} | 入度: ${n.degree.in}`,
+        color: { background: typeColors[type] || typeColors.other, border: '#2c3e50' },
+        size, borderWidth: 1.5,
+        font: { size: 11, color: '#2c3e50' },
+        shape: 'dot',
+      };
+    });
+    const edges = data.edges.map(e => ({
+      from: e.source, to: e.target,
+      arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+      color: { color: '#bdc3c7', highlight: '#2a5db0', opacity: 0.5 },
+      width: 1,
+    }));
+
+    const s = data.stats;
+    document.getElementById('stats').textContent =
+      `${s.total_nodes} 个页面 · ${s.total_edges} 条链接 · 平均度 ${s.avg_degree.toFixed(1)}`;
+
+    const container = document.getElementById('mynetwork');
+    const visNodes = new vis.DataSet(nodes);
+    const visEdges = new vis.DataSet(edges);
+    const network = new vis.Network(container, { nodes: visNodes, edges: visEdges }, {
+      physics: { solver: 'forceAtlas2Based', forceAtlas2Based: { springLength: 200, springConstant: 0.02 } },
+      interaction: { hover: true, tooltipDelay: 200 },
+      edges: { smooth: { type: 'continuous' } },
+    });
+
+    let selectedId = null;
+    network.on('click', function(params) {
+      if (params.nodes.length) {
+        window.location.href = '/wiki/' + params.nodes[0];
+      } else if (selectedId) {
+        network.selectNodes([]);
+        selectedId = null;
+      }
+    });
+    network.on('hoverNode', function(params) {
+      selectedId = params.node;
+      document.body.style.cursor = 'pointer';
+    });
+    network.on('blurNode', function() {
+      document.body.style.cursor = 'default';
+    });
+  });
+</script>
+</body>
+</html>""")
 
 @app.get("/wiki/{page_path:path}", response_class=HTMLResponse)
 async def wiki_page(page_path: str):
