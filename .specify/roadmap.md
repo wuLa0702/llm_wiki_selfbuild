@@ -9,6 +9,9 @@
 > 📂 **本目录文件关系**：
 > - `roadmap.md`（本文件）— 全局路线图：阶段目标 + 功能概览 + 面试要点 + 开发约定
 > - `roadmap-phase1.md` — Phase 1 详细任务分解（日常开发的 checklist）
+> - `roadmap-phase2.md` — Phase 2 详细任务分解
+> - `roadmap-phase3.md` — Phase 3 详细任务分解（当前阶段）
+> - `roadmap-phase3-selfcheck.md` — Phase 3 自检报告：对照 nashsu/cobusgreyling 的功能缺失与修正
 > - `001-整体架构设计.md` — 项目自身的技术架构设计
 > - `llm-wiki-commons.md` — 外部参考：7+ 个框架的共性设计模式
 > - `knowledge-reference.md` — 知识点手册：概念解释 + 面试话术 + 参考链接
@@ -38,10 +41,11 @@
 
 ```
 Phase 1          ████████████████████  100% ✅
-Phase 2（当前）    ████░░░░░░░░░░░░░░░░   20%  ← 你在的位置
-Phase 3          ░░░░░░░░░░░░░░░░░░░░   0%  增强摄入 + Query 查询
-Phase 4          ░░░░░░░░░░░░░░░░░░░░   0%  知识图谱 + Lint 检查
-Phase 5          ░░░░░░░░░░░░░░░░░░░░   0%  搜索 + MCP + 面试打磨
+Phase 2          ████████████████████  100% ✅
+Phase 3（当前）    ████░░░░░░░░░░░░░░░░   20%  ← 你在的位置
+Phase 4          ░░░░░░░░░░░░░░░░░░░░   0%  知识图谱 + 体验提升
+Phase 5          ░░░░░░░░░░░░░░░░░░░░   0%  搜索增强 + 自动化
+Phase 6          ░░░░░░░░░░░░░░░░░░░░   0%  多模态 + 企业级
 
 面试就绪线 ──────────────────────────── Phase 4.5 即可达到
 ```
@@ -76,130 +80,158 @@ LLM 能读取 raw/ 下的源文件，编译后写入 wiki/，并记录元数据�
 
 ---
 
-## Phase 2：增强摄入 + 元数据完善
+## Phase 2：增强摄入 + 元数据完善 ✅
 
-> **状态**：🟡 进行中
+> **状态**：✅ 已完成
 > **对标**：nashsu v0.2 / cobusgreyling v0.2
 > **详细任务清单**：[roadmap-phase2.md](roadmap-phase2.md)（日常开发参考，含依赖链和验证命令）
 
-### 目标
-
-把"能跑通"升级为"能生产用"——加入缓存、元数据、质量信号。
-
-### 功能清单
+### 已完成功能
 
 | 功能 | 文件 | 说明 |
 |------|------|------|
-| **SHA256 增量缓存** | `src/core/wiki_compiler.py` | 源文件内容哈希 → 未变则跳过，省 tokens |
+| **SHA256 增量缓存** | `src/core/cache.py` | 源文件内容哈希 → 未变则跳过，省 tokens |
 | **两步 CoT 摄入** | `src/core/wiki_compiler.py` | Step 1: LLM 分析 → Step 2: LLM 生成 |
-| **index.md 自动维护** | `src/core/wiki_compiler.py` | 每次摄入后更新全局目录 |
+| **index.md 自动维护** | `src/core/wiki_compiler.py` | 每次摄入后更新全局索引+目录 |
 | **overview.md 自动更新** | `src/core/wiki_compiler.py` | 全局综述页面 |
-| **sources/ 来源摘要页** | `src/tools/write_tool.py` | 每个源文件对应一个摘要页 |
+| **log.md 格式修正** | `src/core/wiki_compiler.py` | 操作日志，新条目在前 |
 | **Purpose.md** | 项目根目录 | 知识库目标声明（LLM 每次读） |
-| **置信度标注** | LLM prompt 约束 | high/medium/low + EXTRACTED/INFERRED |
-| **操作日志增强** | `src/db/repository.py` | log.md + operation_log 表双写 |
+| **置信度标注** | LLM prompt + frontmatter | high/medium/low |
+| **隐私标记与访问控制** | `src/core/privacy.py` | PrivacyManager + 默认关键词 + visibility frontmatter |
+| **内容质量校验** | `src/core/validator.py` | 路径校验 + frontmatter 校验 + 可执行代码拦截 |
+| **Wiki 浏览路由** | `src/main.py` | `/wiki` + `/wiki/{path}` HTML 渲染 + wikilinks 导航 |
+| **ChatPromptTemplate** | `src/llm/adapter.py` | 模板化 LLM 调用 |
+| **StructuredOutput** | `src/llm/adapter.py` | Pydantic JSON 校验解析 |
 
 ### 面试可讲
 
 - "我用了 SHA256 哈希做增量缓存，避免重复处理相同内容"
 - "我参考了 nashsu/llm_wiki 的两步 CoT 设计，先分析再生成"
 - "每次摄入后 LLM 会自动更新全局综述，让 wiki 保持全局视角"
+- "隐私模型不是'拦截不处理'，而是'全量生成 + 按标记限制访问'"
+
+> 注：Phase 2 原计划的 Query/Lint 功能按 roadmap 设计属于 Phase 3/4，Phase 2 的 query() 和 lint() 桩代码在 Phase 3/4 中实现。
 
 ---
 
-## Phase 3：Query 查询 + API 完善
+## Phase 3：Query + Token 治理 + 图解析 + 静态 Lint + Source 监听
 
-> **状态**：⬜ 未开始
-> **对标**：nashsu v0.2-v0.3
+> **状态**：🟡 进行中
+> **对标**：nashsu v0.3 / cobusgreyling v0.2
+> **详细任务清单**：[roadmap-phase3.md](roadmap-phase3.md)（含依赖链和验证命令）
+> **自检报告**：[roadmap-phase3-selfcheck.md](roadmap-phase3-selfcheck.md)
 
 ### 目标
 
-wiki 写进去了，要能查出来——实现基于 index.md 的导航式查询。
+wiki 写进去了，要能查出来——基于 wikilinks 图扩展的导航式 Query（非 RAG）。同时建立 token 治理和确定性基础设施。
 
 ### 功能清单
 
 | 功能 | 文件 | 说明 |
 |------|------|------|
-| **Query 查询** | `src/core/wiki_compiler.py` | 读 index.md → 定位相关页 → 遍历 wikilinks → 综合回答 |
-| **GET /v1/query** | `src/main.py` | API 端点，返回带引用的答案 |
-| **答案归档** | `src/tools/write_tool.py` | 有价值的查询结果存回 wiki/queries/ |
-| **GET /v1/pages** | `src/main.py` | 列出所有 wiki 页面 |
-| **GET /v1/pages/{path}** | `src/main.py` | 读取单个 wiki 页面 |
-| **搜索（基础）** | `src/tools/search_tool.py` | 文件名+标题关键词搜索 |
+| **Token 使用量追踪** | `src/core/token_tracker.py`（新） + `src/llm/adapter.py` | 每次 LLM 调用记录 token 消耗，SQlite 持久化 |
+| **Wikilinks 图解析器** | `src/core/graph.py`（新） | 正则解析 `[[wikilinks]]` → 邻接表 + 反链索引，零 LLM 成本 |
+| **Query 查询引擎** | `src/core/wiki_compiler.py` | 关键词 + 图扩展导航查询 — 不靠向量相似度，靠编译好的 wikilinks 连接 |
+| **静态 Lint 检查** | `src/core/linter.py`（新） | 断链/孤页/索引缺失 + 健康评分，零 LLM 成本 |
+| **Source 自动监听** 🆕 | `src/core/watcher.py`（新） | 轮询 raw/sources/ → 新文件自动触发 ingest |
+| **搜索能力补齐** | `src/tools/search_tool.py` + `src/db/repository.py` | 文件名+标题+SQLite 关键词搜索 |
+| **答案归档** | `src/core/wiki_compiler.py` | 高质量查询结果存回 wiki/queries/ |
+| **API 端点完善** | `src/main.py` | `/v1/query` `/v1/pages` `/v1/pages/{path}` `/v1/lint` `/v1/usage` |
 
 ### 面试可讲
 
-- "查询不是 RAG 式的 chunk 检索，而是基于 wiki 页面级别的导航查询"
-- "LLM 先读 index.md 定位候选页面，再遍历 wikilinks 深入，最后综合回答"
-- "好的答案可以归档回 wiki，不沉没在聊天记录中"
+- "查询不是 RAG 式的 chunk 检索，而是基于 wikilinks 图的导航查询——LLM 先读 index 定位候选页，再用图扩展发现关联页面"
+- "图解析器和静态 Lint 都是确定性算法，零 LLM 成本——基础设施不应该烧钱"
+- "Source 文件夹支持自动监听——丢文件进去，自动处理"
+- "Token 治理是生产级系统的基本功——每次调用消耗可追溯"
 
 ---
 
-## Phase 4：知识图谱 + Lint 检查
+## Phase 4：知识图谱（完整）+ 批量导入 + MCP
 
 > **状态**：⬜ 未开始
-> **对标**：nashsu v0.3-v0.4
+> **对标**：nashsu v0.4-v0.5
 
 ### 目标
 
-让 wiki 的连接关系可视化，并具备自我诊断能力。
+知识图谱从"能用"升级为"面试亮点"——完整 4-signal 模型 + 社区检测 + 图谱洞察。同时补齐批量导入和 Agent 集成。
 
 ### 功能清单
 
-| 功能 | 文件 | 说明 |
-|------|------|------|
-| **Wikilinks 解析器** | `src/core/graph.py` | 正则解析所有 wiki 页面的 `[[links]]` |
-| **知识图谱 JSON** | `src/core/graph.py` | 节点+边数据，输出为 JSON |
-| **图谱可视化 HTML** | `static/graph.html` | 自包含 HTML（vis.js/D3.js），双击打开 |
-| **Lint 检查** | `src/core/linter.py` | 断链检测、孤页检测、矛盾检测 |
-| **GET /v1/lint** | `src/main.py` | API 端点，返回检查报告 |
-| **GET /v1/graph** | `src/main.py` | API 端点，返回图谱数据 |
-| **矛盾标记系统** | LLM prompt + frontmatter | 摄入时标记 ⚠️ 矛盾 |
-| **密码保护** | `src/core/auth.py`（新） | 私人数据密码验证解锁，API 中间件 |
+| 功能 | 说明 | 对标 nashsu |
+|------|------|:--:|
+| **四信号知识图谱** | 直接链接 ×3.0 + 来源重叠 ×4.0 + Adamic-Adar ×1.5 + 类型亲和 ×1.0 | ✅ |
+| **Louvain 社区检测** | 自动发现知识聚类，内聚度评分，低内聚社区标记 | ✅ |
+| **图谱可视化 HTML** | sigma.js / vis.js，节点大小=链接数，边粗细=关联权重，hover 高亮邻域 | ✅ |
+| **图谱洞察** | 惊奇连接（跨社区边）+ 知识空白（孤立节点、稀疏社区、桥节点） | ✅ |
+| **LLM 语义 Lint** | 矛盾检测 + 知识缺口识别 + 浅页标记（一个 LLM 调用批量检测） | ✅ |
+| **密码保护** | `src/core/auth.py`（新），API 中间件，restricted 页面需密码 | — |
+| **文件夹导入** | 递归导入保留目录结构，文件夹路径作为 LLM 分类上下文 | ✅ |
+| **持久化摄入队列** | 串行处理 + 崩溃恢复 + 取消/重试 + 进度查询 API | ✅ |
+| **MCP Server** | 让 Claude Code/Cursor 查询 wiki — search/expand/list/lint/graph/stats | ✅ |
 
-### 知识图谱两遍构建
+### 知识图谱两遍构建（Phase 3 基础 + Phase 4 扩展）
 
 ```
-第一遍（确定性）: 正则解析 [[wikilinks]] → 显式边
-第二遍（语义性）: LLM 推断隐式关系 → 隐式边（带置信度）
+第一遍（确定性，Phase 3 已完成）: 正则解析 [[wikilinks]] → 显式边 + 邻接表
+第二遍（语义性，Phase 4 新增）:    LLM 推断隐式关系 → 4-signal 加权边 + Louvain 聚类
 ```
 
 ### 面试可讲
 
-- "知识图谱采用两遍构建法——确定性解析 + 语义推断"
-- "Lint 不是简单的断链检查，还包括矛盾检测和知识缺口识别"
-- "图谱可视化是自包含 HTML 文件，无需服务器，双击即可浏览"
+- "知识图谱不是简单的链接解析——我用四信号模型计算页面间的关联度，包括来源重叠和 Adamic-Adar 图距离"
+- "Louvain 社区检测自动发现你的知识聚类，比如你可能不知道自己读了 20 篇 NLP 论文，但图谱告诉你了"
+- "图谱洞察会标记'惊奇连接'——两个看起来不相关但被图算法发现深层关联的页面"
+- "MCP Server 让外部 AI 可以直接搜索我的 wiki——面试时可以实时演示 Claude Code 查 wiki"
 
 ---
 
-## Phase 5：搜索增强 + MCP Server + 面试打磨
+## Phase 5：搜索增强 + 自动化 + 审核
 
 > **状态**：⬜ 未开始
-> **对标**：nashsu v0.5 / cobusgreyling v0.2 MCP
+> **对标**：nashsu v0.5+
 
 ### 目标
 
-达到面试竞争力——搜索、Agent 集成、完整的文档和测试。
+搜索从 SQLite LIKE 升级为向量语义搜索。加入 Deep Research 和审核系统，让 wiki 具备自我进化能力。
 
 ### 功能清单
 
-| 功能 | 说明 |
-|------|------|
-| **BM25 搜索** | 关键词全文搜索，tantivy 或 whoosh |
-| **向量搜索（可选）** | embedding + LanceDB/ChromaDB |
-| **混合搜索** | BM25 + 向量 RRF 融合 |
-| **MCP Server** | 让 Claude Code/Cursor 等 Agent 可以查询 wiki |
-| **Deep Research（可选）** | LLM 自动搜索网络补充知识缺口 |
-| **Web Clipper（可选）** | 浏览器剪藏插件 |
-| **完整测试覆盖** | 单元测试 + 集成测试 + 边界情况 |
-| **API 文档** | OpenAPI/Swagger 完善 |
-| **演示数据** | 准备 10-20 个源文件 + 生成的 wiki 展示 |
+| 功能 | 说明 | 对标 nashsu |
+|------|------|:--:|
+| **向量语义搜索** | embedding + LanceDB，任意 OpenAI 兼容端点，recall 提升 ~13% | ✅ |
+| **混合搜索** | BM25 关键词 + 向量语义 RRF 融合，解决"语义相近但关键词不匹配" | ✅ |
+| **Deep Research** | LLM 生成搜索主题 → Tavily/SerpApi 联网搜索 → 结果自动摄入 Wiki | ✅ |
+| **异步审核系统** | 摄入时 LLM 标记需人工判断的项（矛盾确认、置信度低的推断） | ✅ |
+| **Chrome 网页剪藏** | `POST /v1/clip?url=...` API + bookmarklet，一键捕获网页内容 | ✅ |
+| **完整测试覆盖** | 单元测试 + 集成测试 + 边界情况，覆盖率 > 80% | — |
+| **API 文档完善** | OpenAPI/Swagger 完善，README 架构图 | — |
 
 ### 面试可讲
 
-- "我实现了混合搜索——BM25 关键词 + 向量语义，RRF 融合排序"
-- "通过 MCP Server，外部 AI Agent 可以直接查询我的 wiki"
-- "完整的测试覆盖和 API 文档"
+- "我实现了混合搜索——BM25 关键词 + 向量语义，RRF 融合排序，recall 提升超过 10%"
+- "Deep Research 让 wiki 能自动补充知识缺口——系统发现你缺乏某个主题，自动搜索并摄入"
+- "异步审核系统在摄入时自动标记需要人工判断的内容，而不是盲目信任 LLM"
+
+---
+
+## Phase 6：多模态 + 企业级特性
+
+> **状态**：⬜ 未开始
+> **对标**：nashsu v1.0+
+
+### 目标
+
+支持图片和复杂 PDF，完善自动化监听。这一阶段**按需启动**——取决于你的实际数据类型。
+
+### 功能清单
+
+| 功能 | 说明 | 何时做 |
+|------|------|--------|
+| **多模态图片摄入** | PDF 内嵌图片提取 → 视觉模型生成事实性描述 → lightbox 预览 → 跳转原文 | 数据含大量图表时 |
+| **MinerU PDF 解析（可选）** | 云端解析复杂 PDF（表格/公式/密集排版），默认仍用内置解析 | 数据含学术论文时 |
+| **Source 自动监听（完整版）** | 检测 raw/sources/ 删除 → 清理孤儿 wiki；检测修改 → 重新 ingest | Phase 3 基础版 → Phase 6 完整版 |
+| **图谱洞察 → 一键 Deep Research** | 从知识空白卡片直接触发网络搜索 | Phase 4 洞察 + Phase 5 DR 联调 |
 
 ---
 
@@ -208,18 +240,20 @@ wiki 写进去了，要能查出来——实现基于 index.md 的导航式查�
 ### 最低面试标准（Phase 4 完成时）
 
 ✅ 能演示的功能：
-1. 上传一篇技术文章 → LLM 自动生成带 `[[wikilinks]]` 的 wiki 页面
+1. 丢一篇文章到 raw/sources/ → 自动生成带 `[[wikilinks]]` 的 wiki 页面（Source 监听）
 2. 上传第二篇相关文章 → LLM 更新已有页面并标记矛盾
-3. 通过 API 查询 → LLM 遍历 wiki 页面综合回答
-4. 打开 graph.html → 看到知识图谱可视化
-5. 调用 /v1/lint → 看到 wiki 健康检查报告
+3. 打开 graph.html → 看到四信号知识图谱 + Louvain 社区聚类
+4. 图谱洞察 → 惊叹"这个系统发现了我不知道的知识空白"
+5. POST /v1/query → LLM 基于图扩展综合回答，带 `[[引用]]`
+6. Claude Code 通过 MCP 直接搜索我的 wiki → 实时演示
 
 ✅ 能讲清楚的设计决策：
 1. 为什么是三层架构而不是 RAG？（编译器 vs 解释器）
 2. 为什么 LLM 只写 wiki/ 不写 raw/？（不可变事实基准）
 3. 两步 CoT 为什么比单步好？（理解与写作分离）
-4. 知识图谱两遍构建的原理？
-5. 安全模型如何防止路径穿越？
+4. 四信号知识图谱 vs 简单 wikilinks 解析的区别？
+5. Louvain 社区检测的工作原理和应用场景？
+6. 安全模型如何防止路径穿越？
 
 ✅ 代码质量：
 - pytest 测试覆盖率 > 80%
@@ -229,14 +263,18 @@ wiki 写进去了，要能查出来——实现基于 index.md 的导航式查�
 
 ### 加分项（面试中脱颖而出的点）
 
-| 加分项 | 难度 | 说明 |
-|--------|------|------|
-| MCP Server 集成 | 中 | 演示 "Claude Code 查询我的 wiki" |
-| 两步 CoT 摄入 | 中 | 原创性设计，不是简单的 prompt engineering |
-| 知识图谱两遍构建 | 中 | 确定性+语义性双通道 |
-| 矛盾标记系统 | 低 | 简单的 prompt 约束 + frontmatter 字段 |
-| SHA256 增量缓存 | 低 | 工程实用性 |
-| 向量混合搜索 | 高 | LanceDB/ChromaDB 集成 |
+| 加分项 | 难度 | Phase | 说明 |
+|--------|------|:--:|------|
+| 四信号知识图谱 | 中 | 4 | 不是简单链接解析，是图算法 + 相关性建模 |
+| Louvain 社区检测 | 中 | 4 | "系统自动发现你的知识聚类" |
+| MCP Server 集成 | 中 | 4 | 演示 "Claude Code 查询我的 wiki" |
+| 两步 CoT 摄入 | 中 | 2 | 原创性设计，不是简单的 prompt engineering |
+| 图谱洞察（惊奇连接） | 中 | 4 | "发现了你自己都不知道的知识关联" |
+| 静态 Lint（零 LLM 成本） | 低 | 3 | 确定性算法做基础设施的原则 |
+| SHA256 增量缓存 | 低 | 2 | 工程实用性 |
+| 向量混合搜索 | 高 | 5 | LanceDB 集成 |
+| Deep Research | 高 | 5 | 自动搜索 + 摄入闭环 |
+| 多模态图片摄入 | 高 | 6 | 视觉模型集成 |
 
 ---
 
@@ -244,14 +282,16 @@ wiki 写进去了，要能查出来——实现基于 index.md 的导航式查�
 
 | 阶段 | 预估时间 | 里程碑 |
 |------|---------|--------|
-| Phase 1 | 1-2 周（剩余） | `POST /v1/ingest` 端到端跑通 |
-| Phase 2 | 2-3 周 | 增强摄入 + 完整元数据 |
-| Phase 3 | 2-3 周 | Query + API 完善 |
-| Phase 4 | 3-4 周 | 知识图谱 + Lint |
-| Phase 5 | 3-5 周 | 搜索 + MCP + 面试打磨 |
-| **合计** | **约 11-17 周** | 达到面试就绪 |
+| Phase 1 | 1-2 周（已完成 ✅） | `POST /v1/ingest` 端到端跑通 |
+| Phase 2 | 2-3 周（已完成 ✅） | 增强摄入 + 完整元数据 |
+| Phase 3 | 2-3 周 | Query + 图解析 + 静态 Lint + Source 监听 |
+| Phase 4 | 3-5 周 | 四信号图谱 + Louvain + MCP + 批量导入 |
+| Phase 5 | 3-5 周 | 向量搜索 + Deep Research + 审核 + 剪藏 |
+| Phase 6 | 按需 | 多模态 + 企业级 |
+| **面试就绪** | **Phase 4 完成** | 核心差异化功能全部就位 |
+| **合计（到 Phase 5）** | **约 14-21 周** | 完整功能闭环 |
 
-> ⚠️ 这是保守估计。nashsu 从 0 到 v0.5（我们的 Phase 4 水平）用了约 3 个月高频迭代。
+> nashsu 从 0 到 v0.5 用了约 3 个月高频迭代。我们的 Phase 4 对标 nashsu v0.5 的核心能力。
 
 ---
 
@@ -338,17 +378,67 @@ wiki 写进去了，要能查出来——实现基于 index.md 的导航式查�
 
 ---
 
+### 约定三：方案设计自检（对照参考项目）
+
+**触发时机**：每个 Phase 的方案设计文档完成后、开始编码前。
+
+**流程**：
+
+1. Claude 搜索参考项目（nashsu/llm_wiki、cobusgreyling/llm-wiki）的当前版本实际功能
+2. 逐项对比：我的设计 vs 参考项目同阶段功能
+3. 按三个等级判定每个功能：
+   - ✅ 已有 / 覆盖
+   - ➕ 我独有（创新）
+   - 🔴 缺失（需补充）
+   - 🟡 降级版（实现简单但参考项目更强，需标注原因）
+4. 对 🔴 缺失项评估：
+   - 是否零 LLM 成本？→ 是 → **必须加入当前阶段**（不消耗 tokens，没理由不做）
+   - 是否需要 LLM？→ 是 → 评估是否延后或缩简
+5. 输出自检报告到 `.specify/roadmap-phaseX-selfcheck.md`，修正方案设计
+
+**Why:** 
+- 参考项目公开了设计演进过程，不用闭门造车
+- 确定性算法（零 LLM 成本）应该尽早做，不应无理由延后
+- 避免 Phase 结束才发现缺少关键功能
+
+---
+
+### 约定四：80% 里程碑 — 准备测试数据
+
+**触发时机**：当总体项目进度达到约 80%（Phase 4 中后期，知识图谱 + Lint 完成后）。
+
+**行动**：
+
+1. Claude 提醒："项目已接近 80%，该准备一批真实数据做个人知识处理了。"
+2. 准备 10-20 篇个人相关的技术文章/笔记/书摘（中文为主）
+3. 用这批数据跑完整的 "Ingest → Query → Lint" 闭环
+4. 验证点：
+   - 中文标题和文件名是否正确生成
+   - [[wikilinks]] 密度是否足够（每页至少 2 个）
+   - 断链率是否 < 5%
+   - 隐私标记是否准确命中
+   - Query 答案是否达到可用水平
+5. 根据实际数据效果调优 prompt + 参数
+
+**Why:** 开发时用的是测试数据（短、干净、英文为主），真实数据会有各种边界情况（长文、中文、格式混乱、敏感内容）。80% 是验证"实验室里的设计在现实中是否成立"的最佳时机。
+
+---
+
 ## 当前优先事项
 
-**本周目标（Phase 1 收尾）**：
+**本周目标（Phase 3 启动）**：
 
-1. 完成 `WikiCompiler.ingest()` 核心逻辑
-2. 通过 `POST /v1/ingest` 调通端到端流程
-3. 写一个简单的集成测试验证
-4. 所有现有测试通过 `pytest`
+1. Token 追踪基础设施 — `TokenTracker` + `LLMAdapter` 集成 + `token_usage_log` 表
+2. 搜索能力补齐 — `SearchTool.search()` + `WikiRepository.search_pages()`
+3. Wikilinks 图解析器 — `WikiGraph` 确定性解析 + 邻接表构建
+4. Query 查询引擎 — `WikiCompiler.query()` 图扩展 + 导航查询
+5. 静态 Lint 检查 — `LintTool` 断链/孤页/健康评分
+6. **Source 自动监听** — `watcher.py` 轮询 raw/sources/ → 自动 ingest
+7. API 端点 — `/v1/query` `/v1/pages` `/v1/pages/{path}` `/v1/lint` `/v1/usage`
 
-**下周目标（Phase 2 启动）**：
+**下周目标**：
 
-1. 实现 SHA256 增量缓存
-2. LLM prompt 中要求输出 wikilinks 和 frontmatter
-3. 实现 index.md 自动更新
+1. 答案归档完善 + Phase 2 遗留收尾
+2. index.md 上下文缩减（省 tokens）
+3. pytest 新测试覆盖
+4. Phase 3 面试复盘

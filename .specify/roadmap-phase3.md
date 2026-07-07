@@ -12,34 +12,64 @@
 
 Phase 1-2 完成了"写"的能力，Phase 3 聚焦"读"：
 
-- wiki 写进去了，要能**查出来**——实现基于页面导航的 Query（非 RAG）
+- wiki 写进去了，要能**查出来**——实现基于 wikilinks 图扩展的导航式 Query（非 RAG）
 - 知道每次操作**花了多少 tokens**——Token 治理透明化
+- 知识图谱的**确定性基础**——正则解析 wikilinks 构建图结构（零 LLM 成本）
+- 基本的**自诊断能力**——断链检测 + 孤页检测（零 LLM 成本）
 - API 体系补全——JSON 格式的页面列表/详情/搜索 API
+
+### 🎯 自检对标
+
+> **对照 nashsu v0.3.13 和 cobusgreyling v0.2.1 的实际功能后，修正了 Phase 3 范围。**
+>
+> 两个参考项目在 v0.2-v0.3 阶段都已有：wikilinks 图解析 + 基础静态 lint。
+> 这些都是**确定性算法（零 LLM 成本）**，不应延后到 Phase 4。
+>
+> 修正：Phase 3 新增 **第三步（Wikilinks 图解析器）** 和 **第五步（静态 Lint 检查）**。
+> 详见 [roadmap-phase3-selfcheck.md](roadmap-phase3-selfcheck.md) 完整自检报告。
 
 ---
 
 ## 依赖链
 
 ```
-Phase 2 产物（CoT ingest + 缓存 + 导航文件 + index.md）
+Phase 2 产物（CoT ingest + 缓存 + 导航文件 + index.md + wiki/ *.md）
         │
         ▼
-第一步：Token 使用量追踪          ← src/llm/adapter.py（基础设施）
+第一步：Token 使用量追踪          ← src/llm/adapter.py + src/core/token_tracker.py（基础设施）
         │
         ▼
 第二步：搜索能力补齐              ← src/tools/search_tool.py + src/db/repository.py
         │
         ▼
-第三步：Query 查询引擎            ← src/core/wiki_compiler.py（核心功能）
+第三步：Wikilinks 图解析器        ← src/core/graph.py（新文件）— 确定性解析，零 LLM 成本
         │
         ▼
-第四步：API 端点完善              ← src/main.py（对外接口）
+第四步：Query 查询引擎            ← src/core/wiki_compiler.py（核心功能：图扩展 + 导航查询）
         │
         ▼
-第五步：答案归档                  ← src/core/wiki_compiler.py（知识沉淀）
+第五步：静态 Lint 检查            ← src/core/linter.py（新文件）— 断链/孤页/索引缺失，零 LLM 成本
+        │
+        ▼
+第六步：API 端点完善              ← src/main.py（对外接口）
+        │
+        ▼
+第七步：答案归档                  ← src/core/wiki_compiler.py（知识沉淀）
+        │
+        ▼
+第八步：Source 自动监听 🆕          ← src/core/watcher.py（新文件）— 轮询 raw/sources/，零 LLM 成本
+        │
+        ▼
+第九步：Phase 2 遗留收尾            ← index.md 上下文缩减 + 补全桩代码
+
+并行支线（可随时启动，不阻塞主干）:
+  Source 自动监听 ← 依赖 ingest() 已可用 → 第一步之后即可开始
 ```
 
-**Token 追踪必须先做**——后续所有 LLM 调用都能自动记录消耗，开发调试时就能看到成本。
+**关键依赖**：
+- 第三步（图解析）→ 第四步（Query 图扩展）→ **Query 的质量依赖图结构**
+- 第三步（图解析）→ 第五步（Lint 断链检测）→ **Lint 复用同一份图数据**
+- 第一步（Token 追踪）必须最先做 → 后续每步都能看到 LLM 调用成本
 
 ---
 
@@ -200,7 +230,81 @@ DeepSeek API 在响应中返回 `usage` 字段，LangChain 的 `ChatOpenAI` 将�
 
 ---
 
-## 第三步：Query 查询引擎
+## 第三步：Wikilinks 图解析器
+
+> **自检修正**：这是对 nashsu v0.3 / cobusgreyling v0.2 自检后新增的步骤。
+> **核心理由**：wikilinks 解析是**纯正则匹配**（零 LLM 成本），两个参考项目在 v0.2-v0.3 阶段都已实现。
+> 它为 Query（图扩展找相关页面）和 Lint（断链检测）提供基础数据。
+
+**新文件：** `src/core/graph.py`
+
+### 3.1 Wikilinks 解析 — 确定性
+
+- [ ] 实现 `parse_wikilinks(content: str) -> list[str]`：
+  ```python
+  import re
+
+  WIKILINK_PATTERN = re.compile(r"\[\[([^\]|#]+?)(?:[|#][^\]]+)?\]\]")
+
+  def parse_wikilinks(content: str) -> list[str]:
+      """从 Markdown 文本中提取所有 [[wikilinks]] 目标路径"""
+      return [m.strip() for m in WIKILINK_PATTERN.findall(content)]
+  ```
+
+### 3.2 WikiGraph — 内存图结构
+
+- [ ] 实现 `class WikiGraph`：
+  ```python
+  class WikiGraph:
+      """Wiki 页面的有向图结构（邻接表）"""
+
+      def __init__(self, wiki_dir: str = "wiki"): ...
+
+      def build(self) -> None:
+          """遍历 wiki/*.md → 解析 wikilinks → 构建邻接表"""
+
+      def nodes(self) -> list[str]:
+          """返回所有节点（页面路径）"""
+
+      def edges(self) -> list[tuple[str, str]]:
+          """返回所有有向边 (source → target)"""
+
+      def neighbors(self, path: str, depth: int = 1) -> list[str]:
+          """返回 depth 跳内的邻居页面（BFS）"""
+
+      def backlinks(self, path: str) -> list[str]:
+          """返回反向链接（哪些页面指向了 path）"""
+
+      def degree(self, path: str) -> dict:
+          """返回 {in_degree, out_degree}"""
+  ```
+
+- [ ] `build()` 实现细节：
+  1. 遍历 `wiki/` 下所有 `.md` 文件
+  2. 对每个文件调用 `parse_wikilinks(content)` 提取链接目标
+  3. 构建邻接表：`{source_path: [target_paths]}`
+  4. 同时计算反向链接索引：`{target_path: [source_paths]}`
+  5. 统计每个节点的入度/出度
+
+- [ ] 性能：1000 页以内 < 100ms（纯正则，无 LLM 调用）
+
+### 3.3 集成到 WikiCompiler
+
+- [ ] `WikiCompiler.__init__()` 中初始化 `self.graph = WikiGraph()`
+- [ ] 每次 `ingest()` 完成后调用 `self.graph.build()` 重建图
+- [ ] `WikiCompiler.query()` 用 `self.graph.neighbors()` 扩展候选页面
+
+### 验证
+
+- [ ] `WikiGraph.build()` 在 100 页 wiki 下正确构建邻接表
+- [ ] `neighbors("entities/Transformer.md", depth=1)` 返回直接关联页面
+- [ ] `neighbors("entities/Transformer.md", depth=2)` 返回二跳关联
+- [ ] `backlinks("concepts/self_attention.md")` 返回所有引用该页面的页面
+- [ ] ingest 后图自动刷新
+
+---
+
+## 第四步：Query 查询引擎
 
 > **核心设计决策**：Query 不是 RAG 的 chunk 检索，而是**页面级导航查询**。
 
@@ -216,28 +320,29 @@ DeepSeek API 在响应中返回 `usage` 字段，LangChain 的 `ChatOpenAI` 将�
 
 **面试可讲**："我没有用 RAG。RAG 是'每次检索临时拼凑'，LLM Wiki 是'先编译成结构化知识，再基于页面导航回答'。这就像编译器 vs 解释器的区别。"
 
-### 3.1 Query 流程设计
+### 4.1 Query 流程设计（修正：图扩展版）
 
 ```
 用户提问: "Attention 机制有哪些变体？"
         │
         ▼
-Step 1 — 定位候选页面
-  ├── 确定性路径: 读取 wiki/index.md → 匹配标题/关键词 → 得到候选页面列表
-  ├── 关键词搜索: SearchTool.search("Attention") → 补充候选
-  └── 输出: 候选页面路径列表（最多 10 个）
+Step 1 — 定位候选页面（混合策略）
+  ├── 确定性: 读 wiki/index.md → 匹配标题/关键词 → 候选页面列表
+  ├── 关键词: SearchTool.search("Attention") → 补充候选
+  ├── 图扩展: WikiGraph.neighbors(候选页, depth=2) → 发现不包含关键词但被链接的页面
+  └── 输出: 候选页面路径列表（最多 15 个，去重）
         │
         ▼
-Step 2 — 读取 + 扩展
+Step 2 — 读取 + 排序
   ├── 读取所有候选页面的内容
-  ├── 从每个页面解析 [[wikilinks]] → 读 1 层深度关联页面
-  └── 输出: 组装好的上下文（页面内容 + 来源路径）
+  ├── 按相关性排序：标题精确匹配 > wikilinks 度 > 关键词命中
+  └── 取 top-10 页面作为上下文
         │
         ▼
 Step 3 — LLM 综合回答
-  ├── 系统指令: 你是 Wiki Query Agent
-  ├── 输入: 用户问题 + 组装的页面上下文
-  ├── 输出格式要求: 答案 + 引用来源（wiki 页面路径）
+  ├── 系统指令: SYSTEM_PROMPT_QUERY
+  ├── 输入: 用户问题 + 组装的页面上下文（标注来源路径）
+  ├── 输出格式: JSON { answer, sources, confidence, gaps }
   └── 输出: 结构化回答
         │
         ▼
@@ -245,7 +350,9 @@ Step 4（可选）— 归档
   └── 如果答案质量高 → 写入 wiki/queries/{slug}.md
 ```
 
-### 3.2 实现 WikiCompiler.query()
+> **与初版设计的关键差异**：Step 1 增加了**图扩展**——不仅靠关键词匹配，还能通过 wikilinks 关联找到"不包含关键词但被关联指向"的页面。这正是 LLM Wiki 比 RAG 强的地方：知识之间的连接已经编译好了。
+
+### 4.2 实现 WikiCompiler.query()
 
 **文件：** `src/core/wiki_compiler.py`
 
@@ -281,14 +388,14 @@ def query(self, question: str, max_pages: int = 10, archive: bool = False) -> di
     return {**answer_data, "archived": archived}
 ```
 
-#### 3.2.1 `_locate_candidates()` — 候选页面定位
+#### 4.2.1 `_locate_candidates()` — 候选页面定位（修正：三角定位）
 
 ```python
 def _locate_candidates(self, question: str, limit: int) -> list[str]:
-    """混合策略定位候选页面"""
-    paths = set()
+    """混合策略定位候选页面：关键词 + 图扩展 + LLM 兜底"""
+    paths: set[str] = set()
 
-    # 策略 A: SQLite 标题/标签搜索（确定性）
+    # 策略 A: SQLite 标题/标签搜索（确定性，最快）
     for page in self.repo.search_pages(question):
         paths.add(page["path"])
         if len(paths) >= limit:
@@ -297,10 +404,15 @@ def _locate_candidates(self, question: str, limit: int) -> list[str]:
     # 策略 B: 全文关键词搜索
     for result in self.search_tool.search(question):
         paths.add(result["path"])
-        if len(paths) >= limit:
-            break
 
-    # 策略 C: 如果候选太少，LLM 读 index.md 推荐
+    # 策略 C: WikiGraph 扩展（新增！）
+    # 对已找到的候选页，通过 wikilinks 图发现"不包含关键词但被关联指向"的页面
+    expanded: set[str] = set()
+    for p in list(paths):
+        expanded.update(self.graph.neighbors(p, depth=1))
+    paths.update(expanded)
+
+    # 策略 D: 如果候选太少，LLM 读 index.md 推荐
     if len(paths) < 3:
         llm_suggestions = self._llm_suggest_pages(question)
         paths.update(llm_suggestions)
@@ -308,7 +420,7 @@ def _locate_candidates(self, question: str, limit: int) -> list[str]:
     return list(paths)[:limit]
 ```
 
-#### 3.2.2 Query Prompt
+#### 4.2.2 Query Prompt
 
 **文件：** `src/llm/prompts.py` — 新增 `SYSTEM_PROMPT_QUERY` 的完整版本
 
@@ -352,14 +464,108 @@ SYSTEM_PROMPT_QUERY = """你是一个 Wiki Query Agent。你的任务是基于 W
 
 ---
 
-## 第四步：API 端点完善
+## 第五步：静态 Lint 检查
+
+> **自检修正**：cobusgreyling v0.2 已有 `lint --skip-llm` 做断链/孤页/索引缺失检测。
+> 这些都是**确定性算法（零 LLM 成本）**，Phase 3 就应该做。
+> LLM 语义 Lint（矛盾检测、知识缺口识别）延后到 Phase 4。
+
+**新文件：** `src/core/linter.py`
+
+### 5.1 LintTool — 纯静态检测
+
+- [ ] 实现 `class LintTool`：
+  ```python
+  class LintTool:
+      """Wiki 页面健康检查器 — Phase 3 只做确定性检测"""
+
+      def __init__(self, wiki_dir: str = "wiki"): ...
+
+      def check_broken_links(self) -> list[dict]:
+          """
+          检测断链：[[target]] 指向不存在的文件
+
+          Returns:
+              [{"source_page": "entities/xxx.md", "broken_target": "entities/nonexistent.md"}]
+          """
+
+      def check_orphan_pages(self) -> list[str]:
+          """
+          检测孤页：没有任何页面链接到它（0 入链）
+
+          排除 index.md, overview.md, log.md 等导航页面
+          """
+
+      def check_index_gaps(self) -> list[str]:
+          """
+          检测 index.md 中缺失的页面：wiki/ 下存在但 index.md 未列出的页面
+          """
+
+      def run_all(self) -> dict:
+          """
+          运行全部静态检查
+
+          Returns:
+              {
+                  "broken_links": [...],
+                  "broken_links_count": 3,
+                  "orphan_pages": [...],
+                  "orphan_pages_count": 1,
+                  "index_gaps": [...],
+                  "index_gaps_count": 2,
+                  "health_score": 85  # 0-100，简单加权计算
+              }
+          """
+  ```
+
+- [ ] 断链检测实现：
+  1. 用 `WikiGraph.build()` 的 edges 数据
+  2. 所有 target 不在 `WikiGraph.nodes()` 中的 → 断链
+  3. 跳过 HTTP URL（`http://` / `https://` 开头的链接）
+
+- [ ] 孤页检测实现：
+  1. 用 `WikiGraph.backlinks()` 数据
+  2. 入度为 0 且不在排除列表（index.md, overview.md, log.md）中的页面 → 孤页
+
+### 5.2 集成到 WikiCompiler
+
+- [ ] 实现 `WikiCompiler.lint()` 方法：
+  ```python
+  def lint(self) -> dict:
+      """运行静态 Lint 检查（Phase 3 只做确定性检测）"""
+      linter = LintTool(wiki_dir=self.writer.base_dir)
+      return linter.run_all()
+  ```
+
+- [ ] 在 `ingest()` 完成后可选触发 lint（如果检测到断链/孤页，记录 warning 日志）
+
+### 5.3 健康评分
+
+```
+health_score = 100
+  - 每个断链: -5 分
+  - 每个孤页: -10 分
+  - 每个 index 缺失: -3 分
+最低 0 分
+```
+
+### 验证
+
+- [ ] 创建一个含断链的 wiki 页面 → `check_broken_links()` 检出
+- [ ] 创建一个孤页（无入链） → `check_orphan_pages()` 检出
+- [ ] `run_all()` 返回完整报告含健康评分
+- [ ] 零 LLM 调用（纯确定性算法）
+
+---
+
+## 第六步：API 端点完善
 
 > **背景**：当前 `/wiki` 和 `/wiki/{path}` 返回 HTML 页面（给人类浏览）。
 > Phase 3 需要补充 **JSON API**（给程序/AI 调用），以及 Query 和 Usage 端点。
 
 **文件：** `src/main.py`
 
-### 4.1 页面列表 API
+### 6.1 页面列表 API
 
 - [ ] `GET /v1/pages` — 返回所有 wiki 页面元数据列表（JSON）
   ```python
@@ -393,7 +599,7 @@ SYSTEM_PROMPT_QUERY = """你是一个 Wiki Query Agent。你的任务是基于 W
   }
   ```
 
-### 4.2 页面详情 API（JSON）
+### 6.2 页面详情 API（JSON）
 
 - [ ] `GET /v1/pages/{path}` — 返回单个页面的完整内容 + 元数据（JSON）
   ```python
@@ -420,7 +626,7 @@ SYSTEM_PROMPT_QUERY = """你是一个 Wiki Query Agent。你的任务是基于 W
 
 - [ ] 对 `visibility: restricted` 的页面 → 返回 `{"status": "locked", "message": "此页面需要密码验证"}`（密码校验本身 Phase 4 实现）
 
-### 4.3 Query API
+### 6.3 Query API
 
 - [ ] `POST /v1/query` — 查询 Wiki 知识库
   ```python
@@ -449,7 +655,7 @@ SYSTEM_PROMPT_QUERY = """你是一个 Wiki Query Agent。你的任务是基于 W
   }
   ```
 
-### 4.4 Token 使用量 API
+### 6.4 Token 使用量 API
 
 - [ ] `GET /v1/usage` — 查询 token 消耗
   ```python
@@ -476,7 +682,31 @@ SYSTEM_PROMPT_QUERY = """你是一个 Wiki Query Agent。你的任务是基于 W
   }
   ```
 
-### 4.5 已有路由整理
+### 6.5 Lint API
+
+- [ ] `GET /v1/lint` — 运行静态 Lint 检查
+  ```python
+  @app.get("/v1/lint")
+  async def lint():
+      """运行 Wiki 健康检查（静态 — 断链 + 孤页 + 索引缺失）"""
+  ```
+
+  响应示例：
+  ```json
+  {
+    "broken_links": [
+      {"source_page": "entities/xxx.md", "broken_target": "entities/nonexistent.md"}
+    ],
+    "broken_links_count": 3,
+    "orphan_pages": ["concepts/forgotten.md"],
+    "orphan_pages_count": 1,
+    "index_gaps": ["entities/new_page.md"],
+    "index_gaps_count": 1,
+    "health_score": 75
+  }
+  ```
+
+### 6.6 已有路由整理
 
 | 路由 | 方法 | 状态 | 说明 |
 |------|------|------|------|
@@ -492,7 +722,11 @@ SYSTEM_PROMPT_QUERY = """你是一个 Wiki Query Agent。你的任务是基于 W
 | `/v1/privacy/rules` | GET | ✅ 已有 | 隐私规则列表 |
 | `/v1/privacy/rules` | POST | ✅ 已有 | 添加隐私规则 |
 | `/v1/privacy/rules/{kw}` | DELETE | ✅ 已有 | 删除隐私规则 |
-| `/v1/lint` | GET | ⬜ Phase 4 | Wiki 健康检查 |
+| `/v1/lint` | GET | ⬜ 新增 | Wiki 健康检查（静态） |
+| `/v1/lint?semantic=true` | GET | ⬜ Phase 4 | 语义 Lint（LLM 矛盾检测） |
+| `/v1/watcher/start` | POST | ⬜ 新增 | 启动 Source 监听 |
+| `/v1/watcher/stop` | POST | ⬜ 新增 | 停止 Source 监听 |
+| `/v1/watcher/status` | GET | ⬜ 新增 | 查询监听状态 |
 | `/docs` | GET | ✅ 自动 | Swagger 文档 |
 
 ### 验证
@@ -505,13 +739,13 @@ SYSTEM_PROMPT_QUERY = """你是一个 Wiki Query Agent。你的任务是基于 W
 
 ---
 
-## 第五步：答案归档
+## 第七步：答案归档
 
 > **核心理念**：好的问答不应该淹没在聊天记录中。LLM Wiki 的一个核心优势是"知识越用越厚"——每一次好的 Query 都让 wiki 更丰富。
 
 **文件：** `src/core/wiki_compiler.py`
 
-### 5.1 `_archive_query()` 实现
+### 7.1 `_archive_query()` 实现
 
 - [ ] 实现答案归档方法：
   ```python
@@ -567,25 +801,98 @@ confidence: {answer_data.get("confidence", "medium")}
 
 ---
 
-## 第六步：Phase 2 遗留项收尾
+## 第八步：Source 文件夹自动监听 🆕
+
+> **背景**：当前 ingest 必须手动调用 `POST /v1/ingest`。实际使用中，你应该是"丢文件到 raw/sources/ → 自动处理"。
+> **来源**：对标 nashsu/llm_wiki 的 "Source 文件夹自动监听" 功能。
+> **成本**：文件系统轮询 / watchdog 库，零 LLM 调用。
+
+**新文件：** `src/core/watcher.py`
+
+### 8.1 SourceWatcher — 基础版（轮询）
+
+- [ ] 实现 `class SourceWatcher`：
+  ```python
+  class SourceWatcher:
+      """监听 raw/sources/ 目录的文件变更，自动触发 ingest"""
+
+      def __init__(self, sources_dir: str = "raw/sources", poll_interval: int = 10): ...
+
+      def start(self) -> None:
+          """启动后台轮询线程"""
+
+      def stop(self) -> None:
+          """停止轮询"""
+
+      def status(self) -> dict:
+          """返回监听状态：{running, watched_dir, poll_interval, last_check, files_processed}"""
+
+      def _scan_and_ingest(self) -> None:
+          """扫描目录 → 发现新文件 → 调用 WikiCompiler.ingest()"""
+  ```
+
+- [ ] 扫描逻辑：
+  1. 列出 `raw/sources/` 下所有文件（排除 `.gitkeep` 等隐藏文件）
+  2. 对比已处理文件集合（内存 set + SQLite `ingest_cache` 表兜底）
+  3. 新文件 → 记录到待处理队列 → 串行调用 `WikiCompiler.ingest()`
+  4. 处理完毕 → 加入已处理集合
+
+- [ ] 基础版范围（Phase 3）：
+  - ✅ 检测新文件 → 自动 ingest
+  - ✅ 启动/停止/状态查询
+  - ✅ 通过 API 控制
+  - ❌ 检测文件删除 → 延后到 Phase 6
+  - ❌ 检测文件修改 → 延后到 Phase 6（SHA256 缓存已能防止重复处理）
+
+### 8.2 API 端点
+
+- [ ] `POST /v1/watcher/start` — 启动监听
+  ```json
+  {"status": "started", "watching": "raw/sources/", "poll_interval": 10}
+  ```
+
+- [ ] `POST /v1/watcher/stop` — 停止监听
+
+- [ ] `GET /v1/watcher/status` — 查询监听状态
+  ```json
+  {
+    "running": true,
+    "watched_dir": "raw/sources/",
+    "poll_interval_seconds": 10,
+    "last_check": "2026-07-07T15:30:00",
+    "files_processed": 5
+  }
+  ```
+
+### 8.3 启动时自动开启
+
+- [ ] FastAPI `@app.on_event("startup")` 中自动启动 SourceWatcher（可通过环境变量 `WATCHER_ENABLED=false` 关闭）
+- [ ] 开发调试时可以关闭（避免每次启动都触发 ingest）
+
+### 验证
+
+- [ ] 启动服务 → 丢一个 `.md` 文件到 `raw/sources/` → 10 秒内自动触发 ingest
+- [ ] `GET /v1/watcher/status` 返回 files_processed 增加
+- [ ] 已缓存的文件不会被重复处理（SHA256 命中 → skip）
+- [ ] `POST /v1/watcher/stop` → 丢文件 → 不触发 ingest
+
+---
+
+## 第九步：Phase 2 遗留项收尾
 
 > 这些是 Phase 2 设计了但没完全实现的功能，Phase 3 开局快速收掉。
 
-### 6.1 WikiRepository 补齐
+### 9.1 WikiRepository 补齐（大部分已由前序步骤覆盖）
 
-- [ ] 实现 `get_orphan_pages()` — 找出无入链的页面
-  ```sql
-  SELECT path FROM wiki_pages
-  WHERE path NOT IN (SELECT DISTINCT target_path FROM page_links)
-  ```
+- [x] `search_pages()` — ✅ 第二步已完成
+- [x] `get_orphan_pages()` — ✅ 第五步 `LintTool.check_orphan_pages()` 已覆盖
+  （等价 SQL：`SELECT path FROM wiki_pages WHERE path NOT IN (SELECT DISTINCT target_path FROM page_links)`）
 
-- [ ] 实现 `search_pages()` — 已在第二步中完成
-
-### 6.2 SearchTool 补齐
+### 9.2 SearchTool 补齐
 
 - [ ] 实现 `SearchTool.search()` — 已在第二步中完成
 
-### 6.3 index.md 上下文缩减（Token 优化）
+### 9.3 index.md 上下文缩减（Token 优化）
 
 > 来自 `notes/token-cost-optimization.md` 建议 #3
 
@@ -642,15 +949,18 @@ confidence: {answer_data.get("confidence", "medium")}
 
 Phase 3 完成时：
 
-- [ ] `POST /v1/query` 返回基于 wiki 页面的综合回答（带 `[[引用]]`）
+- [ ] `WikiGraph` 解析 `[[wikilinks]]` 构建有向图（邻接表 + 反链索引）
+- [ ] `POST /v1/query` 返回基于 wikilinks 图扩展的综合回答（带 `[[引用]]`）
 - [ ] `GET /v1/pages` 和 `GET /v1/pages/{path}` JSON API 可用
+- [ ] `GET /v1/lint` 返回静态健康检查报告（断链 + 孤页 + 索引缺失 + 健康评分）
 - [ ] `GET /v1/usage` 返回当日/本周 token 消耗与费用估算
 - [ ] `SearchTool.search()` 实现文件名+关键词搜索
 - [ ] `WikiRepository.search_pages()` 实现 SQLite 查询
 - [ ] 每次 `IngestResponse` 包含 `token_usage` 字段
 - [ ] 高质量 Query 答案自动归档到 `wiki/queries/`
 - [ ] Step 1 上下文从完整 index.md 缩减为摘要（~500 tokens）
-- [ ] `pytest` 新测试覆盖 query、search、token_tracker
+- [ ] `SourceWatcher` 自动监听 raw/sources/ 新文件 → 自动 ingest
+- [ ] `pytest` 新测试覆盖 query、search、graph、linter、watcher、token_tracker
 - [ ] 日 token 消耗可监控、可追溯（`token_usage_log` 表）
 
 ---
@@ -703,10 +1013,14 @@ curl http://localhost:8000/docs
 |------|------|---------|
 | 第一步 | Token 追踪基础设施 | 1-2 天 |
 | 第二步 | 搜索能力补齐 | 1 天 |
-| 第三步 | Query 查询引擎（核心） | 2-3 天 |
-| 第四步 | API 端点完善 | 1-2 天 |
-| 第五步 | 答案归档 | 1 天 |
-| 第六步 | Phase 2 遗留收尾 | 1 天 |
-| **合计** | | **7-10 天** |
+| 第三步 | Wikilinks 图解析器 | 1-2 天 |
+| 第四步 | Query 查询引擎（核心） | 2-3 天 |
+| 第五步 | 静态 Lint 检查 | 1 天 |
+| 第六步 | API 端点完善 | 1-2 天 |
+| 第七步 | 答案归档 | 1 天 |
+| 第八步 | Source 自动监听 🆕 | 1 天 |
+| 第九步 | Phase 2 遗留收尾 | 1 天 |
+| **合计** | | **10-15 天** |
 
-> Phase 3 是功能密集阶段——完成后你有了完整的 "Ingest → Query → 归档" 闭环，可以开始邀请别人试用。
+> 自检后新增图解析器 + 静态 Lint + Source 监听（均为确定性算法，零 LLM 成本）。
+> Phase 3 是功能密集阶段——完成后你有了完整的 "丢文件→自动处理→查询→Lint→归档" 闭环。
