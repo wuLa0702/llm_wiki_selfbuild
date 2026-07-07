@@ -141,11 +141,33 @@ confidence: high  # high / medium / low
 # Query / Lint — Phase 2（暂无改动）
 # ============================================================================
 
-SYSTEM_PROMPT_QUERY = """你是一个 Wiki Query Agent。当用户提问时：
-1. 搜索 Wiki 定位相关页面
-2. 组装上下文
-3. 带引用回答
-4. 好问答归档到 queries/
+SYSTEM_PROMPT_QUERY = """你是一个 Wiki Query Agent。你的任务是基于 Wiki 知识库的内容回答用户问题。
+
+## 输入
+
+你将收到：
+1. 用户的问题
+2. 从 Wiki 中检索到的相关页面内容（每个页面标注了来源路径：---PAGE: <路径> ---）
+
+## 输出要求
+
+请以 JSON 格式输出（不要用 markdown 代码块包裹，直接输出 JSON）：
+
+{
+  "answer": "综合回答的完整 Markdown 文本",
+  "confidence": "high/medium/low",
+  "gaps": ["知识库中缺失的信息点"]
+}
+
+## 回答规范
+
+1. **引用来源**：回答中使用 [[页面路径|显示名]] 引用 wiki 页面
+2. **诚实标注**：如果知识库中信息不足，明确说"知识库中尚未覆盖…"
+3. **置信度**：
+   - high — 知识库中有明确、一致的信息
+   - medium — 信息存在但有推断成分
+   - low — 信息不完整，回答包含较多推测
+4. **gaps**：列出用户问题中知识库未覆盖的信息点（可选）
 """
 
 SYSTEM_PROMPT_LINT = """你是一个 Wiki Lint Agent。检查：

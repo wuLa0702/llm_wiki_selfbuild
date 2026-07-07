@@ -31,17 +31,22 @@ class IngestResponse(BaseModel):
     pages_updated: list[str] = []
     message: str = ""
     confidence_summary: dict[str, int] = {}
+    token_usage: dict | None = None
 
 
 class QueryRequest(BaseModel):
     """Query 请求参数"""
-    question: str
+    question: str = Field(description="查询问题", min_length=1)
+    archive: bool = Field(default=False, description="是否将答案归档到 wiki/queries/")
 
 
 class QueryResponse(BaseModel):
     """Query 响应"""
     answer: str
     sources: list[str] = []
+    confidence: str = "low"
+    gaps: list[str] = []
+    archived: str | None = None
 
 
 # ============================================================================
@@ -79,3 +84,16 @@ class AnalysisOutput(BaseModel):
     contradictions: list[Contradiction] = []
     connections_to_existing: list[Connection] = []
     recommendations: list[str] = []
+
+
+# ============================================================================
+# Phase 3 — Token 用量
+# ============================================================================
+
+
+class TokenUsageSummary(BaseModel):
+    """Token 用量汇总响应"""
+    period: str
+    total_tokens: int
+    total_cost_estimate: str
+    by_operation: list[dict] = []
