@@ -174,6 +174,183 @@ class TestGraphViz:
         assert "/v1/graph" in response.text
 
 
+class TestPagesApi:
+    """GET /v1/pages JSON API 测试"""
+
+    def test_list_pages_returns_json(self, client, wiki_content, mocker):
+        """/v1/pages 返回 JSON 页面列表"""
+        mocker.patch("src.main.WikiRepository.__init__", return_value=None)
+        mocker.patch("src.main.ReadTool.__init__", return_value=None)
+
+        reader_mock = mocker.MagicMock()
+        reader_mock.base_dir = wiki_content
+        reader_mock.read_file.return_value = "# Python\n"
+        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+
+        repo_mock = mocker.MagicMock()
+        repo_mock.get_page.return_value = {
+            "path": "entities/python.md",
+            "title": "Python",
+            "page_type": "entity",
+            "tags": ["lang"],
+            "word_count": 10,
+            "updated_at": "2026-07-07T10:00:00",
+            "links": ["concepts/ai.md"],
+            "backlinks": ["index.md"],
+        }
+        mocker.patch("src.main.WikiRepository", return_value=repo_mock)
+
+        response = client.get("/v1/pages")
+        assert response.status_code == 200
+        data = response.json()
+        assert "total" in data
+        assert "pages" in data
+        assert data["pages"][0]["path"] == "entities/python.md"
+        assert data["pages"][0]["links_count"] == 1
+        assert data["pages"][0]["backlinks_count"] == 1
+
+    def test_list_pages_filter_by_type(self, client, wiki_content, mocker):
+        """/v1/pages?type=entity 只返回实体"""
+        mocker.patch("src.main.WikiRepository.__init__", return_value=None)
+        mocker.patch("src.main.ReadTool.__init__", return_value=None)
+
+        reader_mock = mocker.MagicMock()
+        reader_mock.base_dir = wiki_content
+        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+
+        repo_mock = mocker.MagicMock()
+        repo_mock.get_page.side_effect = [
+            {"path": "entities/python.md", "title": "Python", "page_type": "entity",
+             "tags": [], "word_count": 10, "updated_at": "", "links": [], "backlinks": []},
+            None,
+        ]
+        mocker.patch("src.main.WikiRepository", return_value=repo_mock)
+
+        response = client.get("/v1/pages?type=entity")
+        assert response.status_code == 200
+        data = response.json()
+        assert all(p["page_type"] == "entity" for p in data["pages"])
+
+    def test_page_detail_returns_content(self, client, wiki_content, mocker):
+        """/v1/pages/xxx.md 返回完整内容"""
+        mocker.patch("src.main.WikiRepository.__init__", return_value=None)
+        mocker.patch("src.main.ReadTool.__init__", return_value=None)
+
+        reader_mock = mocker.MagicMock()
+        reader_mock.base_dir = wiki_content
+        reader_mock.read_file.return_value = "# Python\n\nPython is a language."
+        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+
+        repo_mock = mocker.MagicMock()
+        repo_mock.get_page.return_value = {
+            "path": "entities/python.md",
+            "title": "Python",
+            "page_type": "entity",
+            "tags": ["lang"],
+            "links": ["concepts/ai.md"],
+            "backlinks": ["index.md"],
+            "visibility": "public",
+            "created_at": "2026-07-06T10:00:00",
+            "updated_at": "2026-07-07T10:00:00",
+        }
+        mocker.patch("src.main.WikiRepository", return_value=repo_mock)
+
+        response = client.get("/v1/pages/entities/python.md")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["title"] == "Python"
+        assert "Python is a language" in data["content"]
+        assert "concepts/ai.md" in data["links"]
+        assert "index.md" in data["backlinks"]
+
+    def test_page_detail_404(self, client, mocker):
+        """不存在的页面返回 404"""
+        mocker.patch("src.main.WikiRepository.__init__", return_value=None)
+        repo_mock = mocker.MagicMock()
+        repo_mock.get_page.return_value = None
+        mocker.patch("src.main.WikiRepository", return_value=repo_mock)
+
+        response = client.get("/v1/pages/nonexistent.md")
+        assert response.status_code == 404
+
+    def test_page_detail_permission_denied(self, client, wiki_content, mocker):
+        """restricted 页面返回 403 locked"""
+        mocker.patch("src.main.WikiRepository.__init__", return_value=None)
+        mocker.patch("src.main.ReadTool.__init__", return_value=None)
+
+        reader_mock = mocker.MagicMock()
+        reader_mock.base_dir = wiki_content
+        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+
+        repo_mock = mocker.MagicMock()
+        repo_mock.get_page.return_value = {
+            "path": "entities/secret.md",
+            "title": "Secret",
+            "page_type": "entity",
+            "visibility": "restricted",
+        }
+        mocker.patch("src.main.WikiRepository", return_value=repo_mock)
+
+        response = client.get("/v1/pages/entities/secret.md")
+        assert response.status_code == 403
+        data = response.json()
+        assert data["status"] == "locked"
+
+
+class TestUsageApi:
+    """GET /v1/usage 端点测试"""
+
+    def test_usage_today(self, client, mocker):
+        """/v1/usage 返回今日 token 统计"""
+        mocker.patch("src.main.TokenTracker.__init__", return_value=None)
+        tracker_mock = mocker.MagicMock()
+        tracker_mock.today_summary.return_value = {
+            "period": "today",
+            "total_tokens": 1500,
+            "total_cost_estimate": "¥0.003",
+            "by_operation": [{"operation": "chat", "tokens": 1500, "cost_estimate": "¥0.003"}],
+        }
+        mocker.patch("src.main.TokenTracker", return_value=tracker_mock)
+
+        response = client.get("/v1/usage")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["period"] == "today"
+        assert data["total_tokens"] == 1500
+
+    def test_usage_weekly(self, client, mocker):
+        """/v1/usage?period=week 返回本周统计"""
+        mocker.patch("src.main.TokenTracker.__init__", return_value=None)
+        tracker_mock = mocker.MagicMock()
+        tracker_mock.weekly_summary.return_value = {
+            "period": "week",
+            "total_tokens": 10000,
+            "total_cost_estimate": "¥0.02",
+            "by_operation": [],
+        }
+        mocker.patch("src.main.TokenTracker", return_value=tracker_mock)
+
+        response = client.get("/v1/usage?period=week")
+        assert response.status_code == 200
+        assert response.json()["period"] == "week"
+
+    def test_usage_monthly(self, client, mocker):
+        """/v1/usage?period=month 返回月统计"""
+        mocker.patch("src.main.TokenTracker.__init__", return_value=None)
+        tracker_mock = mocker.MagicMock()
+        tracker_mock.monthly_summary.return_value = {
+            "period": "month",
+            "total_tokens": 50000,
+            "total_cost_estimate": "¥0.12",
+            "by_operation": [],
+        }
+        mocker.patch("src.main.TokenTracker", return_value=tracker_mock)
+
+        response = client.get("/v1/usage?period=month")
+        assert response.status_code == 200
+        assert response.json()["period"] == "month"
+
+
 class TestGraphEndpoint:
     """GET /v1/graph 端点测试"""
 

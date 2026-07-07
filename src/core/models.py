@@ -97,3 +97,48 @@ class TokenUsageSummary(BaseModel):
     total_tokens: int
     total_cost_estimate: str
     by_operation: list[dict] = []
+
+
+# ============================================================================
+# Phase 3 Step 6 — API 端点（/v1/pages, /v1/usage）
+# ============================================================================
+
+
+class PageInfo(BaseModel):
+    """页面列表中的单页信息"""
+    path: str
+    title: str
+    page_type: str
+    tags: list[str] = []
+    word_count: int = 0
+    updated_at: str = ""
+    links_count: int = 0
+    backlinks_count: int = 0
+
+
+class PagesListResponse(BaseModel):
+    """页面列表响应"""
+    total: int
+    pages: list[PageInfo] = []
+
+
+class PageDetailResponse(BaseModel):
+    """单页详情响应"""
+    path: str
+    title: str
+    content: str
+    page_type: str
+    tags: list[str] = []
+    links: list[str] = []
+    backlinks: list[str] = []
+    visibility: str = "public"
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class UsageResponse(BaseModel):
+    """Token 用量响应"""
+    period: str
+    total_tokens: int
+    total_cost_estimate: str
+    by_operation: list[dict] = []

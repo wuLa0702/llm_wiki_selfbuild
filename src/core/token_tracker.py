@@ -212,3 +212,8 @@ class TokenTracker:
         """返回近 7 天汇总"""
         week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
         return self._range_summary(week_ago, "week")
+
+    def monthly_summary(self) -> dict:
+        """返回近 30 天汇总"""
+        month_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+        return self._range_summary(month_ago, "month")

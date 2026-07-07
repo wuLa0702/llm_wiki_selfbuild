@@ -9,8 +9,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.core.logging_config import configure_logging, get_logger
-from src.core.models import IngestRequest, IngestResponse, QueryRequest, QueryResponse
+from src.core.models import (
+    IngestRequest,
+    IngestResponse,
+    PagesListResponse,
+    PageDetailResponse,
+    PageInfo,
+    QueryRequest,
+    QueryResponse,
+    UsageResponse,
+)
 from src.core.privacy import PrivacyManager
+from src.core.token_tracker import TokenTracker
 from src.core.wiki_compiler import CompilerError, WikiCompiler
 from src.db.repository import WikiRepository
 from src.llm.adapter import LLMError
@@ -112,6 +122,148 @@ async def lint():
     logger.info("GET /v1/lint")
     compiler = WikiCompiler()
     return compiler.lint()
+
+
+# ==================================================================
+# Phase 3 Step 6 — 页面列表 / 详情 / Usage API
+# ==================================================================
+
+
+@app.get("/v1/pages", response_model=PagesListResponse)
+async def list_pages(
+    page_type: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """列出 Wiki 页面（JSON）
+
+    Args:
+        page_type: 按类型过滤（entity / concept / source / query）
+        limit: 每页数量（默认 50，最大 200）
+        offset: 偏移量
+    """
+    logger.info("GET /v1/pages | type=%s limit=%d offset=%d", page_type, limit, offset)
+    if limit < 1:
+        limit = 50
+    if limit > 200:
+        limit = 200
+    if offset < 0:
+        offset = 0
+
+    repo = WikiRepository()
+    reader = ReadTool("wiki")
+
+    all_pages: list[dict] = []
+    for root, _dirs, files in os.walk(reader.base_dir):
+        for f in files:
+            if not f.endswith(".md"):
+                continue
+            rel = os.path.relpath(os.path.join(root, f), reader.base_dir).replace("\\", "/")
+            meta = repo.get_page(rel)
+            if meta is None:
+                continue
+            if page_type and meta.get("page_type") != page_type:
+                continue
+            all_pages.append(meta)
+
+    all_pages.sort(key=lambda p: p.get("updated_at", ""), reverse=True)
+    total = len(all_pages)
+    sliced = all_pages[offset:offset + limit]
+
+    pages_out = []
+    for p in sliced:
+        # 计算链接数量
+        links = p.get("links", [])
+        backlinks = p.get("backlinks", [])
+        pages_out.append(PageInfo(
+            path=p["path"],
+            title=p.get("title", ""),
+            page_type=p.get("page_type", ""),
+            tags=p.get("tags", []),
+            word_count=p.get("word_count", 0),
+            updated_at=p.get("updated_at", ""),
+            links_count=len(links),
+            backlinks_count=len(backlinks),
+        ))
+
+    return PagesListResponse(total=total, pages=pages_out)
+
+
+@app.get("/v1/pages/{page_path:path}", response_model=PageDetailResponse)
+async def get_page_detail(page_path: str):
+    """获取单个 Wiki 页面的完整内容 + 元数据（JSON）
+
+    Args:
+        page_path: 页面路径，如 entities/python.md
+    """
+    logger.info("GET /v1/pages/%s", page_path)
+
+    repo = WikiRepository()
+    meta = repo.get_page(page_path)
+    if meta is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Page not found", "detail": f"No metadata for '{page_path}'"},
+        )
+
+    reader = ReadTool("wiki")
+    try:
+        content = reader.read_file(page_path)
+    except FileNotFoundError:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Page not found", "detail": f"File not found: '{page_path}'"},
+        )
+    except PermissionError as e:
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Access denied", "detail": str(e)},
+        )
+
+    # visibility 处理
+    visibility = meta.get("visibility", "public")
+    if visibility == "restricted":
+        return JSONResponse(
+            status_code=403,
+            content={
+                "path": page_path,
+                "status": "locked",
+                "message": "此页面需要密码验证",
+            },
+        )
+
+    return PageDetailResponse(
+        path=page_path,
+        title=meta.get("title", ""),
+        content=content,
+        page_type=meta.get("page_type", ""),
+        tags=meta.get("tags", []),
+        links=meta.get("links", []),
+        backlinks=meta.get("backlinks", []),
+        visibility=visibility,
+        created_at=meta.get("created_at", ""),
+        updated_at=meta.get("updated_at", ""),
+    )
+
+
+@app.get("/v1/usage", response_model=UsageResponse)
+async def get_usage(period: str = "today"):
+    """查询 Token 消耗统计
+
+    Args:
+        period: today / week / month
+    """
+    logger.info("GET /v1/usage | period=%s", period)
+
+    tracker = TokenTracker()
+    if period == "month":
+        result = tracker.monthly_summary()
+    elif period == "week":
+        result = tracker.weekly_summary()
+    else:
+        result = tracker.today_summary()
+
+    return UsageResponse(**result)
 
 
 @app.get("/v1/graph")
