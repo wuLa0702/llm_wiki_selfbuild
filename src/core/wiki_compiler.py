@@ -136,10 +136,54 @@ class WikiCompiler:
             return f.read()
 
     def _get_index_context(self) -> str:
+        """返回完整 index.md 内容（已废弃，保留兼容，请使用 _index_summary）"""
         try:
             return self._read_wiki_file("index.md")
         except FileNotFoundError:
             return "（空 — Wiki 中暂无页面）"
+
+    def _index_summary(self) -> str:
+        """
+        返回 index 的数据库摘要（~500 tokens），替代完整 index.md
+
+        从 SQLite 读取统计和最近更新，比读 index.md 省 ~80% tokens。
+        用于 ingest Step 1 的 LLM 上下文。
+
+        Returns:
+            摘要文本，如 "Wiki 总页面数：15\n按类型分布：..."
+        """
+        import sqlite3
+
+        conn = sqlite3.connect(self.repo.db_path)
+        conn.row_factory = sqlite3.Row
+
+        total = conn.execute(
+            "SELECT COUNT(*) as n FROM wiki_pages"
+        ).fetchone()["n"]
+
+        by_type = conn.execute(
+            "SELECT page_type, COUNT(*) as n FROM wiki_pages GROUP BY page_type"
+        ).fetchall()
+
+        recent = conn.execute(
+            "SELECT path, title FROM wiki_pages ORDER BY updated_at DESC LIMIT 10"
+        ).fetchall()
+
+        conn.close()
+
+        type_dist = "，".join(
+            f"{r['page_type']}: {r['n']}" for r in by_type
+        ) if by_type else "暂无"
+
+        lines = [
+            f"Wiki 总页面数：{total}",
+            f"按类型分布：{type_dist}",
+            "最近更新的页面：",
+        ]
+        for r in recent:
+            lines.append(f"  - {r['path']} — {r['title']}")
+
+        return "\n".join(lines)
 
     def _get_purpose_context(self) -> str:
         """读取 purpose.md 作为知识库方向上下文"""
@@ -399,7 +443,7 @@ class WikiCompiler:
                 source_path, [m["keyword"] for m in privacy_matches],
             )
 
-        index_context = self._get_index_context()
+        index_context = self._index_summary()
         purpose_context = self._get_purpose_context()
 
         # Step 1 — 分析（注入 purpose.md 让 LLM 了解知识库方向）
