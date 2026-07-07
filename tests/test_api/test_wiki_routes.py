@@ -143,6 +143,19 @@ class TestWikiRoutes:
         assert result.count('<a href="/wiki/') == 3
 
 
+class TestQueryViz:
+    """GET /wiki/query 查询界面页面"""
+
+    def test_query_viz_returns_html(self, client):
+        """/wiki/query 返回 HTML 页面"""
+        response = client.get("/wiki/query")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert "知识问答" in response.text
+        assert "/v1/query" in response.text
+        assert "queryInput" in response.text
+
+
 class TestGraphViz:
     """GET /wiki/graph 图谱可视化页面"""
 

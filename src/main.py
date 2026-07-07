@@ -281,7 +281,7 @@ async def wiki_index():
 </head>
 <body>
 <h1>LLM Wiki 知识库</h1>
-<p>共 {len(all_files)} 个页面 · <a href="/wiki/graph" class="wikilink">图谱视图</a></p>
+<p>共 {len(all_files)} 个页面 · <a href="/wiki/query" class="wikilink">知识问答</a> · <a href="/wiki/graph" class="wikilink">图谱视图</a></p>
 {''.join(sections)}
 </body>
 </html>"""
@@ -376,6 +376,150 @@ fetch('/v1/graph')
       document.body.style.cursor = 'default';
     });
   });
+</script>
+</body>
+</html>""")
+
+@app.get("/wiki/query", response_class=HTMLResponse)
+async def wiki_query():
+    """Wiki 知识问答 — 前端查询界面"""
+    return HTMLResponse("""<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识问答 — LLM Wiki</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 720px; margin: 0 auto; padding: 2em; line-height: 1.7; }
+  a { color: #2a5db0; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .header { margin-bottom: 1.5em; color: #888; font-size: 14px; }
+  .header a { color: #2a5db0; }
+  .input-row { display: flex; gap: 8px; margin-bottom: 1.5em; }
+  .input-row input { flex: 1; padding: 10px 14px; font-size: 15px; border: 1px solid #ddd; border-radius: 6px; outline: none; }
+  .input-row input:focus { border-color: #2a5db0; box-shadow: 0 0 0 2px rgba(42,93,176,0.1); }
+  .input-row button { padding: 10px 24px; font-size: 15px; background: #2a5db0; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+  .input-row button:hover { background: #1d4a8e; }
+  .input-row button:disabled { background: #95a5a6; cursor: not-allowed; }
+  .options { margin-bottom: 1em; font-size: 13px; color: #666; }
+  .options label { cursor: pointer; }
+  .options input { margin-right: 4px; }
+  .answer-box { border: 1px solid #e0e0e0; border-radius: 8px; padding: 1.2em 1.5em; margin-top: 0.5em; min-height: 60px; display: none; }
+  .answer-box.show { display: block; }
+  .answer-box.loading { display: flex; align-items: center; justify-content: center; color: #888; min-height: 80px; }
+  .answer-box.loading::after { content: ''; width: 18px; height: 18px; margin-left: 8px; border: 2px solid #ddd; border-top-color: #2a5db0; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .answer-box.error { border-color: #e74c3c; background: #fdf0ef; }
+  .meta { font-size: 13px; color: #888; margin-top: 1em; padding-top: 0.8em; border-top: 1px solid #eee; }
+  .meta span { margin-right: 1em; }
+  .conf-high { color: #27ae60; } .conf-medium { color: #f39c12; } .conf-low { color: #e74c3c; }
+  .sources { margin-top: 0.8em; }
+  .sources a { display: inline-block; margin-right: 0.5em; }
+  .gaps { margin-top: 0.5em; font-size: 13px; color: #e67e22; }
+  .hint { color: #aaa; font-size: 13px; text-align: center; padding: 2em 0; }
+  .archived { color: #27ae60; font-size: 13px; margin-top: 0.5em; }
+</style>
+</head>
+<body>
+<div class="header"><a href="/wiki">&larr; Wiki 首页</a></div>
+
+<div class="input-row">
+  <input id="queryInput" type="text" placeholder="向知识库提问…" autofocus>
+  <button id="queryBtn" onclick="doQuery()">查询</button>
+</div>
+
+<div class="options">
+  <label><input type="checkbox" id="archiveCheck"> 归档答案到 wiki/queries/</label>
+</div>
+
+<div id="answerBox" class="answer-box"></div>
+<div id="hint" class="hint">输入问题后点击查询，LLM 将基于 Wiki 知识库回答。</div>
+
+<script>
+function doQuery() {
+  const q = document.getElementById('queryInput').value.trim();
+  if (!q) return;
+  const btn = document.getElementById('queryBtn');
+  const box = document.getElementById('answerBox');
+  const hint = document.getElementById('hint');
+  hint.style.display = 'none';
+  box.className = 'answer-box loading';
+  box.style.display = 'flex';
+  box.textContent = '查询中…';
+  btn.disabled = true;
+
+  const archive = document.getElementById('archiveCheck').checked;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+
+  fetch('/v1/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: q, archive }),
+    signal: controller.signal,
+  })
+  .then(r => r.json())
+  .then(data => {
+    clearTimeout(timer);
+    if (data.error) { showError(data.error); return; }
+    renderAnswer(data);
+  })
+  .catch(err => {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') {
+      showError('请求超时（10s），LLM 回答较慢，请稍后重试');
+    } else {
+      showError('网络错误：' + err.message);
+    }
+  })
+  .finally(() => { btn.disabled = false; });
+}
+
+function renderAnswer(data) {
+  const box = document.getElementById('answerBox');
+  const answer = wikilinksToHtml(data.answer || '');
+  const conf = data.confidence || 'low';
+  const confLabels = { high: '高', medium: '中', low: '低' };
+  const confClass = 'conf-' + conf;
+
+  let html = '<div>' + answer + '</div>';
+  html += '<div class="meta">';
+  html += '<span class="' + confClass + '">置信度: ' + confLabels[conf] + '</span>';
+  if (data.sources && data.sources.length) {
+    html += '<span>来源: ' + data.sources.map(s =>
+      '<a href="/wiki/' + s + '">' + s.split('/').pop().replace(/\\.md$/, '') + '</a>'
+    ).join(', ') + '</span>';
+  }
+  html += '</div>';
+
+  if (data.gaps && data.gaps.length) {
+    html += '<div class="gaps">⚠ 知识缺口: ' + data.gaps.join('; ') + '</div>';
+  }
+  if (data.archived) {
+    html += '<div class="archived">✓ 已归档: <a href="/wiki/' + data.archived + '">' + data.archived + '</a></div>';
+  }
+
+  box.className = 'answer-box show';
+  box.innerHTML = html;
+}
+
+function showError(msg) {
+  const box = document.getElementById('answerBox');
+  box.className = 'answer-box show error';
+  box.innerHTML = '<strong>出错了</strong><br>' + msg;
+}
+
+function wikilinksToHtml(text) {
+  return text.replace(/\\[\\[([^\\]|]+?)(?:\\|([^\\]]+?))?\\]\\]/g, function(match, target, display) {
+    const label = display || target;
+    return '<a href="/wiki/' + target + '">' + label + '</a>';
+  });
+}
+
+document.getElementById('queryInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') doQuery();
+});
 </script>
 </body>
 </html>""")
