@@ -21,6 +21,7 @@ from src.core.models import (
 )
 from src.core.privacy import PrivacyManager
 from src.core.token_tracker import TokenTracker
+from src.core.watcher import SourceWatcher
 from src.core.wiki_compiler import CompilerError, WikiCompiler
 from src.db.repository import WikiRepository
 from src.llm.adapter import LLMError
@@ -44,6 +45,32 @@ app.add_middleware(
 )
 
 logger.info("LLM Wiki API 启动 | version=0.1.0")
+
+# ------------------------------------------------------------------
+# Source 自动监听（全局实例）
+# ------------------------------------------------------------------
+
+_watcher: SourceWatcher | None = None
+
+
+@app.on_event("startup")
+async def _start_watcher():
+    """服务启动时自动开启 Source 监听（可通过 WATCHER_ENABLED=false 关闭）"""
+    global _watcher
+    enabled = os.environ.get("WATCHER_ENABLED", "true").lower() not in ("false", "0", "no")
+    if not enabled:
+        logger.info("SourceWatcher 已禁用（WATCHER_ENABLED=false）")
+        return
+    _watcher = SourceWatcher()
+    _watcher.start()
+
+
+@app.on_event("shutdown")
+async def _stop_watcher():
+    """服务关闭时停止 Source 监听"""
+    global _watcher
+    if _watcher and _watcher.is_running:
+        _watcher.stop()
 
 
 @app.get("/")
@@ -264,6 +291,45 @@ async def get_usage(period: str = "today"):
         result = tracker.today_summary()
 
     return UsageResponse(**result)
+
+
+# ==================================================================
+# Phase 3 Step 8 — Source 文件夹自动监听
+# ==================================================================
+
+
+@app.post("/v1/watcher/start")
+async def watcher_start():
+    """启动 Source 文件夹自动监听"""
+    global _watcher
+    logger.info("POST /v1/watcher/start")
+    if _watcher is None:
+        _watcher = SourceWatcher()
+    if _watcher.is_running:
+        return {"status": "already_running", "detail": _watcher.status()}
+    _watcher.start()
+    return {"status": "started", "detail": _watcher.status()}
+
+
+@app.post("/v1/watcher/stop")
+async def watcher_stop():
+    """停止 Source 文件夹自动监听"""
+    global _watcher
+    logger.info("POST /v1/watcher/stop")
+    if _watcher is None or not _watcher.is_running:
+        return {"status": "not_running"}
+    _watcher.stop()
+    return {"status": "stopped"}
+
+
+@app.get("/v1/watcher/status")
+async def watcher_status():
+    """查询 Source 监听状态"""
+    global _watcher
+    logger.info("GET /v1/watcher/status")
+    if _watcher is None:
+        return {"running": False, "detail": "未启动"}
+    return _watcher.status()
 
 
 @app.get("/v1/graph")
