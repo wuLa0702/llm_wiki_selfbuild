@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from src.core.auth import PasswordManager, is_wiki_protected
 from src.core.logging_config import configure_logging, get_logger
 from src.core.graph import WikiGraph
 from src.core.models import (
@@ -249,7 +250,7 @@ async def list_pages(
 
 
 @app.get("/v1/pages/{page_path:path}", response_model=PageDetailResponse)
-async def get_page_detail(page_path: str):
+async def get_page_detail(page_path: str, request: Request):
     """获取单个 Wiki 页面的完整内容 + 元数据（JSON）
 
     Args:
@@ -263,6 +264,17 @@ async def get_page_detail(page_path: str):
         return JSONResponse(
             status_code=404,
             content={"error": "Page not found", "detail": f"No metadata for '{page_path}'"},
+        )
+
+    # 密码保护检查
+    if not _check_page_access(request, page_path):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "path": page_path,
+                "status": "locked",
+                "message": "此页面需要密码验证，请先 POST /v1/auth/verify",
+            },
         )
 
     reader = ReadTool("wiki")
@@ -279,17 +291,7 @@ async def get_page_detail(page_path: str):
             content={"error": "Access denied", "detail": str(e)},
         )
 
-    # visibility 处理
     visibility = meta.get("visibility", "public")
-    if visibility == "restricted":
-        return JSONResponse(
-            status_code=403,
-            content={
-                "path": page_path,
-                "status": "locked",
-                "message": "此页面需要密码验证",
-            },
-        )
 
     return PageDetailResponse(
         path=page_path,
@@ -457,8 +459,114 @@ async def remove_privacy_rule(keyword: str):
 
 
 # ==================================================================
+# Phase 4 Step 6 — 密码保护
+# ==================================================================
+
+
+def _get_pm() -> PasswordManager:
+    """获取 PasswordManager 实例"""
+    return PasswordManager(WikiRepository())
+
+
+@app.post("/v1/auth/password")
+async def set_password(request: Request):
+    """设置 Wiki 访问密码"""
+    body = await request.json()
+    password = body.get("password", "").strip()
+    if not password or len(password) < 4:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "密码至少 4 位"},
+        )
+    pm = _get_pm()
+    try:
+        pm.set_password(password)
+        return {"status": "ok", "message": "密码已设置"}
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+@app.post("/v1/auth/verify")
+async def verify_password(request: Request):
+    """验证密码，返回访问 token"""
+    body = await request.json()
+    password = body.get("password", "").strip()
+    if not password:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "password is required"},
+        )
+    pm = _get_pm()
+    if pm.verify(password):
+        token = pm.create_token()
+        return {
+            "status": "ok",
+            "token": token,
+            "expires_in": 86400,
+            "message": "验证通过",
+        }
+    return JSONResponse(
+        status_code=403,
+        content={"error": "密码错误"},
+    )
+
+
+@app.post("/v1/auth/clear")
+async def clear_password():
+    """清除密码（恢复公开访问）"""
+    pm = _get_pm()
+    if not pm.is_protected():
+        return {"status": "ok", "message": "当前未设置密码"}
+    pm.clear()
+    return {"status": "ok", "message": "密码已清除"}
+
+
+@app.get("/v1/auth/status")
+async def auth_status():
+    """查询密码保护状态"""
+    pm = _get_pm()
+    return {
+        "protected": pm.is_protected(),
+        "active_tokens": pm.token_info()["active_tokens"],
+    }
+
+
+# ==================================================================
 # Wiki 浏览路由
 # ==================================================================
+
+
+def _get_token_from_request(request: Request) -> str | None:
+    """从请求中提取 token（优先 Authorization header，其次 query param）"""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[7:]
+    token = request.query_params.get("token")
+    return token
+
+
+def _check_page_access(request: Request, page_path: str) -> bool:
+    """检查是否有权限访问指定页面
+
+    公开页面始终可访问。
+    restricted 页面需要有效 token。
+
+    Returns:
+        True 允许访问，False 拒绝
+    """
+    repo = WikiRepository()
+    meta = repo.get_page(page_path)
+    if meta is None:
+        return True  # 页面不存在，交给 404 处理
+    visibility = meta.get("visibility", "public")
+    if visibility != "restricted":
+        return True
+    # restricted 页面需要验证 token
+    token = _get_token_from_request(request)
+    if not token:
+        return False
+    pm = _get_pm()
+    return pm.validate_token(token)
 
 
 def _convert_wikilinks(text: str, existing_pages: set | None = None) -> str:
@@ -737,8 +845,25 @@ document.getElementById('queryInput').addEventListener('keydown', function(e) {
 </html>""")
 
 @app.get("/wiki/{page_path:path}", response_class=HTMLResponse)
-async def wiki_page(page_path: str):
+async def wiki_page(page_path: str, request: Request):
     """渲染单个 Wiki 页面，[[双向链接]] 可点击跳转"""
+    # 密码保护检查
+    if not _check_page_access(request, page_path):
+        return HTMLResponse(f"""<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>页面已锁定</title>
+<style>body {{ font-family: -apple-system, sans-serif; max-width: 600px; margin: 2em auto; padding: 2em; text-align: center; }}
+.lock-icon {{ font-size: 48px; margin-bottom: 0.5em; }}
+h1 {{ font-size: 20px; color: #2c3e50; }}
+p {{ color: #888; }}</style>
+</head>
+<body>
+<div class="lock-icon">🔒</div>
+<h1>此页面需要密码验证</h1>
+<p>该页面标记为私人内容，请先通过 API 验证后再访问。</p>
+</body>
+</html>""")
+
     reader = ReadTool("wiki")
 
     # 收集所有存在的页面路径，用于标记断链

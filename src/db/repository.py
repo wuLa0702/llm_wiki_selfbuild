@@ -272,6 +272,52 @@ class WikiRepository:
         raise NotImplementedError("Phase 2 实现")
 
     # ------------------------------------------------------------------
+    # Wiki 设置（密码等）
+    # ------------------------------------------------------------------
+
+    def get_setting(self, key: str) -> str | None:
+        """获取 Wiki 设置值
+
+        Args:
+            key: 设置键名
+
+        Returns:
+            设置值，不存在返回 None
+        """
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT value FROM wiki_settings WHERE key = ?", (key,)
+        ).fetchone()
+        conn.close()
+        return row["value"] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        """设置 Wiki 设置（UPSERT）
+
+        Args:
+            key: 设置键名
+            value: 设置值
+        """
+        conn = self._get_connection()
+        conn.execute(
+            "INSERT OR REPLACE INTO wiki_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+            (key, value),
+        )
+        conn.commit()
+        conn.close()
+
+    def delete_setting(self, key: str) -> None:
+        """删除 Wiki 设置
+
+        Args:
+            key: 设置键名
+        """
+        conn = self._get_connection()
+        conn.execute("DELETE FROM wiki_settings WHERE key = ?", (key,))
+        conn.commit()
+        conn.close()
+
+    # ------------------------------------------------------------------
     # 语义 Lint 缓存
     # ------------------------------------------------------------------
 

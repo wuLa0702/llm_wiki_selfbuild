@@ -80,6 +80,12 @@ CREATE TABLE IF NOT EXISTS graph_relevance (
     PRIMARY KEY (source_path, target_path)
 );
 
+CREATE TABLE IF NOT EXISTS wiki_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS lint_cache (
     cache_key TEXT PRIMARY KEY,
     result_json TEXT NOT NULL,
