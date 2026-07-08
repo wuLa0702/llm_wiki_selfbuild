@@ -454,3 +454,14 @@ def test_wikigraph_communities_method(wiki_dir):
     assert "communities" in result
     assert "modularity" in result
     assert len(result["communities"]) > 0
+
+
+def test_wikigraph_insights_method(wiki_dir):
+    """WikiGraph.insights() 返回图谱洞察结果"""
+    g = WikiGraph(str(wiki_dir))
+    g.build()
+    comm_result = g.communities()
+    result = g.insights(comm_result)
+    assert "surprising_connections" in result
+    assert "knowledge_gaps" in result
+    assert "summary" in result

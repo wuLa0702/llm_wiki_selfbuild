@@ -373,6 +373,15 @@ async def wikicommunities():
     return compiler.graph.communities(repo=compiler.repo)
 
 
+@app.get("/v1/insights")
+async def wiki_insights():
+    """返回图谱洞察（惊奇连接 + 知识空白）"""
+    logger.info("GET /v1/insights")
+    compiler = WikiCompiler()
+    comm_result = compiler.graph.communities(repo=compiler.repo)
+    return compiler.graph.insights(comm_result, repo=compiler.repo)
+
+
 # ==================================================================
 # 隐私规则 API
 # ==================================================================

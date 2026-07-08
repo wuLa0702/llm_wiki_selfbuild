@@ -357,6 +357,30 @@ class WikiGraph:
         return detector.detect(repo=repo)
 
     # ------------------------------------------------------------------
+    # 图谱洞察
+    # ------------------------------------------------------------------
+
+    def insights(self, community_result: dict, repo=None) -> dict:
+        """
+        运行图谱洞察引擎，返回惊奇连接 + 知识空白
+
+        Args:
+            community_result: communities() 返回的社区检测结果
+            repo: WikiRepository 实例（可选，用于跨类型边检测）
+
+        Returns:
+            {
+                "surprising_connections": [...],
+                "knowledge_gaps": [...],
+                "summary": {...},
+            }
+        """
+        from src.core.insights import InsightEngine
+
+        engine = InsightEngine(self)
+        return engine.analyze_all(community_result, repo=repo)
+
+    # ------------------------------------------------------------------
     # 序列化
     # ------------------------------------------------------------------
 
@@ -460,8 +484,14 @@ class WikiGraph:
                 comm_result = self.communities(repo=repo)
                 result["communities"] = comm_result.get("communities", {})
                 result["modularity"] = comm_result.get("modularity", 0.0)
+
+                # 图谱洞察
+                insight_result = self.insights(comm_result, repo=repo)
+                result["insights"] = insight_result.get("summary", {})
+                result["surprising_connections"] = insight_result.get("surprising_connections", [])
+                result["knowledge_gaps"] = insight_result.get("knowledge_gaps", [])
             except Exception as exc:
-                logger.debug("to_dict 社区检测失败 | %s", exc)
+                logger.debug("to_dict 社区/洞察检测失败 | %s", exc)
 
         return result
 
