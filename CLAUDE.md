@@ -15,6 +15,7 @@ LLM Wiki 是一个知识沉淀管理系统。基于 Karpathy 的 LLM Wiki 理念
 llm-wiki/
 ├── raw/          # 原始素材（只读）
 ├── wiki/         # LLM 维护的知识层
+├── static/       # 前端静态资源（图谱可视化等）
 ├── src/          # Python 代码
 │   ├── main.py   # FastAPI 入口
 │   ├── core/     # 核心逻辑

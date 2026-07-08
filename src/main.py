@@ -3,6 +3,7 @@ LLM Wiki — FastAPI 服务入口
 """
 import os
 import re
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +22,7 @@ from src.core.models import (
     UsageResponse,
 )
 from src.core.privacy import PrivacyManager
+from src.core.task_queue import TaskQueue
 from src.core.token_tracker import TokenTracker
 from src.core.watcher import SourceWatcher
 from src.core.wiki_compiler import CompilerError, WikiCompiler
@@ -358,11 +360,37 @@ async def watcher_status():
 
 
 @app.get("/v1/graph")
-async def wiki_graph():
-    """返回 Wiki 页面的关系图（JSON），含 4-signal 关联度数据和社区检测"""
-    logger.info("GET /v1/graph")
+async def wiki_graph(min_weight: float = 0, max_edges: int = 0):
+    """返回 Wiki 页面的关系图（JSON），含 4-signal 关联度数据和社区检测
+
+    Args:
+        min_weight: 边权重下限（过滤弱关联，默认 0=返回全部）
+        max_edges: 最多返回的边数（按权重降序，默认 0=返回全部）
+    """
+    logger.info("GET /v1/graph | min_weight=%s max_edges=%s", min_weight, max_edges)
     compiler = WikiCompiler()
-    return compiler.graph.to_dict(repo=compiler.repo)
+    result = compiler.graph.to_dict(repo=compiler.repo)
+
+    total_edges = len(result.get("edges", []))
+    if (min_weight > 0 or max_edges > 0) and result.get("edges"):
+        edges = result["edges"]
+        if min_weight > 0:
+            edges = [e for e in edges if (e.get("weight") or 0) >= min_weight]
+        if max_edges > 0:
+            edges.sort(key=lambda e: e.get("weight") or 0, reverse=True)
+            edges = edges[:max_edges]
+        result["edges"] = edges
+        result["stats"]["total_edges"] = len(edges)
+        result["stats"]["filtered_from"] = total_edges
+        logger.info("GET /v1/graph 边过滤 | %d → %d", total_edges, len(edges))
+
+    # 响应体大小日志
+    import json
+    body_size = len(json.dumps(result, ensure_ascii=False, default=str))
+    if body_size > 500_000:
+        logger.warning("GET /v1/graph 响应体过大 | edges=%d size=%.1fKB", len(result.get("edges", [])), body_size / 1024)
+
+    return result
 
 
 @app.get("/v1/communities")
@@ -551,95 +579,13 @@ async def wiki_index():
 
 @app.get("/wiki/graph", response_class=HTMLResponse)
 async def wiki_graph_viz():
-    """Wiki 图谱可视化 — 交互式力导向图"""
-    return HTMLResponse("""<!DOCTYPE html>
-<html lang="zh">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Wiki 图谱 — LLM Wiki</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.6/dist/vis-network.min.js"></script>
-<style>
-  body { margin: 0; font-family: -apple-system, sans-serif; }
-  #toolbar { position: fixed; top: 0; left: 0; right: 0; z-index: 10;
-             background: #fff; border-bottom: 1px solid #ddd;
-             padding: 8px 20px; display: flex; align-items: center; gap: 16px;
-             font-size: 14px; }
-  #toolbar a { color: #2a5db0; text-decoration: none; }
-  #toolbar a:hover { text-decoration: underline; }
-  #stats { color: #888; font-size: 13px; }
-  #mynetwork { position: fixed; top: 41px; left: 0; right: 0; bottom: 0; }
-  .vis-network:focus { outline: none; }
-</style>
-</head>
-<body>
-<div id="toolbar">
-  <a href="/wiki">&larr; Wiki 首页</a>
-  <span id="stats">加载中...</span>
-</div>
-<div id="mynetwork"></div>
-<script>
-fetch('/v1/graph')
-  .then(r => r.json())
-  .then(data => {
-    const typeColors = {
-      entity: '#3498db', concept: '#2ecc71', source: '#f39c12',
-      query: '#9b59b6', other: '#95a5a6',
-    };
-    const nodes = data.nodes.map(n => {
-      const parts = n.id.split('/');
-      const type = parts.length > 1 ? parts[0] : 'other';
-      let label = parts.pop().replace(/\\.md$/, '');
-      const deg = n.degree.out + n.degree.in;
-      const size = Math.max(12, Math.min(40, 8 + deg * 3));
-      return {
-        id: n.id, label, title: `${n.id}\\n出度: ${n.degree.out} | 入度: ${n.degree.in}`,
-        color: { background: typeColors[type] || typeColors.other, border: '#2c3e50' },
-        size, borderWidth: 1.5,
-        font: { size: 11, color: '#2c3e50' },
-        shape: 'dot',
-      };
-    });
-    const edges = data.edges.map(e => ({
-      from: e.source, to: e.target,
-      arrows: { to: { enabled: true, scaleFactor: 0.5 } },
-      color: { color: '#bdc3c7', highlight: '#2a5db0', opacity: 0.5 },
-      width: 1,
-    }));
+    """Wiki 图谱可视化 — 从独立文件加载，避免内联转义问题"""
+    graph_html = Path("static/graph.html")
+    if graph_html.exists():
+        content = graph_html.read_text(encoding="utf-8")
+        return HTMLResponse(content)
+    return HTMLResponse("<h1>图谱页面未找到</h1><p>请确保 static/graph.html 存在</p>")
 
-    const s = data.stats;
-    document.getElementById('stats').textContent =
-      `${s.total_nodes} 个页面 · ${s.total_edges} 条链接 · 平均度 ${s.avg_degree.toFixed(1)}`;
-
-    const container = document.getElementById('mynetwork');
-    const visNodes = new vis.DataSet(nodes);
-    const visEdges = new vis.DataSet(edges);
-    const network = new vis.Network(container, { nodes: visNodes, edges: visEdges }, {
-      physics: { solver: 'forceAtlas2Based', forceAtlas2Based: { springLength: 200, springConstant: 0.02 } },
-      interaction: { hover: true, tooltipDelay: 200 },
-      edges: { smooth: { type: 'continuous' } },
-    });
-
-    let selectedId = null;
-    network.on('click', function(params) {
-      if (params.nodes.length) {
-        window.location.href = '/wiki/' + params.nodes[0];
-      } else if (selectedId) {
-        network.selectNodes([]);
-        selectedId = null;
-      }
-    });
-    network.on('hoverNode', function(params) {
-      selectedId = params.node;
-      document.body.style.cursor = 'pointer';
-    });
-    network.on('blurNode', function() {
-      document.body.style.cursor = 'default';
-    });
-  });
-</script>
-</body>
-</html>""")
 
 @app.get("/wiki/query", response_class=HTMLResponse)
 async def wiki_query():
