@@ -68,4 +68,15 @@ CREATE TABLE IF NOT EXISTS model_pricing (
     source_url TEXT,
     fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS graph_relevance (
+    source_path TEXT NOT NULL,
+    target_path TEXT NOT NULL,
+    total_score REAL NOT NULL,
+    direct_link REAL DEFAULT 0,
+    source_overlap REAL DEFAULT 0,
+    adamic_adar REAL DEFAULT 0,
+    type_affinity REAL DEFAULT 0,
+    PRIMARY KEY (source_path, target_path)
+);
 """

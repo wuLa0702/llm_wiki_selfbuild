@@ -14,6 +14,7 @@ from src.core.logging_config import get_logger
 from src.core.models import AnalysisOutput, IngestResponse
 from src.core.privacy import PrivacyManager
 from src.core.query_engine import QueryEngine
+from src.core.task_queue import TaskQueue
 from src.core.token_tracker import TokenTracker
 from src.db.repository import WikiRepository
 from src.llm.adapter import LLMAdapter, LLMError
@@ -36,7 +37,7 @@ class CompilerError(Exception):
 class WikiCompiler:
     """Agent 主流程：协调工具和 LLM 完成 Ingest/Query/Lint 操作"""
 
-    def __init__(self) -> None:
+    def __init__(self, task_queue: TaskQueue | None = None) -> None:
         self.reader = ReadTool("raw")
         self.writer = WriteTool("wiki")
         self.token_tracker = TokenTracker()
@@ -46,6 +47,7 @@ class WikiCompiler:
         self.privacy = PrivacyManager()
         self.graph = WikiGraph()
         self.search_tool = SearchTool()
+        self.task_queue = task_queue
         self.query_engine = QueryEngine(
             repo=self.repo,
             search_tool=self.search_tool,
@@ -508,7 +510,10 @@ class WikiCompiler:
 
         self._update_nav_files(source_path, pages)
         self.cache.mark_ingested(source_path)
-        self.graph.build()
+        # 图谱重建交给后台任务，不阻塞 ingest 返回
+        self.graph.invalidate()
+        if self.task_queue:
+            self.task_queue.enqueue("rebuild_graph")
 
         # 捕获 overview 的 token 用量（如果调了 LLM）
         ov = self.llm.last_usage if self.llm.last_usage != s2 else None
@@ -596,7 +601,9 @@ class WikiCompiler:
         ov = self.llm.last_usage if self.llm.last_usage != s1 else None
 
         self.cache.mark_ingested(source_path)
-        self.graph.build()
+        self.graph.invalidate()
+        if self.task_queue:
+            self.task_queue.enqueue("rebuild_graph")
         token_usage = self._build_token_usage(s1, None, ov)
 
         return IngestResponse(
@@ -626,10 +633,10 @@ class WikiCompiler:
         result = self.query_engine.query(
             question, max_pages=max_pages, archive=archive
         )
-        # 归档后更新 index + 重建图，让新 query 页面出现在索引和图结构中
+        # 归档后更新 index + 标记图脏（懒重建）
         if result.get("archived"):
             self._update_index()
-            self.graph.build()
+            self.graph.invalidate()
         return result
 
     # ------------------------------------------------------------------

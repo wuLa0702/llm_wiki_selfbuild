@@ -25,14 +25,17 @@ class SourceWatcher:
         self,
         sources_dir: str = "raw/sources",
         poll_interval: int = 10,
+        task_queue=None,
     ) -> None:
         """
         Args:
             sources_dir: 源文件目录路径
             poll_interval: 轮询间隔（秒）
+            task_queue: 可选的 TaskQueue 实例，用于 ingest 后异步重建图谱
         """
         self.sources_dir = sources_dir
         self.poll_interval = poll_interval
+        self.task_queue = task_queue
         self._running = False
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -153,7 +156,7 @@ class SourceWatcher:
                 break
 
             try:
-                compiler = WikiCompiler()
+                compiler = WikiCompiler(task_queue=self.task_queue)
                 result = compiler.ingest(source_path)
                 if result.get("status") == "success":
                     self._files_processed += 1

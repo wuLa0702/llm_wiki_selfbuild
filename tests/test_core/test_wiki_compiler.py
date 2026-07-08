@@ -425,7 +425,7 @@ def test_ingest_builds_graph(compiler, mocker):
 
 
 def test_query_archive_updates_index(compiler, mocker):
-    """query 归档后自动更新 index 和 graph"""
+    """query 归档后自动更新 index 和 invalidate 图"""
     mocker.patch.object(
         compiler.query_engine, "query",
         return_value={
@@ -437,13 +437,13 @@ def test_query_archive_updates_index(compiler, mocker):
         },
     )
     index_spy = mocker.spy(compiler, "_update_index")
-    graph_spy = mocker.spy(compiler.graph, "build")
+    invalidate_spy = mocker.spy(compiler.graph, "invalidate")
 
     result = compiler.query("Python 是什么？", archive=True)
 
     assert result["archived"] == "queries/python-shi-shi.md"
     index_spy.assert_called_once()
-    graph_spy.assert_called_once()
+    invalidate_spy.assert_called_once()
 
 
 def test_query_no_archive_skips_update(compiler, mocker):
@@ -459,10 +459,10 @@ def test_query_no_archive_skips_update(compiler, mocker):
         },
     )
     index_spy = mocker.spy(compiler, "_update_index")
-    graph_spy = mocker.spy(compiler.graph, "build")
+    invalidate_spy = mocker.spy(compiler.graph, "invalidate")
 
     compiler.query("Python 是什么？", archive=False)
 
     index_spy.assert_not_called()
-    graph_spy.assert_not_called()
+    invalidate_spy.assert_not_called()
 

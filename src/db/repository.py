@@ -187,6 +187,86 @@ class WikiRepository:
         conn.close()
         return result
 
+    # ------------------------------------------------------------------
+    # 4-Signal 关联度
+    # ------------------------------------------------------------------
+
+    def save_relevance(self, rows: list[dict]) -> None:
+        """
+        批量写入关联度数据（UPSERT）
+
+        Args:
+            rows: [{source_path, target_path, total_score, direct_link,
+                    source_overlap, adamic_adar, type_affinity}, ...]
+        """
+        conn = self._get_connection()
+        for row in rows:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO graph_relevance
+                    (source_path, target_path, total_score,
+                     direct_link, source_overlap, adamic_adar, type_affinity)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["source_path"], row["target_path"],
+                    row["total_score"],
+                    row.get("direct_link", 0),
+                    row.get("source_overlap", 0),
+                    row.get("adamic_adar", 0),
+                    row.get("type_affinity", 0),
+                ),
+            )
+        conn.commit()
+        conn.close()
+
+    def get_related_pages(self, path: str, limit: int = 20) -> list[dict]:
+        """
+        返回与指定页面最相关的页面（按 total_score 降序）
+
+        Args:
+            path: 页面路径
+            limit: 最多返回条数
+
+        Returns:
+            [{target_path, total_score, direct_link, source_overlap,
+              adamic_adar, type_affinity}, ...]
+        """
+        conn = self._get_connection()
+        rows = conn.execute(
+            """
+            SELECT target_path, total_score, direct_link,
+                   source_overlap, adamic_adar, type_affinity
+            FROM graph_relevance
+            WHERE source_path = ?
+            ORDER BY total_score DESC
+            LIMIT ?
+            """,
+            (path, limit),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_all_relevance(self) -> list[dict]:
+        """
+        返回 graph_relevance 表的所有行（用于社区检测等全量分析）
+
+        Returns:
+            [{source_path, target_path, total_score, direct_link,
+              source_overlap, adamic_adar, type_affinity}, ...]
+        """
+        conn = self._get_connection()
+        rows = conn.execute(
+            """
+            SELECT source_path, target_path, total_score,
+                   direct_link, source_overlap, adamic_adar, type_affinity
+            FROM graph_relevance
+            ORDER BY total_score DESC
+            """
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
     def get_orphan_pages(self) -> list[str]:
         """获取孤儿页（Phase 2 实现）"""
         raise NotImplementedError("Phase 2 实现")

@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.core.logging_config import configure_logging, get_logger
+from src.core.graph import WikiGraph
 from src.core.models import (
     IngestRequest,
     IngestResponse,
@@ -52,23 +53,47 @@ logger.info("LLM Wiki API 启动 | version=0.1.0")
 
 _watcher: SourceWatcher | None = None
 
+# ------------------------------------------------------------------
+# 任务队列（全局实例）
+# ------------------------------------------------------------------
+
+_task_queue: TaskQueue | None = None
+
+
+def _rebuild_graph_handler(payload: dict) -> None:
+    """后台重建图谱 + 关联度"""
+    logger.info("后台任务开始重建图谱...")
+    graph = WikiGraph()
+    from src.db.repository import WikiRepository
+    repo = WikiRepository()
+    graph.build()
+    graph.compute_relevance(repo)
+    logger.info("后台任务图谱重建完成 | nodes=%d", len(graph.nodes()))
+
 
 @app.on_event("startup")
 async def _start_watcher():
-    """服务启动时自动开启 Source 监听（可通过 WATCHER_ENABLED=false 关闭）"""
-    global _watcher
+    """服务启动时自动开启 Source 监听 + 任务队列"""
+    global _watcher, _task_queue
+    # 任务队列
+    _task_queue = TaskQueue()
+    _task_queue.register_handler("rebuild_graph", _rebuild_graph_handler)
+    _task_queue.start()
+    # Source 监听
     enabled = os.environ.get("WATCHER_ENABLED", "true").lower() not in ("false", "0", "no")
     if not enabled:
         logger.info("SourceWatcher 已禁用（WATCHER_ENABLED=false）")
         return
-    _watcher = SourceWatcher()
+    _watcher = SourceWatcher(task_queue=_task_queue)
     _watcher.start()
 
 
 @app.on_event("shutdown")
-async def _stop_watcher():
-    """服务关闭时停止 Source 监听"""
-    global _watcher
+async def _stop_services():
+    """服务关闭时停止后台服务"""
+    global _watcher, _task_queue
+    if _task_queue:
+        _task_queue.stop()
     if _watcher and _watcher.is_running:
         _watcher.stop()
 
@@ -90,7 +115,7 @@ async def ingest(request: IngestRequest):
     """Ingest 一个源文件到 Wiki 知识库"""
     logger.info("POST /v1/ingest | source_path=%s", request.source_path)
 
-    compiler = WikiCompiler()
+    compiler = WikiCompiler(task_queue=_task_queue)
     try:
         result = compiler.ingest(request.source_path)
         return result
@@ -334,10 +359,18 @@ async def watcher_status():
 
 @app.get("/v1/graph")
 async def wiki_graph():
-    """返回 Wiki 页面的 wikilinks 关系图（JSON）"""
+    """返回 Wiki 页面的关系图（JSON），含 4-signal 关联度数据和社区检测"""
     logger.info("GET /v1/graph")
     compiler = WikiCompiler()
-    return compiler.graph.to_dict()
+    return compiler.graph.to_dict(repo=compiler.repo)
+
+
+@app.get("/v1/communities")
+async def wikicommunities():
+    """返回 Louvain 社区检测结果"""
+    logger.info("GET /v1/communities")
+    compiler = WikiCompiler()
+    return compiler.graph.communities(repo=compiler.repo)
 
 
 # ==================================================================

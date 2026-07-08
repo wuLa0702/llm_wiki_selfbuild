@@ -181,6 +181,42 @@ def test_search_pages_case_insensitive(repo):
     assert len(results) >= 1
 
 
+# ============================================================================
+# 4-Signal 关联度
+# ============================================================================
+
+
+class TestRelevance:
+    """graph_relevance 表操作"""
+
+    def test_save_and_get_related(self, repo):
+        rows = [
+            {"source_path": "a.md", "target_path": "b.md", "total_score": 8.5,
+             "direct_link": 3.0, "source_overlap": 4.0, "adamic_adar": 0, "type_affinity": 1.5},
+            {"source_path": "a.md", "target_path": "c.md", "total_score": 5.0,
+             "direct_link": 0, "source_overlap": 4.0, "adamic_adar": 0, "type_affinity": 1.0},
+        ]
+        repo.save_relevance(rows)
+        related = repo.get_related_pages("a.md", limit=10)
+        assert len(related) == 2
+        assert related[0]["target_path"] == "b.md"
+        assert related[0]["total_score"] == 8.5
+
+    def test_get_related_empty(self, repo):
+        assert repo.get_related_pages("nonexistent.md") == []
+
+    def test_save_relevance_upsert(self, repo):
+        rows = [{
+            "source_path": "a.md", "target_path": "b.md", "total_score": 3.0,
+            "direct_link": 3.0, "source_overlap": 0, "adamic_adar": 0, "type_affinity": 0,
+        }]
+        repo.save_relevance(rows)
+        rows[0]["total_score"] = 7.0
+        repo.save_relevance(rows)
+        related = repo.get_related_pages("a.md")
+        assert related[0]["total_score"] == 7.0
+
+
 def test_add_link_logs_operation(repo):
     """add_link 会自动写入 operation_log"""
     repo.add_page("entities/a.md", "A", "entity")
@@ -248,3 +284,39 @@ def test_search_pages_case_insensitive(repo):
     repo.add_page("entities/python.md", "Python Language", "entity")
     results = repo.search_pages("python")
     assert len(results) >= 1
+
+
+# ============================================================================
+# 4-Signal 关联度
+# ============================================================================
+
+
+class TestRelevance:
+    """graph_relevance 表操作"""
+
+    def test_save_and_get_related(self, repo):
+        rows = [
+            {"source_path": "a.md", "target_path": "b.md", "total_score": 8.5,
+             "direct_link": 3.0, "source_overlap": 4.0, "adamic_adar": 0, "type_affinity": 1.5},
+            {"source_path": "a.md", "target_path": "c.md", "total_score": 5.0,
+             "direct_link": 0, "source_overlap": 4.0, "adamic_adar": 0, "type_affinity": 1.0},
+        ]
+        repo.save_relevance(rows)
+        related = repo.get_related_pages("a.md", limit=10)
+        assert len(related) == 2
+        assert related[0]["target_path"] == "b.md"
+        assert related[0]["total_score"] == 8.5
+
+    def test_get_related_empty(self, repo):
+        assert repo.get_related_pages("nonexistent.md") == []
+
+    def test_save_relevance_upsert(self, repo):
+        rows = [{
+            "source_path": "a.md", "target_path": "b.md", "total_score": 3.0,
+            "direct_link": 3.0, "source_overlap": 0, "adamic_adar": 0, "type_affinity": 0,
+        }]
+        repo.save_relevance(rows)
+        rows[0]["total_score"] = 7.0
+        repo.save_relevance(rows)
+        related = repo.get_related_pages("a.md")
+        assert related[0]["total_score"] == 7.0
