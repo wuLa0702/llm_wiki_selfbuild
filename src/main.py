@@ -171,11 +171,16 @@ async def query(request: QueryRequest):
 
 
 @app.get("/v1/lint")
-async def lint():
-    """运行 Wiki 健康检查（静态 — 断链 + 孤页 + 索引缺失 + 健康评分）"""
-    logger.info("GET /v1/lint")
+async def lint(semantic: bool = False):
+    """运行 Wiki 健康检查
+
+    Args:
+        semantic: 设为 true 启用 LLM 语义检测（矛盾 + 缺口 + 浅页面，
+                  结果缓存 1 小时）。默认 false 走静态检查。
+    """
+    logger.info("GET /v1/lint | semantic=%s", semantic)
     compiler = WikiCompiler()
-    return compiler.lint()
+    return compiler.lint(semantic=semantic)
 
 
 # ==================================================================

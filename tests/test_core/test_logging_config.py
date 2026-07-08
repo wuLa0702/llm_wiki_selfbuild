@@ -38,8 +38,10 @@ def test_get_logger_root():
     assert logger.name == LOGGER_NAME
 
 
-def test_logger_disabled_by_default():
-    """默认状态下 logger 处于禁用状态"""
+def test_logger_disabled_by_default(mocker):
+    """默认状态下（无环境变量）logger 处于禁用状态"""
+    mocker.patch.dict(os.environ, {}, clear=True)
+    reset_logging()
     configure_logging()
     logger = get_logger()
     assert logger.disabled is True

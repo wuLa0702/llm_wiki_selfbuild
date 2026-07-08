@@ -643,20 +643,16 @@ class WikiCompiler:
     # Lint — Phase 3 Step 5
     # ------------------------------------------------------------------
 
-    def lint(self) -> dict:
-        """运行静态 Lint 检查（零 LLM 成本）
+    def lint(self, semantic: bool = False) -> dict:
+        """运行 Lint 检查
+
+        Args:
+            semantic: 是否启用 LLM 语义检测（默认 False，走静态检查）
 
         Returns:
-            {
-                "broken_links": [...],
-                "broken_links_count": 3,
-                "orphan_pages": [...],
-                "orphan_pages_count": 1,
-                "index_gaps": [...],
-                "index_gaps_count": 2,
-                "health_score": 85,
-                "summary": "检测摘要文本"
-            }
+            静态或语义检测结果
         """
         linter = LintTool(wiki_dir=self.writer.base_dir)
+        if semantic:
+            return linter.check_semantic(llm=self.llm, repo=self.repo)
         return linter.run_all()

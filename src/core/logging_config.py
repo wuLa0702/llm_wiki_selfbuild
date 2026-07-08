@@ -77,7 +77,7 @@ def configure_logging() -> None:
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 
-    # 图谱调试日志（独立文件）
+    # 图谱调试日志（独立文件，仅在日志启用时有效）
     if os.environ.get("LOG_GRAPH", "false").strip().lower() == "true":
         graph_log_dir = os.environ.get("LOG_GRAPH_DIR", "logs")
         os.makedirs(graph_log_dir, exist_ok=True)
@@ -86,11 +86,9 @@ def configure_logging() -> None:
         )
         graph_handler.setLevel(logging.DEBUG)
         graph_handler.setFormatter(formatter)
-        # 只给 graph 相关 logger 加文件输出
         graph_logger = logging.getLogger(f"{LOGGER_NAME}.graph")
         graph_logger.addHandler(graph_handler)
         graph_logger.setLevel(logging.DEBUG)
-        # 同时给 main 加（/v1/graph 的请求日志在 main 里）
         main_logger = logging.getLogger(f"{LOGGER_NAME}.main")
         main_logger.addHandler(graph_handler)
         logger.info("图谱调试日志已开启 | dir=%s", graph_log_dir)
