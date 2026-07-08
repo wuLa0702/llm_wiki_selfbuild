@@ -270,3 +270,54 @@ class WikiRepository:
     def get_orphan_pages(self) -> list[str]:
         """获取孤儿页（Phase 2 实现）"""
         raise NotImplementedError("Phase 2 实现")
+
+    # ------------------------------------------------------------------
+    # 语义 Lint 缓存
+    # ------------------------------------------------------------------
+
+    def get_lint_cache(self, cache_key: str = "semantic_lint") -> dict | None:
+        """读取语义 Lint 缓存
+
+        Args:
+            cache_key: 缓存键
+
+        Returns:
+            缓存结果 dict，不存在返回 None
+        """
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT result_json FROM lint_cache WHERE cache_key = ?", (cache_key,)
+        ).fetchone()
+        conn.close()
+        if row is None:
+            return None
+        try:
+            return json.loads(row["result_json"])
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def save_lint_cache(self, result: dict, cache_key: str = "semantic_lint") -> None:
+        """写入语义 Lint 缓存（UPSERT）
+
+        Args:
+            result: 缓存结果 dict
+            cache_key: 缓存键
+        """
+        conn = self._get_connection()
+        conn.execute(
+            "INSERT OR REPLACE INTO lint_cache (cache_key, result_json, created_at) VALUES (?, ?, datetime('now'))",
+            (cache_key, json.dumps(result, ensure_ascii=False)),
+        )
+        conn.commit()
+        conn.close()
+
+    def clear_lint_cache(self, cache_key: str = "semantic_lint") -> None:
+        """删除语义 Lint 缓存
+
+        Args:
+            cache_key: 缓存键（默认 semantic_lint）
+        """
+        conn = self._get_connection()
+        conn.execute("DELETE FROM lint_cache WHERE cache_key = ?", (cache_key,))
+        conn.commit()
+        conn.close()

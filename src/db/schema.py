@@ -79,4 +79,10 @@ CREATE TABLE IF NOT EXISTS graph_relevance (
     type_affinity REAL DEFAULT 0,
     PRIMARY KEY (source_path, target_path)
 );
+
+CREATE TABLE IF NOT EXISTS lint_cache (
+    cache_key TEXT PRIMARY KEY,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """

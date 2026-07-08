@@ -9,7 +9,7 @@ from datetime import datetime
 
 from src.core.cache import IngestCache
 from src.core.graph import WikiGraph
-from src.core.linter import LintTool
+from src.core.linter import LintTool, mark_lint_cache_dirty
 from src.core.logging_config import get_logger
 from src.core.models import AnalysisOutput, IngestResponse
 from src.core.privacy import PrivacyManager
@@ -521,6 +521,10 @@ class WikiCompiler:
         # 组装 token_usage 摘要
         token_usage = self._build_token_usage(s1, s2, ov)
 
+        # 语义 Lint 缓存置脏（下次 lint 自动重新检测）
+        if created or updated:
+            mark_lint_cache_dirty()
+
         logger.info("两步 CoT 完成 | created=%d updated=%d", len(created), len(updated))
         return IngestResponse(
             status="success",
@@ -605,6 +609,9 @@ class WikiCompiler:
         if self.task_queue:
             self.task_queue.enqueue("rebuild_graph")
         token_usage = self._build_token_usage(s1, None, ov)
+
+        if created or updated:
+            mark_lint_cache_dirty()
 
         return IngestResponse(
             status="success",

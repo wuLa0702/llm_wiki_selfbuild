@@ -2,10 +2,11 @@
 Wiki 页面健康检查器 — Phase 3 静态检测 + Phase 4 LLM 语义检测
 
 - 静态检测：断链、孤页、index 缺口（零 LLM 成本）
-- 语义检测：矛盾、知识缺口、浅页面（1 次 LLM 调用 + 1h 缓存）
+- 语义检测：矛盾、知识缺口、浅页面（1 次 LLM 调用 + SQLite 持久化缓存）
 """
+import json
 import os
-import time
+import random
 
 from src.core.graph import WikiGraph
 from src.core.logging_config import get_logger
@@ -17,9 +18,11 @@ logger = get_logger("linter")
 # 导航文件 — 孤页检测中跳过
 NAV_FILES = {"index.md", "overview.md", "log.md"}
 
-# 语义检测缓存（1小时）
-_SEMANTIC_CACHE: dict = {"result": None, "expires_at": 0}
-SEMANTIC_CACHE_TTL = 3600  # 1 小时
+# 语义检测 — 页面采样上限（超过此数量按社区抽样）
+MAX_SEMANTIC_PAGES = 500
+
+# 脏标记：ingest 后设为 True，下次语义 lint 自动重新调用 LLM
+_LINT_CACHE_DIRTY = False
 
 
 class LintTool:
@@ -223,7 +226,10 @@ class LintTool:
         """
         调用 1 次 LLM 做语义检测（矛盾 + 知识缺口 + 浅页面）
 
-        结果缓存 1 小时，TTL 内重复调用直接返回缓存。
+        缓存策略：
+          - SQLite 持久化缓存（跨进程/重启可用）
+          - ingest 后通过 mark_lint_cache_dirty() 置脏，下次自动刷新
+          - 无时间 TTL，只依赖脏标记
 
         Args:
             llm: LLMAdapter 实例
@@ -238,18 +244,18 @@ class LintTool:
                 "summary": "语义检测摘要",
             }
         """
-        global _SEMANTIC_CACHE
-        now = time.time()
+        global _LINT_CACHE_DIRTY
 
-        # 缓存命中
-        if _SEMANTIC_CACHE["result"] and now < _SEMANTIC_CACHE["expires_at"]:
-            logger.info("语义 Lint 缓存命中 | expires_at=%d", _SEMANTIC_CACHE["expires_at"])
-            result = _SEMANTIC_CACHE["result"].copy()
-            result["cached"] = True
-            return result
+        # 脏标记检查：不脏且有 SQLite 缓存 → 返回缓存
+        if not _LINT_CACHE_DIRTY:
+            cached = repo.get_lint_cache()
+            if cached:
+                logger.info("语义 Lint SQLite 缓存命中")
+                cached["cached"] = True
+                return cached
 
-        # 收集所有页面摘要
-        pages_summary = self._collect_pages_summary(repo)
+        # 收集页面摘要（含采样）
+        pages_summary, sampled_total, total_pages = self._collect_pages_summary(repo)
         if not pages_summary:
             logger.info("语义 Lint 跳过：无页面数据")
             return {
@@ -260,11 +266,11 @@ class LintTool:
                 "summary": "Wiki 中没有页面可检测",
             }
 
-        # 构建 prompt
-        prompt = (
-            "请分析以下 Wiki 页面的语义问题（矛盾、知识缺口、浅页面）。\n\n"
-            "页面列表：\n" + pages_summary
-        )
+        # 构建 prompt（标注采样信息）
+        prompt = "请分析以下 Wiki 页面的语义问题（矛盾、知识缺口、浅页面）。\n\n"
+        if sampled_total < total_pages:
+            prompt += f"（共 {total_pages} 页，按社区抽样展示 {sampled_total} 页）\n\n"
+        prompt += "页面列表：\n" + pages_summary
 
         # 输出 schema
         schema = {
@@ -321,7 +327,6 @@ class LintTool:
                 operation="lint_semantic",
             )
 
-            # 确保所有字段存在
             result.setdefault("contradictions", [])
             result.setdefault("knowledge_gaps", [])
             result.setdefault("shallow_pages", [])
@@ -332,14 +337,15 @@ class LintTool:
                 + len(result["shallow_pages"])
             )
 
-            # 写入缓存
-            _SEMANTIC_CACHE["result"] = {
+            # 写入 SQLite 缓存 + 清除脏标记
+            cache_entry = {
                 "contradictions": result.get("contradictions", []),
                 "knowledge_gaps": result.get("knowledge_gaps", []),
                 "shallow_pages": result.get("shallow_pages", []),
-                "summary": "",
+                "summary": f"语义检测完成，发现 {total} 个问题",
             }
-            _SEMANTIC_CACHE["expires_at"] = now + SEMANTIC_CACHE_TTL
+            repo.save_lint_cache(cache_entry)
+            _LINT_CACHE_DIRTY = False
 
             logger.info("语义 Lint 完成 | contradictions=%d gaps=%d shallow=%d",
                          len(result["contradictions"]),
@@ -369,19 +375,34 @@ class LintTool:
     # 语义检测 — 辅助方法
     # ------------------------------------------------------------------
 
-    def _collect_pages_summary(self, repo) -> str:
+    def _collect_pages_summary(self, repo) -> tuple[str, int, int]:
         """
-        收集所有页面摘要（title + type + 前 200 字），供 LLM 分析
+        收集页面摘要，超过 MAX_SEMANTIC_PAGES 时按社区抽样
+
+        Args:
+            repo: WikiRepository 实例
 
         Returns:
-            格式化的页面摘要文本
+            (summary_text, sampled_count, total_count)
         """
+        all_nodes = [
+            p for p in self.graph.nodes()
+            if p not in NAV_FILES
+        ]
+        total_pages = len(all_nodes)
+        if total_pages == 0:
+            return ("", 0, 0)
+
+        # 如果未超过上限，全部返回
+        if total_pages <= MAX_SEMANTIC_PAGES:
+            sampled_nodes = all_nodes
+        else:
+            # 按社区分层抽样
+            sampled_nodes = self._sample_pages(all_nodes, total_pages)
+            logger.info("语义 Lint 页面抽样 | total=%d sampled=%d", total_pages, len(sampled_nodes))
+
         lines: list[str] = []
-
-        for page_path in self.graph.nodes():
-            if page_path in NAV_FILES:
-                continue
-
+        for page_path in sampled_nodes:
             meta = repo.get_page(page_path)
             if not meta:
                 continue
@@ -390,12 +411,10 @@ class LintTool:
             page_type = meta.get("page_type", "unknown")
             word_count = meta.get("word_count", 0)
 
-            # 读取文件前 200 字
             full_path = os.path.join(self.wiki_dir, page_path)
             try:
                 with open(full_path, "r", encoding="utf-8") as f:
-                    content = f.read(500)  # 读前 500 字符
-                # 去掉 frontmatter
+                    content = f.read(500)
                 if content.startswith("---"):
                     end = content.find("---", 3)
                     if end > 0:
@@ -413,6 +432,74 @@ class LintTool:
             )
 
         if not lines:
-            return ""
+            return ("", 0, total_pages)
 
-        return "\n".join(lines)
+        return ("\n".join(lines), len(sampled_nodes), total_pages)
+
+    def _sample_pages(self, all_nodes: list[str], total: int) -> list[str]:
+        """
+        按社区分层抽样
+
+        优先使用 Louvain 社区做分层，无社区则均匀采样。
+
+        Args:
+            all_nodes: 所有页面路径
+            total: 页面总数
+
+        Returns:
+            抽样后的页面列表（约 MAX_SEMANTIC_PAGES 个）
+        """
+        # 尝试按社区分组
+        try:
+            comm_result = self.graph.communities()
+            communities = comm_result.get("communities", {})
+        except Exception:
+            communities = {}
+
+        if communities and len(communities) > 1:
+            # 社区成员映射
+            comm_members: dict[str, list[str]] = {}
+            for cid_str, cdata in communities.items():
+                members = [m for m in cdata.get("members", []) if m in all_nodes]
+                if members:
+                    comm_members[cid_str] = members
+
+            # 按社区大小比例分配配额
+            sampled: list[str] = []
+            quota = MAX_SEMANTIC_PAGES // len(comm_members)
+            for cid_str, members in comm_members.items():
+                if len(members) <= quota:
+                    sampled.extend(members)
+                else:
+                    # 随机均匀选取 quota 个
+                    random.shuffle(members)
+                    sampled.extend(members[:quota])
+
+            # 如果未满 MAX_SEMANTIC_PAGES，补充
+            remaining = MAX_SEMANTIC_PAGES - len(sampled)
+            if remaining > 0:
+                existing = set(sampled)
+                extra = [n for n in all_nodes if n not in existing]
+                random.shuffle(extra)
+                sampled.extend(extra[:remaining])
+
+            return sampled
+        else:
+            # 无社区：均匀采样，取前 MAX_SEMANTIC_PAGES 个
+            random.shuffle(all_nodes)
+            return all_nodes[:MAX_SEMANTIC_PAGES]
+
+
+# ====================================================================
+# 模块级函数：脏标记管理（供 WikiCompiler 在 ingest 后调用）
+# ====================================================================
+
+
+def mark_lint_cache_dirty() -> None:
+    """标记语义 Lint 缓存为脏
+
+    在 ingest/delete 后调用，使下次 check_semantic() 跳过缓存重新检测。
+    """
+    global _LINT_CACHE_DIRTY
+    _LINT_CACHE_DIRTY = True
+    logger.debug("语义 Lint 缓存已置脏")
