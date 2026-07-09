@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from src.core.auth import PasswordManager, is_wiki_protected
 from src.core.logging_config import configure_logging, get_logger
 from src.core.graph import WikiGraph
+from src.core.ingest_queue import IngestQueue
 from src.core.models import (
     IngestRequest,
     IngestResponse,
@@ -61,6 +62,7 @@ _watcher: SourceWatcher | None = None
 # ------------------------------------------------------------------
 
 _task_queue: TaskQueue | None = None
+_ingest_queue: IngestQueue | None = None
 
 
 def _rebuild_graph_handler(payload: dict) -> None:
@@ -77,11 +79,14 @@ def _rebuild_graph_handler(payload: dict) -> None:
 @app.on_event("startup")
 async def _start_watcher():
     """服务启动时自动开启 Source 监听 + 任务队列"""
-    global _watcher, _task_queue
+    global _watcher, _task_queue, _ingest_queue
     # 任务队列
     _task_queue = TaskQueue()
     _task_queue.register_handler("rebuild_graph", _rebuild_graph_handler)
     _task_queue.start()
+    # 摄入队列
+    _ingest_queue = IngestQueue(task_queue=_task_queue)
+    _ingest_queue.start()
     # Source 监听
     enabled = os.environ.get("WATCHER_ENABLED", "true").lower() not in ("false", "0", "no")
     if not enabled:
@@ -94,7 +99,9 @@ async def _start_watcher():
 @app.on_event("shutdown")
 async def _stop_services():
     """服务关闭时停止后台服务"""
-    global _watcher, _task_queue
+    global _watcher, _task_queue, _ingest_queue
+    if _ingest_queue:
+        _ingest_queue.stop()
     if _task_queue:
         _task_queue.stop()
     if _watcher and _watcher.is_running:
@@ -364,6 +371,43 @@ async def watcher_status():
     if _watcher is None:
         return {"running": False, "detail": "未启动"}
     return _watcher.status()
+
+
+# ==================================================================
+# Phase 4 Step 7 — 摄入队列 API
+# ==================================================================
+
+
+@app.get("/v1/ingest/queue/status")
+async def ingest_queue_status():
+    """查询摄入队列状态（总任务数、完成、失败、进行中）"""
+    logger.info("GET /v1/ingest/queue/status")
+    global _ingest_queue
+    if _ingest_queue is None:
+        return {"total": 0, "pending": 0, "processing": 0, "done": 0, "failed": 0, "cancelled": 0, "message": "队列未初始化"}
+    return _ingest_queue.progress()
+
+
+@app.post("/v1/ingest/queue/cancel/{job_id}")
+async def ingest_queue_cancel(job_id: str):
+    """取消待处理的任务"""
+    logger.info("POST /v1/ingest/queue/cancel/%s", job_id)
+    global _ingest_queue
+    if _ingest_queue is None:
+        return {"status": "error", "message": "队列未初始化"}
+    ok = _ingest_queue.cancel(job_id)
+    return {"status": "ok" if ok else "not_found", "job_id": job_id}
+
+
+@app.post("/v1/ingest/queue/retry/{job_id}")
+async def ingest_queue_retry(job_id: str):
+    """重试失败的任务"""
+    logger.info("POST /v1/ingest/queue/retry/%s", job_id)
+    global _ingest_queue
+    if _ingest_queue is None:
+        return {"status": "error", "message": "队列未初始化"}
+    ok = _ingest_queue.retry(job_id)
+    return {"status": "ok" if ok else "not_found", "job_id": job_id}
 
 
 @app.get("/v1/graph")

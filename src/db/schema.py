@@ -91,4 +91,15 @@ CREATE TABLE IF NOT EXISTS lint_cache (
     result_json TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS ingest_queue (
+    job_id TEXT PRIMARY KEY,
+    source_path TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    context TEXT DEFAULT '{}',
+    result_summary TEXT DEFAULT '',
+    error TEXT DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
