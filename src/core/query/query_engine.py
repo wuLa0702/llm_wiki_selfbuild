@@ -209,12 +209,19 @@ class QueryEngine:
         Returns:
             {"answer": "...", "confidence": "...", "gaps": [...]}
         """
+        from src.config import settings
         from src.llm.prompts import SYSTEM_PROMPT_QUERY
+
+        lang_hint = {
+            "zh": "请使用中文回答，引用时保留原始页面名。",
+            "en": "Please respond in English. Keep original page names in citations.",
+        }.get(settings.output_language, "")
 
         prompt = (
             f"## 用户问题\n\n{question}\n\n"
             f"## 相关页面内容\n\n{context}\n\n"
-            "请基于以上 Wiki 页面内容回答用户问题。"
+            "请基于以上 Wiki 页面内容回答用户问题。\n"
+            f"{lang_hint}\n"
         )
 
         try:

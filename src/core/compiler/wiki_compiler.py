@@ -125,6 +125,15 @@ class WikiCompiler:
     def _today() -> str:
         return datetime.now().strftime("%Y-%m-%d")
 
+    @staticmethod
+    def _get_lang_instruction() -> str:
+        """返回语言指令，注入到 LLM prompt 中"""
+        from src.config import settings
+        return {
+            "zh": "请使用中文回答，标题和文件名使用中文。英文专业术语保留原文。",
+            "en": "Please respond in English. Use English titles and filenames.",
+        }.get(settings.output_language, "")
+
     # ------------------------------------------------------------------
     # 读写页面的共享逻辑
     # ------------------------------------------------------------------
@@ -335,9 +344,7 @@ class WikiCompiler:
         except FileNotFoundError:
             return  # index 还没生成，跳过
 
-        from src.config import settings
-
-        lang_hint = "请使用中文。" if settings.output_language == "zh" else "Please respond in English."
+        lang_hint = self._get_lang_instruction()
 
         system_prompt = (
             "你是一个知识库分析员。根据 Wiki 索引数据，生成一份全局综述。"
@@ -481,12 +488,14 @@ class WikiCompiler:
         index_context = self._index_summary()
         purpose_context = self._get_purpose_context()
 
-        # Step 1 — 分析（注入 purpose.md + folder_context）
+        # Step 1 — 分析（注入 purpose.md + folder_context + 语言指令）
         purpose_section = f"知识库目标：\n{purpose_context}\n\n" if purpose_context else ""
         folder_section = f"文件夹上下文：{folder_context}\n\n" if folder_context else ""
+        lang_section = self._get_lang_instruction()
         step1_prompt = (
             f"{purpose_section}"
             f"{folder_section}"
+            f"{lang_section}\n\n"
             f"现有 Wiki 索引:\n\n{index_context}\n\n"
             f"请分析以下源文件内容:\n\n{content}"
         )
@@ -623,7 +632,7 @@ class WikiCompiler:
 
         response = self.llm.chat(
             prompt=f"请处理以下源文件内容：\n\n{content}",
-            system_prompt=SYSTEM_PROMPT_INGEST,
+            system_prompt=SYSTEM_PROMPT_INGEST + "\n\n" + self._get_lang_instruction(),
             operation="ingest_simple",
         )
 
