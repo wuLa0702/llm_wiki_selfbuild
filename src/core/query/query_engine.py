@@ -14,18 +14,10 @@ import os
 import re
 from datetime import datetime
 
-from pydantic import BaseModel
-
 from src.core.logging_config import get_logger
+from src.models.query import QueryOutput
 
 logger = get_logger("query")
-
-
-class QueryOutput(BaseModel):
-    """LLM 回答的结构化输出"""
-    answer: str
-    confidence: str  # high / medium / low
-    gaps: list[str] = []
 
 
 class QueryEngine:

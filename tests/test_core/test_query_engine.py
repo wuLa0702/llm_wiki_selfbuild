@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from src.core.query_engine import QueryEngine
+from src.core.query import QueryEngine
 from src.llm.adapter import LLMError
 
 
@@ -332,7 +332,7 @@ def test_build_context_missing_file(engine):
 def test_query_api_endpoint(client, mocker):
     """POST /v1/query 返回正确 JSON"""
     # Mock WikiCompiler.query()
-    mock_query = mocker.patch("src.main.WikiCompiler.query")
+    mock_query = mocker.patch("src.api.routes.misc.WikiCompiler.query")
     mock_query.return_value = {
         "answer": "Python 是编程语言。",
         "sources": ["entities/python.md"],
@@ -354,7 +354,7 @@ def test_query_api_endpoint(client, mocker):
 
 def test_query_api_archive_true(client, mocker):
     """archive=True 传给 query engine"""
-    mock_query = mocker.patch("src.main.WikiCompiler.query")
+    mock_query = mocker.patch("src.api.routes.misc.WikiCompiler.query")
     mock_query.return_value = {
         "answer": "测试回答",
         "sources": ["entities/python.md"],

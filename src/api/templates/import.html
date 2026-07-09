@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>批量导入 — LLM Wiki</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 680px; margin: 0 auto; padding: 2em; line-height: 1.7; }
+  a { color: #2a5db0; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .header { margin-bottom: 1.5em; color: #888; font-size: 14px; }
+  .header a { color: #2a5db0; }
+  h1 { font-size: 22px; margin-bottom: 0.5em; }
+  p.desc { color: #666; font-size: 14px; margin-bottom: 1.5em; }
+  .form-group { margin-bottom: 1em; }
+  .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 600; }
+  .form-group input[type="text"] { width: 100%; padding: 10px 14px; font-size: 15px; border: 1px solid #ddd; border-radius: 6px; outline: none; box-sizing: border-box; }
+  .form-group input[type="text"]:focus { border-color: #2a5db0; box-shadow: 0 0 0 2px rgba(42,93,176,0.1); }
+  .form-row { display: flex; gap: 16px; align-items: center; }
+  .form-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #555; cursor: pointer; }
+  .form-row select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; outline: none; }
+  button.primary { padding: 10px 32px; font-size: 15px; background: #2a5db0; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+  button.primary:hover { background: #1d4a8e; }
+  button.primary:disabled { background: #95a5a6; cursor: not-allowed; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .result-box { border: 1px solid #e0e0e0; border-radius: 8px; padding: 1.2em; margin-top: 1.5em; display: none; }
+  .result-box.show { display: block; }
+  .result-box.success { border-color: #27ae60; background: #f0faf4; }
+  .result-box.error { border-color: #e74c3c; background: #fdf0ef; }
+  .stat-row { display: flex; gap: 24px; margin: 0.8em 0; flex-wrap: wrap; text-align: center; }
+  .stat-item .num { font-size: 24px; font-weight: 700; color: #2c3e50; }
+  .stat-item .label { font-size: 12px; color: #888; }
+  .stat-item.success .num { color: #27ae60; }
+  .stat-item.skipped .num { color: #f39c12; }
+  .stat-item.failed .num { color: #e74c3c; }
+  .error-list { margin-top: 0.8em; font-size: 13px; color: #e74c3c; }
+  .hint { color: #aaa; font-size: 13px; text-align: center; padding: 2em 0; }
+  .example { font-size: 12px; color: #aaa; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="header"><a href="/wiki">&larr; Wiki 首页</a></div>
+<h1>📁 批量导入文件夹</h1>
+<p class="desc">将 raw/sources/ 下的文件夹批量导入为 Wiki 页面。文件夹名自动作为 LLM 上下文。</p>
+
+<div class="form-group">
+  <label for="folderInput">文件夹路径（相对于 raw/sources/）</label>
+  <input id="folderInput" type="text" placeholder="例如: llm-papers" autofocus>
+  <div class="example">示例: my-notes、papers/nlp、docs</div>
+</div>
+
+<div class="form-row">
+  <label><input type="checkbox" id="recurseCheck" checked> 递归子目录</label>
+  <label for="modeSelect">模式:</label>
+  <select id="modeSelect">
+    <option value="sync">同步（等待结果）</option>
+    <option value="async">异步（后台队列）</option>
+  </select>
+  <button id="importBtn" class="primary" onclick="doImport()">开始导入</button>
+</div>
+
+<div id="resultBox" class="result-box">
+  <h3 id="resultTitle">导入结果</h3>
+  <div id="resultContent"></div>
+</div>
+<div id="hint" class="hint">输入文件夹路径后点击开始导入。</div>
+
+<script>
+function doImport() {
+  var folder = document.getElementById('folderInput').value.trim();
+  if (!folder) { alert('请输入文件夹路径'); return; }
+  var btn = document.getElementById('importBtn');
+  var box = document.getElementById('resultBox');
+  document.getElementById('hint').style.display = 'none';
+  box.className = 'result-box';
+  box.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = '导入中…';
+
+  fetch('/v1/ingest/folder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      folder_path: folder,
+      recurse: document.getElementById('recurseCheck').checked,
+      mode: document.getElementById('modeSelect').value,
+    }),
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) { showError(data.error); return; }
+    renderResult(data);
+  })
+  .catch(function(err) { showError(err.message); })
+  .finally(function() { btn.disabled = false; btn.textContent = '开始导入'; });
+}
+
+function renderResult(data) {
+  var box = document.getElementById('resultBox');
+  var title = document.getElementById('resultTitle');
+  var content = document.getElementById('resultContent');
+  var err = data.failed > 0 && data.success === 0;
+  box.className = 'result-box show ' + (err ? 'error' : 'success');
+  title.textContent = err ? '导入失败' : '✅ 导入完成';
+
+  var total = data.total || 0, ok = data.success || 0;
+  var skip = data.skipped || 0, fail = data.failed || 0;
+  var html = '<div class="stat-row">' +
+    '<div class="stat-item"><div class="num">' + total + '</div><div class="label">文件</div></div>' +
+    '<div class="stat-item success"><div class="num">' + ok + '</div><div class="label">成功</div></div>' +
+    '<div class="stat-item skipped"><div class="num">' + skip + '</div><div class="label">跳过</div></div>' +
+    '<div class="stat-item failed"><div class="num">' + fail + '</div><div class="label">失败</div></div>' +
+    '</div>' +
+    '<p style="font-size:13px;color:#666;">创建 ' + (data.pages_created||0) + ' 页，更新 ' + (data.pages_updated||0) + ' 页</p>';
+  if (data.errors && data.errors.length > 0) {
+    html += '<ul class="error-list">';
+    for (var i = 0; i < data.errors.length; i++) {
+      html += '<li>' + data.errors[i].file + ': ' + data.errors[i].error + '</li>';
+    }
+    html += '</ul>';
+  }
+  content.innerHTML = html;
+}
+
+function showError(msg) {
+  var box = document.getElementById('resultBox');
+  box.className = 'result-box show error';
+  document.getElementById('resultTitle').textContent = '出错了';
+  document.getElementById('resultContent').textContent = msg;
+}
+document.getElementById('folderInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') doImport();
+});
+</script>
+</body>
+</html>

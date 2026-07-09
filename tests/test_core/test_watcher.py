@@ -191,17 +191,17 @@ class TestWatcherAPI:
         assert data["running"] is False
 
     def test_watcher_start(self, client):
-        """POST /v1/watcher/start 返回 started"""
+        """POST /v1/watcher/start 返回 running=true"""
         response = client.post("/v1/watcher/start")
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "started" or data["status"] == "already_running"
+        assert data["running"] is True
 
     def test_watcher_stop(self, client):
         """POST /v1/watcher/stop 返回 stopped"""
         response = client.post("/v1/watcher/stop")
         assert response.status_code == 200
-        assert response.json()["status"] in ("stopped", "not_running")
+        assert response.json()["running"] is False
 
     def test_watcher_start_then_status_running(self, client):
         """启动后状态为 running"""
@@ -211,7 +211,10 @@ class TestWatcherAPI:
 
     def test_watcher_stop_then_status_not_running(self, client):
         """停止后状态为 not running"""
+        import time
         client.post("/v1/watcher/start")
+        time.sleep(0.5)  # 等待 watcher 线程初始化
         client.post("/v1/watcher/stop")
+        time.sleep(0.1)  # 等待线程停止
         response = client.get("/v1/watcher/status")
         assert response.json()["running"] is False

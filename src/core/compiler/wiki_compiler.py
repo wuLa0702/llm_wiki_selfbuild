@@ -9,11 +9,11 @@ from datetime import datetime
 
 from src.core.cache import IngestCache
 from src.core.graph import WikiGraph
-from src.core.linter import LintTool, mark_lint_cache_dirty
+from src.core.lint import LintTool, mark_lint_cache_dirty
 from src.core.logging_config import get_logger
-from src.core.models import AnalysisOutput, IngestResponse
+from src.models.ingest import AnalysisOutput, IngestResponse
 from src.core.privacy import PrivacyManager
-from src.core.query_engine import QueryEngine
+from src.core.query import QueryEngine
 from src.core.task_queue import TaskQueue
 from src.core.token_tracker import TokenTracker
 from src.db.repository import WikiRepository

@@ -8,7 +8,7 @@ Louvain 社区检测 — 基于 4-signal 加权边的自动知识聚类
 全部确定性算法，零 LLM 成本（社区命名可选调用 LLM）。
 """
 
-from src.core.graph import WikiGraph
+from src.core.graph.graph import WikiGraph
 from src.core.logging_config import get_logger
 
 logger = get_logger("community")

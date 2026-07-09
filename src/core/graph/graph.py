@@ -351,7 +351,7 @@ class WikiGraph:
                 "total_nodes": 20,
             }
         """
-        from src.core.community import CommunityDetector
+        from src.core.graph.community import CommunityDetector
 
         detector = CommunityDetector(self)
         return detector.detect(repo=repo)
@@ -375,7 +375,7 @@ class WikiGraph:
                 "summary": {...},
             }
         """
-        from src.core.insights import InsightEngine
+        from src.core.graph.insights import InsightEngine
 
         engine = InsightEngine(self)
         return engine.analyze_all(community_result, repo=repo)
@@ -711,3 +711,24 @@ class RelevanceSignal:
         if ta and tb and ta == tb:
             return 1.0
         return 0.0
+
+
+# ============================================================================
+# 后台重建（供 app_state / TaskQueue 调用）
+# ============================================================================
+
+
+def rebuild_graph(payload: dict | None = None) -> None:
+    """后台重建图谱 + 关联度
+
+    被 TaskQueue 注册为 "rebuild_graph" 事件的处理器。
+    避免 app_state 直接引用 WikiGraph/WikiRepository。
+    """
+    from src.db.repository import WikiRepository
+
+    logger.info("后台任务开始重建图谱...")
+    graph = WikiGraph()
+    repo = WikiRepository()
+    graph.build()
+    graph.compute_relevance(repo)
+    logger.info("后台任务图谱重建完成 | nodes=%d", len(graph.nodes()))

@@ -1,0 +1,164 @@
+"""路由: 杂项 — /, /health, /v1/query, /v1/usage, /v1/watcher/*, /v1/privacy/*"""
+import logging
+
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
+
+from src.app_state import get_watcher, set_watcher
+from src.core.privacy import PrivacyManager
+from src.core.token_tracker import TokenTracker
+from src.core.compiler import WikiCompiler
+from src.models.common import (HealthResponse, PrivacyRuleListResponse,
+                               PrivacyRuleResponse, RootResponse,
+                               WatcherStatusResponse)
+from src.models.query import QueryRequest, QueryResponse
+from src.models.usage import UsageResponse
+from src.llm.adapter import LLMError
+
+logger = logging.getLogger("api.routes.misc")
+router = APIRouter(tags=["misc"])
+
+
+@router.get("/", response_model=RootResponse)
+async def root():
+    logger.debug("root endpoint 被调用")
+    return RootResponse()
+
+
+@router.get("/health", response_model=HealthResponse)
+async def health():
+    logger.debug("health endpoint 被调用")
+    return HealthResponse()
+
+
+# ------------------------------------------------------------------
+# Query
+# ------------------------------------------------------------------
+
+
+@router.post("/v1/query", response_model=QueryResponse)
+async def query(request: QueryRequest):
+    """查询 Wiki 知识库，返回带 [[引用]] 的综合回答"""
+    logger.info("POST /v1/query | question=%s archive=%s", request.question, request.archive)
+
+    compiler = WikiCompiler()
+    try:
+        result = compiler.query(request.question, archive=request.archive)
+        return QueryResponse(
+            answer=result.get("answer", ""),
+            sources=result.get("sources", []),
+            confidence=result.get("confidence", "low"),
+            gaps=result.get("gaps", []),
+            archived=result.get("archived"),
+        )
+    except LLMError as e:
+        logger.error("Query 失败 (LLM): %s", e)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "LLM call failed", "detail": str(e), "code": "LLM_ERROR"},
+        )
+    except Exception as e:
+        logger.error("Query 失败 (unexpected): %s", e)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal error", "detail": str(e), "code": "INTERNAL"},
+        )
+
+
+# ------------------------------------------------------------------
+# Token Usage
+# ------------------------------------------------------------------
+
+
+@router.get("/v1/usage", response_model=UsageResponse)
+async def get_usage(period: str = "today"):
+    """查询 Token 消耗统计
+
+    Args:
+        period: today / week / month
+    """
+    logger.info("GET /v1/usage | period=%s", period)
+    tracker = TokenTracker()
+    if period == "month":
+        result = tracker.monthly_summary()
+    elif period == "week":
+        result = tracker.weekly_summary()
+    else:
+        result = tracker.today_summary()
+    return UsageResponse(**result)
+
+
+# ------------------------------------------------------------------
+# Source Watcher
+# ------------------------------------------------------------------
+
+
+@router.post("/v1/watcher/start", response_model=WatcherStatusResponse)
+async def watcher_start():
+    """启动 Source 文件夹自动监听"""
+    logger.info("POST /v1/watcher/start")
+    watcher = get_watcher()
+    if watcher is None:
+        from src.core.watcher import SourceWatcher
+        watcher = SourceWatcher()
+        set_watcher(watcher)
+    if watcher.is_running:
+        return WatcherStatusResponse(running=True, detail=watcher.status())
+    watcher.start()
+    return WatcherStatusResponse(running=True, detail=watcher.status())
+
+
+@router.post("/v1/watcher/stop", response_model=WatcherStatusResponse)
+async def watcher_stop():
+    """停止 Source 文件夹自动监听"""
+    logger.info("POST /v1/watcher/stop")
+    watcher = get_watcher()
+    if watcher is None or not watcher.is_running:
+        return WatcherStatusResponse(running=False, detail="not_running")
+    watcher.stop()
+    return WatcherStatusResponse(running=False, detail="stopped")
+
+
+@router.get("/v1/watcher/status", response_model=WatcherStatusResponse)
+async def watcher_status():
+    """查询 Source 监听状态"""
+    logger.info("GET /v1/watcher/status")
+    watcher = get_watcher()
+    if watcher is None:
+        return WatcherStatusResponse(running=False, detail="未启动")
+    return WatcherStatusResponse(running=True, detail=watcher.status())
+
+
+# ------------------------------------------------------------------
+# Privacy Rules
+# ------------------------------------------------------------------
+
+
+@router.get("/v1/privacy/rules", response_model=PrivacyRuleListResponse)
+async def list_privacy_rules():
+    """查看所有隐私规则（含默认 + 用户自定义）"""
+    pm = PrivacyManager()
+    return PrivacyRuleListResponse(rules=pm.list_rules())
+
+
+@router.post("/v1/privacy/rules", response_model=PrivacyRuleResponse)
+async def add_privacy_rule(request: Request):
+    """添加自定义隐私规则"""
+    body = await request.json()
+    keyword = body.get("keyword", "").strip()
+    category = body.get("category", "general").strip()
+    if not keyword:
+        return JSONResponse(status_code=400, content={"error": "keyword is required"})
+    pm = PrivacyManager()
+    pm.add_rule(keyword, category)
+    return PrivacyRuleResponse(keyword=keyword, category=category)
+
+
+@router.delete("/v1/privacy/rules/{keyword}", response_model=PrivacyRuleResponse)
+async def remove_privacy_rule(keyword: str):
+    """删除用户自定义规则"""
+    if not keyword.strip():
+        return JSONResponse(status_code=400, content={"error": "keyword is required"})
+    pm = PrivacyManager()
+    pm.remove_rule(keyword.strip())
+    return PrivacyRuleResponse(keyword=keyword.strip())

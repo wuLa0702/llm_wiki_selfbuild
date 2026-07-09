@@ -77,7 +77,7 @@ class TestPrivacyInject:
     """测试 frontmatter 隐私标记注入"""
 
     def test_inject_privacy(self):
-        from src.core.wiki_compiler import WikiCompiler
+        from src.core.compiler import WikiCompiler
 
         content = VALID_CONTENT
         matches = [{"keyword": "恋爱", "category": "emotion"}]
@@ -87,13 +87,13 @@ class TestPrivacyInject:
         assert "emotion" in result
 
     def test_inject_empty_matches(self):
-        from src.core.wiki_compiler import WikiCompiler
+        from src.core.compiler import WikiCompiler
 
         result = WikiCompiler._inject_privacy_frontmatter(VALID_CONTENT, [])
         assert result == VALID_CONTENT
 
     def test_inject_no_frontmatter(self):
-        from src.core.wiki_compiler import WikiCompiler
+        from src.core.compiler import WikiCompiler
 
         content = "没有 frontmatter 的内容"
         matches = [{"keyword": "恋爱", "category": "emotion"}]
@@ -101,7 +101,7 @@ class TestPrivacyInject:
         assert result == content  # 无 frontmatter 则不修改
 
     def test_inject_preserves_title(self):
-        from src.core.wiki_compiler import WikiCompiler
+        from src.core.compiler import WikiCompiler
 
         matches = [{"keyword": "抑郁", "category": "emotion"}, {"keyword": "银行卡", "category": "financial"}]
         result = WikiCompiler._inject_privacy_frontmatter(VALID_CONTENT, matches)
@@ -117,14 +117,14 @@ class TestPrivacyAPI:
 
     def test_get_rules(self, client, mocker):
         """GET /v1/privacy/rules 返回规则列表"""
-        mocker.patch("src.main.PrivacyManager")
+        mocker.patch("src.api.routes.misc.PrivacyManager")
         response = client.get("/v1/privacy/rules")
         assert response.status_code == 200
         assert "rules" in response.json()
 
     def test_add_rule(self, client, mocker):
         """POST /v1/privacy/rules 添加规则"""
-        mock_pm = mocker.patch("src.main.PrivacyManager")
+        mock_pm = mocker.patch("src.api.routes.misc.PrivacyManager")
         response = client.post("/v1/privacy/rules", json={"keyword": "测试词", "category": "general"})
         assert response.status_code == 200
         mock_pm.return_value.add_rule.assert_called_once_with("测试词", "general")
@@ -136,7 +136,7 @@ class TestPrivacyAPI:
 
     def test_delete_rule(self, client, mocker):
         """DELETE /v1/privacy/rules/{keyword} 删除规则"""
-        mock_pm = mocker.patch("src.main.PrivacyManager")
+        mock_pm = mocker.patch("src.api.routes.misc.PrivacyManager")
         response = client.delete("/v1/privacy/rules/测试词")
         assert response.status_code == 200
         mock_pm.return_value.remove_rule.assert_called_once_with("测试词")

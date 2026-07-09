@@ -40,16 +40,16 @@ class TestWikiRoutes:
 
     def test_wiki_index_returns_html(self, client, wiki_content, mocker):
         """GET /wiki 返回 HTML 页面"""
-        mocker.patch("src.main.ReadTool.__init__", return_value=None)
-        mocker.patch("src.main.WikiRepository.__init__", return_value=None)
+        mocker.patch("src.api.routes.wiki.ReadTool.__init__", return_value=None)
+        mocker.patch("src.api.routes.wiki.WikiRepository.__init__", return_value=None)
 
         reader_mock = mocker.MagicMock()
         reader_mock.base_dir = wiki_content
-        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+        mocker.patch("src.api.routes.wiki.ReadTool", return_value=reader_mock)
 
         repo_mock = mocker.MagicMock()
         repo_mock.get_page.return_value = {"page_type": "entity"}
-        mocker.patch("src.main.WikiRepository", return_value=repo_mock)
+        mocker.patch("src.api.routes.wiki.WikiRepository", return_value=repo_mock)
 
         # 模拟 os.walk 返回 wiki 目录结构
         mocker.patch("os.walk", return_value=iter([
@@ -70,25 +70,25 @@ class TestWikiRoutes:
 
     def test_wiki_page_renders_content(self, client, wiki_content, mocker):
         """GET /wiki/entities/python.md 渲染页面内容"""
-        mocker.patch("src.main.ReadTool.__init__", return_value=None)
+        mocker.patch("src.api.routes.wiki.ReadTool.__init__", return_value=None)
         reader_mock = mocker.MagicMock()
         reader_mock.base_dir = wiki_content
         reader_mock.read_file.return_value = "# Python\n\n参见 [[concepts/ai.md]]。"
-        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+        mocker.patch("src.api.routes.wiki.ReadTool", return_value=reader_mock)
 
         response = client.get("/wiki/entities/python.md")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
         assert "Python" in response.text
-        assert 'href="/wiki/concepts/ai.md"' in response.text  # 链接已转换
+        assert 'href="/wiki/concepts/ai.md"' in response.text
 
     def test_wiki_page_wikilink_with_display(self, client, wiki_content, mocker):
         """[[path|显示名]] 格式正确转换为链接"""
-        mocker.patch("src.main.ReadTool.__init__", return_value=None)
+        mocker.patch("src.api.routes.wiki.ReadTool.__init__", return_value=None)
         reader_mock = mocker.MagicMock()
         reader_mock.base_dir = wiki_content
         reader_mock.read_file.return_value = "参见 [[concepts/ai.md|人工智能]]。"
-        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+        mocker.patch("src.api.routes.wiki.ReadTool", return_value=reader_mock)
 
         response = client.get("/wiki/entities/python.md")
         assert response.status_code == 200
@@ -97,20 +97,20 @@ class TestWikiRoutes:
 
     def test_wiki_page_404(self, client, wiki_content, mocker):
         """不存在的页面返回 404"""
-        mocker.patch("src.main.ReadTool.__init__", return_value=None)
+        mocker.patch("src.api.routes.wiki.ReadTool.__init__", return_value=None)
         reader_mock = mocker.MagicMock()
         reader_mock.read_file.side_effect = FileNotFoundError
-        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+        mocker.patch("src.api.routes.wiki.ReadTool", return_value=reader_mock)
 
         response = client.get("/wiki/nonexistent.md")
         assert response.status_code == 404
 
     def test_wiki_page_permission_error(self, client, wiki_content, mocker):
         """ReadTool 抛 PermissionError 时返回 403"""
-        mocker.patch("src.main.ReadTool.__init__", return_value=None)
+        mocker.patch("src.api.routes.wiki.ReadTool.__init__", return_value=None)
         reader_mock = mocker.MagicMock()
         reader_mock.read_file.side_effect = PermissionError("Access denied")
-        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+        mocker.patch("src.api.routes.wiki.ReadTool", return_value=reader_mock)
 
         response = client.get("/wiki/outside.md")
         assert response.status_code == 403
@@ -121,7 +121,7 @@ class TestWikiRoutes:
 
     def test_convert_wikilinks_simple(self):
         """[[path]] → <a href=...>"""
-        from src.main import _convert_wikilinks
+        from src.api.helpers import _convert_wikilinks
 
         result = _convert_wikilinks("参见 [[concepts/ai.md]]。")
         assert '<a href="/wiki/concepts/ai.md"' in result
@@ -129,7 +129,7 @@ class TestWikiRoutes:
 
     def test_convert_wikilinks_with_display(self):
         """[[path|显示名]] → <a href=...>显示名</a>"""
-        from src.main import _convert_wikilinks
+        from src.api.helpers import _convert_wikilinks
 
         result = _convert_wikilinks("参见 [[concepts/ai.md|人工智能]]。")
         assert 'href="/wiki/concepts/ai.md"' in result
@@ -137,7 +137,7 @@ class TestWikiRoutes:
 
     def test_convert_wikilinks_multiple(self):
         """多个链接都被转换"""
-        from src.main import _convert_wikilinks
+        from src.api.helpers import _convert_wikilinks
 
         result = _convert_wikilinks("[[a.md]] 和 [[b.md|B]] 和 [[c.md]]")
         assert result.count('<a href="/wiki/') == 3
@@ -179,13 +179,13 @@ class TestPagesApi:
 
     def test_list_pages_returns_json(self, client, wiki_content, mocker):
         """/v1/pages 返回 JSON 页面列表"""
-        mocker.patch("src.main.WikiRepository.__init__", return_value=None)
-        mocker.patch("src.main.ReadTool.__init__", return_value=None)
+        mocker.patch("src.api.routes.pages.WikiRepository.__init__", return_value=None)
+        mocker.patch("src.api.routes.pages.ReadTool.__init__", return_value=None)
 
         reader_mock = mocker.MagicMock()
         reader_mock.base_dir = wiki_content
         reader_mock.read_file.return_value = "# Python\n"
-        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+        mocker.patch("src.api.routes.pages.ReadTool", return_value=reader_mock)
 
         repo_mock = mocker.MagicMock()
         repo_mock.get_page.return_value = {
@@ -198,7 +198,7 @@ class TestPagesApi:
             "links": ["concepts/ai.md"],
             "backlinks": ["index.md"],
         }
-        mocker.patch("src.main.WikiRepository", return_value=repo_mock)
+        mocker.patch("src.api.routes.pages.WikiRepository", return_value=repo_mock)
 
         response = client.get("/v1/pages")
         assert response.status_code == 200
@@ -211,12 +211,12 @@ class TestPagesApi:
 
     def test_list_pages_filter_by_type(self, client, wiki_content, mocker):
         """/v1/pages?type=entity 只返回实体"""
-        mocker.patch("src.main.WikiRepository.__init__", return_value=None)
-        mocker.patch("src.main.ReadTool.__init__", return_value=None)
+        mocker.patch("src.api.routes.pages.WikiRepository.__init__", return_value=None)
+        mocker.patch("src.api.routes.pages.ReadTool.__init__", return_value=None)
 
         reader_mock = mocker.MagicMock()
         reader_mock.base_dir = wiki_content
-        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+        mocker.patch("src.api.routes.pages.ReadTool", return_value=reader_mock)
 
         repo_mock = mocker.MagicMock()
         repo_mock.get_page.side_effect = [
@@ -224,7 +224,7 @@ class TestPagesApi:
              "tags": [], "word_count": 10, "updated_at": "", "links": [], "backlinks": []},
             None,
         ]
-        mocker.patch("src.main.WikiRepository", return_value=repo_mock)
+        mocker.patch("src.api.routes.pages.WikiRepository", return_value=repo_mock)
 
         response = client.get("/v1/pages?type=entity")
         assert response.status_code == 200
@@ -233,13 +233,14 @@ class TestPagesApi:
 
     def test_page_detail_returns_content(self, client, wiki_content, mocker):
         """/v1/pages/xxx.md 返回完整内容"""
-        mocker.patch("src.main.WikiRepository.__init__", return_value=None)
-        mocker.patch("src.main.ReadTool.__init__", return_value=None)
+        mocker.patch("src.api.routes.pages.WikiRepository.__init__", return_value=None)
+        mocker.patch("src.api.helpers.WikiRepository.__init__", return_value=None)
+        mocker.patch("src.api.routes.pages.ReadTool.__init__", return_value=None)
 
         reader_mock = mocker.MagicMock()
         reader_mock.base_dir = wiki_content
         reader_mock.read_file.return_value = "# Python\n\nPython is a language."
-        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+        mocker.patch("src.api.routes.pages.ReadTool", return_value=reader_mock)
 
         repo_mock = mocker.MagicMock()
         repo_mock.get_page.return_value = {
@@ -253,7 +254,8 @@ class TestPagesApi:
             "created_at": "2026-07-06T10:00:00",
             "updated_at": "2026-07-07T10:00:00",
         }
-        mocker.patch("src.main.WikiRepository", return_value=repo_mock)
+        mocker.patch("src.api.routes.pages.WikiRepository", return_value=repo_mock)
+        mocker.patch("src.api.helpers.WikiRepository", return_value=repo_mock)
 
         response = client.get("/v1/pages/entities/python.md")
         assert response.status_code == 200
@@ -265,22 +267,23 @@ class TestPagesApi:
 
     def test_page_detail_404(self, client, mocker):
         """不存在的页面返回 404"""
-        mocker.patch("src.main.WikiRepository.__init__", return_value=None)
+        mocker.patch("src.api.routes.pages.WikiRepository.__init__", return_value=None)
         repo_mock = mocker.MagicMock()
         repo_mock.get_page.return_value = None
-        mocker.patch("src.main.WikiRepository", return_value=repo_mock)
+        mocker.patch("src.api.routes.pages.WikiRepository", return_value=repo_mock)
 
         response = client.get("/v1/pages/nonexistent.md")
         assert response.status_code == 404
 
     def test_page_detail_permission_denied(self, client, wiki_content, mocker):
         """restricted 页面返回 403 locked"""
-        mocker.patch("src.main.WikiRepository.__init__", return_value=None)
-        mocker.patch("src.main.ReadTool.__init__", return_value=None)
+        mocker.patch("src.api.routes.pages.WikiRepository.__init__", return_value=None)
+        mocker.patch("src.api.helpers.WikiRepository.__init__", return_value=None)
+        mocker.patch("src.api.routes.pages.ReadTool.__init__", return_value=None)
 
         reader_mock = mocker.MagicMock()
         reader_mock.base_dir = wiki_content
-        mocker.patch("src.main.ReadTool", return_value=reader_mock)
+        mocker.patch("src.api.routes.pages.ReadTool", return_value=reader_mock)
 
         repo_mock = mocker.MagicMock()
         repo_mock.get_page.return_value = {
@@ -289,7 +292,8 @@ class TestPagesApi:
             "page_type": "entity",
             "visibility": "restricted",
         }
-        mocker.patch("src.main.WikiRepository", return_value=repo_mock)
+        mocker.patch("src.api.routes.pages.WikiRepository", return_value=repo_mock)
+        mocker.patch("src.api.helpers.WikiRepository", return_value=repo_mock)
 
         response = client.get("/v1/pages/entities/secret.md")
         assert response.status_code == 403
@@ -302,7 +306,7 @@ class TestUsageApi:
 
     def test_usage_today(self, client, mocker):
         """/v1/usage 返回今日 token 统计"""
-        mocker.patch("src.main.TokenTracker.__init__", return_value=None)
+        mocker.patch("src.api.routes.misc.TokenTracker.__init__", return_value=None)
         tracker_mock = mocker.MagicMock()
         tracker_mock.today_summary.return_value = {
             "period": "today",
@@ -310,7 +314,7 @@ class TestUsageApi:
             "total_cost_estimate": "¥0.003",
             "by_operation": [{"operation": "chat", "tokens": 1500, "cost_estimate": "¥0.003"}],
         }
-        mocker.patch("src.main.TokenTracker", return_value=tracker_mock)
+        mocker.patch("src.api.routes.misc.TokenTracker", return_value=tracker_mock)
 
         response = client.get("/v1/usage")
         assert response.status_code == 200
@@ -320,7 +324,7 @@ class TestUsageApi:
 
     def test_usage_weekly(self, client, mocker):
         """/v1/usage?period=week 返回本周统计"""
-        mocker.patch("src.main.TokenTracker.__init__", return_value=None)
+        mocker.patch("src.api.routes.misc.TokenTracker.__init__", return_value=None)
         tracker_mock = mocker.MagicMock()
         tracker_mock.weekly_summary.return_value = {
             "period": "week",
@@ -328,7 +332,7 @@ class TestUsageApi:
             "total_cost_estimate": "¥0.02",
             "by_operation": [],
         }
-        mocker.patch("src.main.TokenTracker", return_value=tracker_mock)
+        mocker.patch("src.api.routes.misc.TokenTracker", return_value=tracker_mock)
 
         response = client.get("/v1/usage?period=week")
         assert response.status_code == 200
@@ -336,7 +340,7 @@ class TestUsageApi:
 
     def test_usage_monthly(self, client, mocker):
         """/v1/usage?period=month 返回月统计"""
-        mocker.patch("src.main.TokenTracker.__init__", return_value=None)
+        mocker.patch("src.api.routes.misc.TokenTracker.__init__", return_value=None)
         tracker_mock = mocker.MagicMock()
         tracker_mock.monthly_summary.return_value = {
             "period": "month",
@@ -344,7 +348,7 @@ class TestUsageApi:
             "total_cost_estimate": "¥0.12",
             "by_operation": [],
         }
-        mocker.patch("src.main.TokenTracker", return_value=tracker_mock)
+        mocker.patch("src.api.routes.misc.TokenTracker", return_value=tracker_mock)
 
         response = client.get("/v1/usage?period=month")
         assert response.status_code == 200

@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-import src.core.linter
-from src.core.linter import LintTool, mark_lint_cache_dirty
+import src.core.lint.linter
+from src.core.lint import LintTool, mark_lint_cache_dirty
 from src.llm.adapter import LLMError
 
 
@@ -18,7 +18,7 @@ from src.llm.adapter import LLMError
 @pytest.fixture(autouse=True)
 def reset_dirty_flag():
     """每个测试前重置脏标记"""
-    src.core.linter._LINT_CACHE_DIRTY = False
+    src.core.lint.linter._LINT_CACHE_DIRTY = False
 
 
 @pytest.fixture
@@ -181,7 +181,7 @@ def test_check_semantic_clears_dirty_after_run(linter, mock_repo, mocker):
 
     linter.check_semantic(mock_llm, mock_repo)
 
-    assert src.core.linter._LINT_CACHE_DIRTY is False
+    assert src.core.lint.linter._LINT_CACHE_DIRTY is False
 
 
 # ============================================================================
@@ -191,9 +191,9 @@ def test_check_semantic_clears_dirty_after_run(linter, mock_repo, mocker):
 
 def test_mark_lint_cache_dirty():
     """mark_lint_cache_dirty 设置全局脏标记"""
-    src.core.linter._LINT_CACHE_DIRTY = False
+    src.core.lint.linter._LINT_CACHE_DIRTY = False
     mark_lint_cache_dirty()
-    assert src.core.linter._LINT_CACHE_DIRTY is True
+    assert src.core.lint.linter._LINT_CACHE_DIRTY is True
 
 
 # ============================================================================
@@ -234,7 +234,7 @@ def test_check_semantic_empty_pages(linter, mocker):
 
 def test_compiler_lint_semantic_flag(mocker):
     """WikiCompiler.lint(semantic=True) 调用 check_semantic"""
-    from src.core.wiki_compiler import WikiCompiler
+    from src.core.compiler import WikiCompiler
 
     compiler = WikiCompiler()
     compiler.writer.base_dir = "/tmp/fake"

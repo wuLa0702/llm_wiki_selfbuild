@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from src.core.linter import LintTool
+from src.core.lint import LintTool
 
 
 # ============================================================================

@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from src.core.ingest_queue import IngestQueue
+from src.core.ingest import IngestQueue
 
 
 # ============================================================================
@@ -162,7 +162,7 @@ def test_process_next_no_jobs(q):
 def test_process_next_processes_pending(q, mocker):
     """process_next 处理 pending 任务并调用 WikiCompiler"""
     # Mock WikiCompiler
-    mock_compiler = mocker.patch("src.core.ingest_queue.WikiCompiler")
+    mock_compiler = mocker.patch("src.core.ingest.ingest_queue.WikiCompiler")
     mock_instance = mock_compiler.return_value
     mock_instance.ingest.return_value = {"status": "success", "pages_created": ["p1.md"], "pages_updated": []}
 
@@ -176,7 +176,7 @@ def test_process_next_processes_pending(q, mocker):
 
 def test_process_next_failure(q, mocker):
     """process_next 处理失败时标记为 failed"""
-    mock_compiler = mocker.patch("src.core.ingest_queue.WikiCompiler")
+    mock_compiler = mocker.patch("src.core.ingest.ingest_queue.WikiCompiler")
     mock_instance = mock_compiler.return_value
     mock_instance.ingest.side_effect = RuntimeError("ingest failed")
 
@@ -203,7 +203,7 @@ def test_start_stop(q):
 
 def test_worker_processes_jobs(q, mocker):
     """worker 自动处理队列中的任务"""
-    mock_compiler = mocker.patch("src.core.ingest_queue.WikiCompiler")
+    mock_compiler = mocker.patch("src.core.ingest.ingest_queue.WikiCompiler")
     mock_instance = mock_compiler.return_value
     mock_instance.ingest.return_value = {"status": "success", "pages_created": [], "pages_updated": []}
 

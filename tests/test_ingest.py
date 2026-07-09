@@ -23,7 +23,7 @@ def test_ingest_endpoint_success(client, mocker):
         },
     }
     mocker.patch(
-        "src.main.WikiCompiler.ingest",
+        "src.api.routes.ingest.WikiCompiler.ingest",
         return_value=mock_result,
     )
 
@@ -43,7 +43,7 @@ def test_ingest_endpoint_creates_and_updates(client, mocker):
         "pages_updated": ["entities/old.md"],
         "message": "Ingested: 1 created, 1 updated.",
     }
-    mocker.patch("src.main.WikiCompiler.ingest", return_value=mock_result)
+    mocker.patch("src.api.routes.ingest.WikiCompiler.ingest", return_value=mock_result)
 
     response = client.post("/v1/ingest", json={"source_path": "test.md"})
     assert response.status_code == 200
@@ -60,7 +60,7 @@ def test_ingest_empty_source(client, mocker):
         "pages_updated": [],
         "message": "Source file 'empty.md' is empty, nothing to ingest.",
     }
-    mocker.patch("src.main.WikiCompiler.ingest", return_value=mock_result)
+    mocker.patch("src.api.routes.ingest.WikiCompiler.ingest", return_value=mock_result)
 
     response = client.post("/v1/ingest", json={"source_path": "empty.md"})
     assert response.status_code == 200
@@ -74,10 +74,10 @@ def test_ingest_empty_source(client, mocker):
 
 def test_ingest_source_not_found(client, mocker):
     """源文件不存在返回 404"""
-    from src.core.wiki_compiler import CompilerError
+    from src.core.compiler import CompilerError
 
     mocker.patch(
-        "src.main.WikiCompiler.ingest",
+        "src.api.routes.ingest.WikiCompiler.ingest",
         side_effect=CompilerError("Source file not found: raw/sources/nope.md"),
     )
 
@@ -91,7 +91,7 @@ def test_ingest_llm_error(client, mocker):
     from src.llm.adapter import LLMError
 
     mocker.patch(
-        "src.main.WikiCompiler.ingest",
+        "src.api.routes.ingest.WikiCompiler.ingest",
         side_effect=LLMError("LLM call failed"),
     )
 

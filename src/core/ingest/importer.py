@@ -64,7 +64,7 @@ class FolderImporter:
         folder_context = f"该文件位于「{folder_name}」目录下，请关注与此主题相关的实体和概念。"
 
         if compiler is None:
-            from src.core.wiki_compiler import WikiCompiler
+            from src.core.compiler import WikiCompiler
             compiler = WikiCompiler()
 
         total = len(files)

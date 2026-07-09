@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from src.core.importer import FolderImporter
+from src.core.ingest import FolderImporter
 
 
 # ============================================================================

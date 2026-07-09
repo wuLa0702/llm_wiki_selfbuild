@@ -15,7 +15,7 @@ import time
 from uuid import uuid4
 
 from src.core.logging_config import get_logger
-from src.core.wiki_compiler import WikiCompiler
+from src.core.compiler import WikiCompiler
 
 logger = get_logger("ingest_queue")
 

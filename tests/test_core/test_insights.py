@@ -4,7 +4,7 @@ InsightEngine 单元测试 — Phase 4 Step 3 图谱洞察
 import pytest
 
 from src.core.graph import WikiGraph
-from src.core.insights import InsightEngine, BRIDGE_COMMUNITY_THRESHOLD
+from src.core.graph.insights import InsightEngine, BRIDGE_COMMUNITY_THRESHOLD
 
 
 # ============================================================================

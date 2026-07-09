@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from src.core.wiki_compiler import CompilerError, WikiCompiler
+from src.core.compiler import CompilerError, WikiCompiler
 from src.llm.adapter import LLMError
 
 

@@ -22,7 +22,7 @@ from mcp.server import Server
 from mcp.server.models import InitializationOptions
 
 from src.core.graph import WikiGraph
-from src.core.wiki_compiler import WikiCompiler
+from src.core.compiler import WikiCompiler
 from src.db.repository import WikiRepository
 from src.tools.read_tool import ReadTool
 

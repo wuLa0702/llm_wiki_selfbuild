@@ -3,7 +3,7 @@ CommunityDetector 单元测试 — Phase 4 Step 2 Louvain 社区检测
 """
 import pytest
 
-from src.core.community import COHESION_THRESHOLD, CommunityDetector
+from src.core.graph.community import COHESION_THRESHOLD, CommunityDetector
 from src.core.graph import WikiGraph
 
 

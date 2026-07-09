@@ -11,7 +11,7 @@
 """
 from collections import defaultdict
 
-from src.core.graph import WikiGraph
+from src.core.graph.graph import WikiGraph
 from src.core.logging_config import get_logger
 
 logger = get_logger("insights")
