@@ -88,6 +88,10 @@ class ReadTool:
             ".html": ReadTool._read_html,
             ".htm": ReadTool._read_html,
             ".csv": ReadTool._read_csv,
+            ".pptx": ReadTool._read_office,
+            ".ppt": ReadTool._read_office,
+            ".xlsx": ReadTool._read_office,
+            ".xls": ReadTool._read_office,
         }
         return readers.get(ext)
 
@@ -249,4 +253,13 @@ class ReadTool:
         result = "\n".join(lines)
         logger.debug("CSV 解析完成 | path=%s rows=%d chars=%d",
                      filename, len(rows), len(result))
+        return result
+
+    @staticmethod
+    def _read_office(full_path: str, filename: str) -> str:
+        """读取 Office 文档（PPTX / XLSX）"""
+        from src.core.parsers import parse_document
+        result = parse_document(full_path)
+        logger.debug("Office 解析完成 | path=%s ext=%s chars=%d",
+                     filename, Path(filename).suffix, len(result))
         return result
