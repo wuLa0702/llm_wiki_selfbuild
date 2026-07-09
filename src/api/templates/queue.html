@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>活动面板 — LLM Wiki</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 720px; margin: 0 auto; padding: 2em; line-height: 1.7; }
+  a { color: #2a5db0; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .header { margin-bottom: 1.5em; color: #888; font-size: 14px; }
+  .header a { color: #2a5db0; }
+  h1 { font-size: 22px; margin-bottom: 0.3em; }
+  .summary { font-size: 13px; color: #888; margin-bottom: 1em; }
+
+  .progress-bar { width: 100%; height: 22px; background: #eee; border-radius: 11px; overflow: hidden; margin: 1em 0; position: relative; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, #2a5db0, #5b9bd5); border-radius: 11px; transition: width 0.5s ease; }
+  .progress-text { position: absolute; top: 0; left: 0; right: 0; text-align: center; font-size: 12px; line-height: 22px; color: #555; font-weight: 600; }
+
+  .stats { display: flex; gap: 12px; margin: 1em 0; flex-wrap: wrap; }
+  .stat-card { flex: 1; min-width: 80px; background: #f8f9fa; border-radius: 8px; padding: 0.8em; text-align: center; }
+  .stat-card .num { font-size: 24px; font-weight: 700; }
+  .stat-card .label { font-size: 12px; color: #888; }
+  .stat-card.pending .num { color: #f39c12; }
+  .stat-card.processing .num { color: #2a5db0; }
+  .stat-card.done .num { color: #27ae60; }
+  .stat-card.failed .num { color: #e74c3c; }
+  .stat-card.total .num { color: #2c3e50; }
+
+  .status-msg { font-size: 13px; color: #888; text-align: center; padding: 2em; }
+  .last-update { font-size: 12px; color: #aaa; text-align: center; margin-top: 0.5em; }
+
+  .loading { text-align: center; padding: 2em; color: #888; }
+  .loading::after { content: ''; display: inline-block; width: 16px; height: 16px;
+        margin-left: 6px; border: 2px solid #ddd; border-top-color: #2a5db0;
+        border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="header"><a href="/wiki">&larr; Wiki 首页</a></div>
+<h1>⚡ 活动面板</h1>
+<p class="summary">摄入队列实时状态 — 自动刷新</p>
+
+<div id="panel">
+  <div class="loading">获取队列状态…</div>
+</div>
+<div class="last-update" id="lastUpdate"></div>
+
+<script>
+async function refresh() {
+  const panel = document.getElementById('panel');
+  const update = document.getElementById('lastUpdate');
+
+  try {
+    const res = await fetch('/v1/ingest/queue/status');
+    const d = await res.json();
+
+    const total = d.total || 0;
+    const done = d.done || 0;
+    const failed = d.failed || 0;
+    const pending = d.pending || 0;
+    const processing = d.processing || 0;
+    const pct = total > 0 ? Math.round((done + failed) / total * 100) : 0;
+
+    let html = '<div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div><div class="progress-text">' + pct + '% (' + done + '/' + total + ')</div></div>';
+
+    html += '<div class="stats">';
+    html += '<div class="stat-card total"><div class="num">' + total + '</div><div class="label">总任务</div></div>';
+    html += '<div class="stat-card pending"><div class="num">' + pending + '</div><div class="label">排队</div></div>';
+    html += '<div class="stat-card processing"><div class="num">' + processing + '</div><div class="label">处理中</div></div>';
+    html += '<div class="stat-card done"><div class="num">' + done + '</div><div class="label">完成</div></div>';
+    html += '<div class="stat-card failed"><div class="num">' + failed + '</div><div class="label">失败</div></div>';
+    html += '</div>';
+
+    if (d.message) {
+      html += '<div class="status-msg">' + d.message + '</div>';
+    }
+
+    if (total === 0) {
+      html = '<div class="status-msg">当前没有任务。提交文件后这里会显示进度。</div>';
+    }
+
+    panel.innerHTML = html;
+    update.textContent = '最后更新: ' + new Date().toLocaleTimeString();
+  } catch (err) {
+    panel.innerHTML = '<div class="status-msg">⚠ 无法获取队列状态: ' + err.message + '</div>';
+  }
+}
+
+// 每 3 秒自动刷新
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

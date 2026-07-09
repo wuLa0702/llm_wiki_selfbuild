@@ -100,6 +100,12 @@ async def wiki_sources():
     return HTMLResponse(Path("src/api/templates/sources.html").read_text(encoding="utf-8"))
 
 
+@router.get("/wiki/queue", response_class=HTMLResponse)
+async def wiki_queue():
+    """摄入队列 — 活动面板"""
+    return HTMLResponse(Path("src/api/templates/queue.html").read_text(encoding="utf-8"))
+
+
 @router.get("/wiki/{page_path:path}", response_class=HTMLResponse)
 async def wiki_page(page_path: str, request: Request):
     """渲染单个 Wiki 页面，[[双向链接]] 可点击跳转"""
