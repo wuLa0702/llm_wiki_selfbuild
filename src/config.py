@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # Source 自动监听
     watcher_enabled: bool = False
 
+    # 语言（zh / en）
+    output_language: str = "zh"
+
     # 调试
     debug_max_chars: int = 0
 

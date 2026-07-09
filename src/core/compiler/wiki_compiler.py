@@ -335,23 +335,28 @@ class WikiCompiler:
         except FileNotFoundError:
             return  # index 还没生成，跳过
 
-        prompt = (
-            "以下是 Wiki 知识库的索引页面。请综合所有信息，"
-            "生成一份全局综述，包括：\n"
-            "1. 主题分布（哪些领域内容最丰富）\n"
-            "2. 核心实体和概念的关联网络\n"
-            "3. 知识缺口（哪些主题缺乏内容）\n"
-            "4. 推荐后续摄入的方向\n\n"
+        from src.config import settings
+
+        lang_hint = "请使用中文。" if settings.output_language == "zh" else "Please respond in English."
+
+        system_prompt = (
+            "你是一个知识库分析员。根据 Wiki 索引数据，生成一份全局综述。"
+            f"{lang_hint}\n\n"
+            "综述结构要求：\n"
+            "1. 主题分布 — 哪些领域内容最丰富，用具体页面举例\n"
+            "2. 核心实体和概念之间的关联网络 — 找 2-3 个主要的关联模式\n"
+            "3. 知识缺口 — 哪些主题被提及但无独立页面\n"
+            "4. 推荐后续摄入方向 — 基于当前分布的建议\n\n"
+            "风格要求：专业但易懂，300 字以内。"
+        )
+
+        human_prompt = (
+            "以下是 Wiki 知识库的完整索引，请据此生成全局综述：\n\n"
             f"{index_content}"
         )
 
-        overview_prompt = (
-            "你是一个知识库分析员。请简洁地综合 Wiki 索引，"
-            "写一份约 300 字的全局综述。用中文。"
-        )
-
         try:
-            overview = self.llm.chat(prompt=prompt, system_prompt=overview_prompt, operation="overview")
+            overview = self.llm.chat(prompt=human_prompt, system_prompt=system_prompt, operation="overview")
         except LLMError:
             overview = "_（LLM 生成综述失败，下次 ingest 时重试）_"
 
