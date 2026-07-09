@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>资料源 — LLM Wiki</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 800px; margin: 0 auto; padding: 2em; line-height: 1.7; }
+  a { color: #2a5db0; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .header { margin-bottom: 1.5em; color: #888; font-size: 14px; }
+  .header a { color: #2a5db0; }
+  h1 { font-size: 22px; margin-bottom: 0.3em; }
+  .summary { font-size: 13px; color: #888; margin-bottom: 1.5em; }
+  .source-item { display: flex; justify-content: space-between; align-items: center;
+        padding: 0.6em 0.8em; border-bottom: 1px solid #eee; font-size: 14px; }
+  .source-item:hover { background: #f8f9fa; }
+  .source-name { flex: 1; color: #2a5db0; cursor: pointer; word-break: break-all; }
+  .source-meta { flex-shrink: 0; text-align: right; margin-left: 1em; }
+  .source-size { color: #888; font-size: 12px; }
+  .source-date { color: #aaa; font-size: 12px; margin-left: 0.5em; }
+  .loading { text-align: center; padding: 2em; color: #888; }
+  .loading::after { content: ''; display: inline-block; width: 16px; height: 16px;
+        margin-left: 6px; border: 2px solid #ddd; border-top-color: #2a5db0;
+        border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty { text-align: center; padding: 3em; color: #aaa; }
+  .sentinel { height: 1px; }
+</style>
+</head>
+<body>
+<div class="header"><a href="/wiki">&larr; Wiki 首页</a></div>
+<h1>📂 资料源文件</h1>
+<p class="summary" id="summary">加载中…</p>
+<div id="sourceList"></div>
+<div id="sentinel" class="sentinel"></div>
+<div id="loading" class="loading">加载更多</div>
+
+<script>
+let page = 1;
+let totalPages = 1;
+let loading = false;
+
+async function loadPage() {
+  if (loading || page > totalPages) return;
+  loading = true;
+  document.getElementById('loading').style.display = 'block';
+
+  try {
+    const res = await fetch('/v1/sources?page=' + page + '&per_page=50');
+    const data = await res.json();
+    totalPages = data.total_pages || 1;
+    document.getElementById('summary').textContent = '共 ' + data.total + ' 个源文件';
+
+    const list = document.getElementById('sourceList');
+    for (const s of data.sources || []) {
+      const item = document.createElement('div');
+      item.className = 'source-item';
+      const sizeStr = s.size > 10240 ? (s.size / 1024).toFixed(1) + ' KB' : s.size + ' B';
+      item.innerHTML =
+        '<span class="source-name" onclick="window.location=\'/wiki/sources/' + s.path + '\'">' +
+        s.path + '</span>' +
+        '<span class="source-meta">' +
+        '<span class="source-size">' + sizeStr + '</span>' +
+        '<span class="source-date">' + (s.modified || '') + '</span>' +
+        '</span>';
+      list.appendChild(item);
+    }
+    page++;
+  } catch (err) {
+    document.getElementById('loading').textContent = '加载失败: ' + err.message;
+  }
+  loading = false;
+  document.getElementById('loading').style.display = page > totalPages ? 'none' : 'block';
+  if (page > totalPages) {
+    document.getElementById('loading').textContent = '— 已加载全部 ' + (page - 1) + ' 页 —';
+  }
+}
+
+// IntersectionObserver 滚动加载
+const sentinel = document.getElementById('sentinel');
+const observer = new IntersectionObserver(entries => {
+  if (entries[0].isIntersecting) loadPage();
+});
+observer.observe(sentinel);
+
+// 首次加载
+loadPage();
+</script>
+</body>
+</html>

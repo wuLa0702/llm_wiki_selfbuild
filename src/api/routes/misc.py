@@ -10,6 +10,7 @@ from src.core.token_tracker import TokenTracker
 from src.core.compiler import WikiCompiler
 from src.models.common import (HealthResponse, PrivacyRuleListResponse,
                                PrivacyRuleResponse, RootResponse,
+                               SourceInfo, SourceListResponse,
                                WatcherStatusResponse)
 from src.models.query import QueryRequest, QueryResponse
 from src.models.search import SearchRequest, SearchResponse, SearchResultItem
@@ -187,3 +188,56 @@ async def remove_privacy_rule(keyword: str):
     pm = PrivacyManager()
     pm.remove_rule(keyword.strip())
     return PrivacyRuleResponse(keyword=keyword.strip())
+
+
+# ------------------------------------------------------------------
+# 资料源列表
+# ------------------------------------------------------------------
+
+
+@router.get("/v1/sources", response_model=SourceListResponse)
+async def list_sources(page: int = 1, per_page: int = 50):
+    """分页列出 raw/sources/ 下的原始资料文件
+
+    Args:
+        page: 页码（从 1 开始）
+        per_page: 每页条数（默认 50，最大 200）
+    """
+    import os
+    from datetime import datetime
+
+    logger.info("GET /v1/sources | page=%d per_page=%d", page, per_page)
+
+    per_page = max(1, min(per_page, 200))
+    sources_dir = "raw/sources"
+
+    if not os.path.isdir(sources_dir):
+        return SourceListResponse(sources=[], total=0, page=page, per_page=per_page, total_pages=0)
+
+    all_files = []
+    for root, dirs, files in os.walk(sources_dir):
+        for f in sorted(files):
+            if f.startswith("."):
+                continue
+            full = os.path.join(root, f)
+            rel = os.path.relpath(full, sources_dir).replace("\\", "/")
+            stat = os.stat(full)
+            all_files.append({
+                "path": rel,
+                "name": f,
+                "size": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            })
+
+    total = len(all_files)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    start = (page - 1) * per_page
+    sliced = all_files[start:start + per_page]
+
+    return SourceListResponse(
+        sources=[SourceInfo(**s) for s in sliced],
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+    )

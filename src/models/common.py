@@ -85,3 +85,20 @@ class LintResponse(BaseModel):
     contradictions: list = []
     knowledge_gaps: list = []
     shallow_pages: list = []
+
+
+class SourceInfo(BaseModel):
+    """资料源文件信息"""
+    path: str = ""
+    name: str = ""
+    size: int = 0
+    modified: str = ""
+
+
+class SourceListResponse(BaseModel):
+    """资料源分页列表"""
+    sources: list[SourceInfo] = []
+    total: int = 0
+    page: int = 1
+    per_page: int = 50
+    total_pages: int = 0

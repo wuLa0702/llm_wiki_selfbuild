@@ -94,6 +94,12 @@ async def wiki_import():
     return HTMLResponse(Path("src/api/templates/import.html").read_text(encoding="utf-8"))
 
 
+@router.get("/wiki/sources", response_class=HTMLResponse)
+async def wiki_sources():
+    """资料源浏览器 — 渐进滚动渲染"""
+    return HTMLResponse(Path("src/api/templates/sources.html").read_text(encoding="utf-8"))
+
+
 @router.get("/wiki/{page_path:path}", response_class=HTMLResponse)
 async def wiki_page(page_path: str, request: Request):
     """渲染单个 Wiki 页面，[[双向链接]] 可点击跳转"""
