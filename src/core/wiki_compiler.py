@@ -397,13 +397,15 @@ class WikiCompiler:
     # Phase 2 — 两步 CoT
     # ==================================================================
 
-    def ingest(self, source_path: str, max_source_chars: int | None = None) -> dict:
+    def ingest(self, source_path: str, max_source_chars: int | None = None, folder_context: str | None = None) -> dict:
         """两步 CoT：先分析再生成，带重试和降级
 
         Args:
             source_path: 源文件路径（相对于 raw/sources/）
             max_source_chars: 源文件最大字符数，超出则截断。
                               默认从环境变量 DEBUG_MAX_CHARS 读取（0=不限制）。
+            folder_context: 文件夹上下文描述，如"该文件位于「LLM 论文」目录下"。
+                            注入到 Step 1 的分析 prompt 中，引导 LLM 关注相关主题。
         """
         # 0. 增量缓存 — 内容未变则跳过
         if not self.cache.has_changed(source_path):
@@ -448,10 +450,12 @@ class WikiCompiler:
         index_context = self._index_summary()
         purpose_context = self._get_purpose_context()
 
-        # Step 1 — 分析（注入 purpose.md 让 LLM 了解知识库方向）
+        # Step 1 — 分析（注入 purpose.md + folder_context）
         purpose_section = f"知识库目标：\n{purpose_context}\n\n" if purpose_context else ""
+        folder_section = f"文件夹上下文：{folder_context}\n\n" if folder_context else ""
         step1_prompt = (
             f"{purpose_section}"
+            f"{folder_section}"
             f"现有 Wiki 索引:\n\n{index_context}\n\n"
             f"请分析以下源文件内容:\n\n{content}"
         )
