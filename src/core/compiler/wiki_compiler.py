@@ -215,9 +215,35 @@ class WikiCompiler:
                     break
         return "\n".join(lines)
 
-    def _write_pages(self, pages: dict[str, str], privacy_matches: list[dict] | None = None) -> tuple[list[str], list[str]]:
+    @staticmethod
+    def _inject_sources_frontmatter(content: str, source_path: str) -> str:
+        """在 YAML frontmatter 中注入 sources: 字段
+
+        Args:
+            content: 页面 Markdown 内容
+            source_path: 源文件路径（相对于 raw/sources/）
+
+        Returns:
+            注入 sources 后的内容
+        """
+        source_ref = f"raw/sources/{source_path}"
+        lines = content.split("\n")
+        if len(lines) >= 2 and lines[0].strip() == "---":
+            # 已有 frontmatter → 注入到结尾
+            for i in range(1, len(lines)):
+                if lines[i].strip() == "---":
+                    lines.insert(i, f"sources:\n  - {source_ref}")
+                    break
+            return "\n".join(lines)
+        # 无 frontmatter → 在前面添加
+        return f"---\nsources:\n  - {source_ref}\n---\n\n{content}"
+
+    def _write_pages(self, pages: dict[str, str], privacy_matches: list[dict] | None = None,
+                     source_path: str | None = None) -> tuple[list[str], list[str]]:
         created, updated = [], []
         for path, page_content in pages.items():
+            if source_path:
+                page_content = self._inject_sources_frontmatter(page_content, source_path)
             if privacy_matches:
                 page_content = self._inject_privacy_frontmatter(page_content, privacy_matches)
             existing = self.repo.get_page(path)
@@ -507,7 +533,7 @@ class WikiCompiler:
             return self.ingest_simple(source_path, privacy_matches)
 
         confidence_summary = self._extract_confidence_summary(pages)
-        created, updated = self._write_pages(pages, privacy_matches)
+        created, updated = self._write_pages(pages, privacy_matches, source_path=source_path)
 
         # 捕获 Step 2 的 token 用量
         s2 = self.llm.last_usage
@@ -604,7 +630,7 @@ class WikiCompiler:
             ).model_dump()
 
         s1 = self.llm.last_usage  # 单步的模式，算作 step1
-        created, updated = self._write_pages(pages, privacy_matches)
+        created, updated = self._write_pages(pages, privacy_matches, source_path=source_path)
         self._update_nav_files(source_path, pages)
         ov = self.llm.last_usage if self.llm.last_usage != s1 else None
 
