@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     # 调试
     debug_max_chars: int = 0
 
+    # Embedding 向量搜索（sentence-transformers 本地模型）
+    embedding_enabled: bool = False
+    chroma_persist_dir: str = "chroma_db"
+    embedding_model_path: str = ".models/all-MiniLM-L6-v2"
+
     # MCP Server
     mcp_host: str = "0.0.0.0"
     mcp_port: int = 8010

@@ -12,6 +12,7 @@ from src.models.common import (HealthResponse, PrivacyRuleListResponse,
                                PrivacyRuleResponse, RootResponse,
                                WatcherStatusResponse)
 from src.models.query import QueryRequest, QueryResponse
+from src.models.search import SearchRequest, SearchResponse, SearchResultItem
 from src.models.usage import UsageResponse
 from src.llm.adapter import LLMError
 
@@ -86,6 +87,30 @@ async def get_usage(period: str = "today"):
     else:
         result = tracker.today_summary()
     return UsageResponse(**result)
+
+
+# ------------------------------------------------------------------
+# 语义搜索
+# ------------------------------------------------------------------
+
+
+@router.post("/v1/search", response_model=SearchResponse)
+async def semantic_search(request: SearchRequest):
+    """语义搜索 Wiki 页面（需要 EMBEDDING_ENABLED=true）"""
+    logger.info("POST /v1/search | query=%s k=%d", request.query, request.k)
+
+    from src.core.embedding import get_embedding_engine
+
+    engine = get_embedding_engine()
+    if not engine.enabled:
+        return SearchResponse(results=[], enabled=False, error="Embedding 未启用，请设置 EMBEDDING_ENABLED=true")
+
+    results = engine.search(request.query, k=request.k)
+    return SearchResponse(
+        results=[SearchResultItem(**r) for r in results],
+        total=len(results),
+        enabled=True,
+    )
 
 
 # ------------------------------------------------------------------

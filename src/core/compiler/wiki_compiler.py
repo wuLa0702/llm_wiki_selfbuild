@@ -568,6 +568,15 @@ class WikiCompiler:
         # 语义 Lint 缓存置脏（下次 lint 自动重新检测）
         if created or updated:
             mark_lint_cache_dirty()
+            # 自动生成 embedding（如果启用了）
+            from src.core.embedding import get_embedding_engine
+            engine = get_embedding_engine()
+            for p in created + updated:
+                try:
+                    content = self._read_wiki_file(p)
+                    engine.embed_page(p, content)
+                except Exception:
+                    logger.debug("Embedding 生成跳过 | page=%s", p)
 
         logger.info("两步 CoT 完成 | created=%d updated=%d", len(created), len(updated))
         return IngestResponse(
@@ -656,6 +665,14 @@ class WikiCompiler:
 
         if created or updated:
             mark_lint_cache_dirty()
+            from src.core.embedding import get_embedding_engine
+            engine = get_embedding_engine()
+            for p in created + updated:
+                try:
+                    content = self._read_wiki_file(p)
+                    engine.embed_page(p, content)
+                except Exception:
+                    logger.debug("Embedding 生成跳过 | page=%s", p)
 
         return IngestResponse(
             status="success",
