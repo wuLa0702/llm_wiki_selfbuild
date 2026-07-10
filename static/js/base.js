@@ -98,6 +98,9 @@ function renderRecentPages(container) {
   }
 })();
 
+/* ========================= 本地搜索缓存 ========================= */
+var _pageCache = [];
+
 /* ========================= 知识树加载 ========================= */
 async function loadTree() {
   var container = document.getElementById("tree-content");
@@ -108,6 +111,7 @@ async function loadTree() {
     if (!res.ok) throw new Error("HTTP " + res.status);
     var data = await res.json();
     var pages = data.pages || [];
+    _pageCache = pages; // 缓存到本地，供搜索使用
 
     if (!pages.length) {
       container.innerHTML = '<div class="empty-state" style="padding:1.5rem"><p class="text-sm">知识库为空<br><a href="/wiki/import">去导入资料</a></p></div>';
@@ -196,18 +200,45 @@ async function pollActivity() {
   } catch (e) {}
 }
 
-/* ========================= 搜索下拉（树形面板内） ========================= */
+/* ========================= 搜索下拉（本地即时 + API 补充） ========================= */
 var treeSearchInput = document.getElementById("tree-search-input");
 var treeSearchResults = document.getElementById("tree-search-results");
 if (treeSearchInput && treeSearchResults) {
   var searchTimer = null;
   treeSearchInput.addEventListener("input", function() {
     clearTimeout(searchTimer);
-    var q = this.value.trim();
+    var q = this.value.trim().toLowerCase();
     if (q.length < 1) { treeSearchResults.classList.add("hidden"); return; }
-    searchTimer = setTimeout(function() {
-      treeSearchResults.innerHTML = '<div class="search-dropdown-empty" style="padding:0.5rem;"><div class="spinner" style="width:18px;height:18px;margin:0 auto;"></div></div>';
+
+    // 1. 本地缓存即时过滤（<10ms）
+    var localMatches = [];
+    if (_pageCache.length > 0) {
+      for (var i = 0; i < _pageCache.length; i++) {
+        var p = _pageCache[i];
+        var path = (p.path || p.name || "").toLowerCase();
+        var title = (p.title || "").toLowerCase();
+        if (path.indexOf(q) !== -1 || title.indexOf(q) !== -1) {
+          localMatches.push(p);
+          if (localMatches.length >= 8) break;
+        }
+      }
+    }
+
+    if (localMatches.length > 0) {
+      var html = "";
+      for (var i = 0; i < localMatches.length; i++) {
+        var path = localMatches[i].path || localMatches[i].name || "";
+        html += '<a href="/wiki/' + encodeURIComponent(path) + '" class="search-dropdown-item"><span class="search-path">' + escapeHtml(path) + "</span></a>";
+      }
+      treeSearchResults.innerHTML = html;
       treeSearchResults.classList.remove("hidden");
+    } else {
+      treeSearchResults.innerHTML = '<div class="search-dropdown-empty">未找到结果</div>';
+      treeSearchResults.classList.remove("hidden");
+    }
+
+    // 2. 延时后请求 API 补充（带 snippet 的搜索结果）
+    searchTimer = setTimeout(function() {
       fetch("/v1/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -215,24 +246,20 @@ if (treeSearchInput && treeSearchResults) {
       })
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        if (!data.results || !data.results.length) {
-          treeSearchResults.innerHTML = '<div class="search-dropdown-empty">未找到结果</div>';
-          return;
-        }
+        if (!data.results || !data.results.length) return;
         var html = "";
         for (var i = 0; i < data.results.length; i++) {
           var r = data.results[i];
           var path = r.path || "";
+          if (path.toLowerCase().indexOf(q) !== -1) continue; // 本地已显示
           html += '<a href="/wiki/' + encodeURIComponent(path) + '" class="search-dropdown-item"><span class="search-path">' + escapeHtml(path) + "</span>";
           if (r.snippet) html += '<span class="search-snippet">' + escapeHtml(r.snippet.substring(0, 60)) + "</span>";
           html += "</a>";
         }
-        treeSearchResults.innerHTML = html;
+        if (html) treeSearchResults.innerHTML = treeSearchResults.innerHTML + html;
       })
-      .catch(function() {
-        treeSearchResults.innerHTML = '<div class="search-dropdown-error">搜索暂不可用</div>';
-      });
-    }, 300);
+      .catch(function() {});
+    }, 200);
   });
   document.addEventListener("click", function(e) {
     if (!treeSearchResults.contains(e.target) && e.target !== treeSearchInput) {
