@@ -115,6 +115,23 @@ function renderAnswer(data) {
   var answer = data.answer || '';
   var conf = data.confidence || 'low';
   var confLabels = { high: '高', medium: '中', low: '低' };
+  var sources = data.sources || [];
+
+  // 给每个来源分配编号
+  var sourceMap = {};
+  for (var i = 0; i < sources.length; i++) {
+    sourceMap[sources[i]] = i + 1;
+  }
+
+  // 回答正文：wikilinks 替换为带编号的引用
+  var renderedAnswer = answer.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, function(match, target, display) {
+    var label = display || target.replace(/\.md$/, '').split('/').pop();
+    var num = sourceMap[target];
+    if (num) {
+      return label + '<sup><a href="/wiki/' + target + '" class="wikilink" style="font-size:0.75rem;color:var(--accent-blue);text-decoration:none;">[' + num + ']</a></sup>';
+    }
+    return '<a href="/wiki/' + target + '" class="wikilink">' + label + '</a>';
+  });
 
   var html = '<div class="query-answer-body">';
 
@@ -127,19 +144,24 @@ function renderAnswer(data) {
       '<pre style="background:none; padding:0; margin:0; white-space:pre-wrap;">' + escapeHtml(thinkContent) + '</pre></div></details>';
   }
 
-  // 回答正文（支持 Markdown/wikilinks）
-  html += wikilinksToHtml(answer) || answer;
+  // 回答正文
+  html += renderedAnswer || answer;
 
-  // 置信度 + 来源
+  // 置信度
   html += '<div class="query-meta">';
-  var confColors = { high: 'var(--success)', medium: 'var(--warning)', low: 'var(--error)' };
   html += '<span class="text-sm">置信度: <span class="confidence-bar"><span class="confidence-fill ' + conf + '" style="width:' + (conf === 'high' ? '80' : conf === 'medium' ? '50' : '25') + '%"></span></span> ' + confLabels[conf] + '</span>';
-  if (data.sources && data.sources.length) {
-    html += '<span class="text-sm">来源: ' + data.sources.map(function(s) {
-      return '<a href="/wiki/' + s + '" class="wikilink">' + s.split('/').pop().replace(/\.md$/, '') + '</a>';
-    }).join(', ') + '</span>';
-  }
   html += '</div>';
+
+  // 参考文献卡片
+  if (sources.length > 0) {
+    html += '<div class="query-sources"><h4 style="font-size:0.85rem;color:var(--text-muted);margin-bottom:0.5rem;">📖 参考文献</h4><div style="display:flex;flex-wrap:wrap;gap:0.4rem;">';
+    for (var i = 0; i < sources.length; i++) {
+      var s = sources[i];
+      var name = s.replace(/\.md$/, '').split('/').pop();
+      html += '<a href="/wiki/' + s + '" class="btn btn-sm btn-secondary" style="font-size:0.8rem;border-radius:99px;"><sup style="color:var(--accent-blue);">[' + (i + 1) + ']</sup> ' + escapeHtml(name) + '</a>';
+    }
+    html += '</div></div>';
+  }
 
   // 知识缺口
   if (data.gaps && data.gaps.length) {

@@ -34,6 +34,20 @@ class PagesListResponse(BaseModel):
     pages: list[PageInfo] = []
 
 
+class PageUpdateRequest(BaseModel):
+    """更新页面请求"""
+    content: str
+    title: str | None = None
+    page_type: str | None = None
+
+
+class PageActionResponse(BaseModel):
+    """页面操作响应"""
+    status: str
+    path: str
+    message: str = ""
+
+
 class PageDetailResponse(BaseModel):
     """单页详情响应"""
     path: str

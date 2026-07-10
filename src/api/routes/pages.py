@@ -7,12 +7,15 @@ from fastapi.responses import JSONResponse
 
 from src.api.helpers import _check_page_access
 from src.models.page import (
+    PageActionResponse,
     PageDetailResponse,
     PageInfo,
     PagesListResponse,
+    PageUpdateRequest,
 )
 from src.db.repository import WikiRepository
 from src.tools.read_tool import ReadTool
+from src.tools.write_tool import WriteTool
 
 logger = logging.getLogger("api.routes.pages")
 router = APIRouter(tags=["pages"])
@@ -119,3 +122,43 @@ async def get_page_detail(page_path: str, request: Request):
         created_at=meta.get("created_at", ""),
         updated_at=meta.get("updated_at", ""),
     )
+
+
+@router.post("/v1/pages/{page_path:path}", response_model=PageActionResponse)
+async def update_page(page_path: str, body: PageUpdateRequest, request: Request):
+    """更新 Wiki 页面内容"""
+    logger.info("POST /v1/pages/%s", page_path)
+
+    if not _check_page_access(request, page_path):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Access denied"})
+
+    writer = WriteTool("wiki")
+    try:
+        writer.write_page(page_path, body.content, validate=False)
+    except PermissionError as e:
+        return JSONResponse(status_code=403, content={"status": "error", "message": str(e)})
+
+    return PageActionResponse(status="ok", path=page_path, message="页面已更新")
+
+
+@router.delete("/v1/pages/{page_path:path}", response_model=PageActionResponse)
+async def delete_page(page_path: str, request: Request):
+    """删除 Wiki 页面"""
+    logger.info("DELETE /v1/pages/%s", page_path)
+
+    if not _check_page_access(request, page_path):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Access denied"})
+
+    reader = ReadTool("wiki")
+    full_path = os.path.normpath(os.path.join(reader.base_dir, page_path))
+    if not full_path.startswith(os.path.normpath(reader.base_dir)):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Path traversal"})
+
+    try:
+        os.remove(full_path)
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Page not found"})
+    except PermissionError as e:
+        return JSONResponse(status_code=403, content={"status": "error", "message": str(e)})
+
+    return PageActionResponse(status="ok", path=page_path, message="页面已删除")

@@ -10,6 +10,7 @@
 
 <div class="lint-actions">
   <button class="btn btn-primary" onclick="refreshLint()">🔄 刷新检查</button>
+  <button class="btn btn-secondary" onclick="fixBroken()" id="fixBtn" style="display:none;">🔧 一键修复断链</button>
   <span id="lint-updated" class="text-muted text-sm" style="margin-left:0.5rem;"></span>
 </div>
 
@@ -58,14 +59,26 @@ function renderLint(data) {
 
   html += '<div class="card" style="margin-bottom:1rem;"><div class="card-header">📋 摘要</div><div class="card-body">' + (data.summary || '—') + '</div></div>';
 
+  // 显示修复按钮
+  var fixBtn = document.getElementById('fixBtn');
+  if (broken.length > 0) {
+    fixBtn.style.display = 'inline-flex';
+  } else {
+    fixBtn.style.display = 'none';
+  }
+
   // 断链详情
-  var broken = data.broken_links || [];
   if (broken.length > 0) {
     html += '<div class="lint-section"><h3>🔗 断链 (' + broken.length + ')</h3><ul class="text-sm">';
-    for (var i = 0; i < Math.min(broken.length, 20); i++) {
-      html += '<li style="margin-bottom:0.3em; color:var(--error);">' + escapeHtml(broken[i]) + '</li>';
+    for (var i = 0; i < Math.min(broken.length, 30); i++) {
+      var b = broken[i];
+      var source = (typeof b === 'object') ? (b.source_page || '?') : '?';
+      var target = (typeof b === 'object') ? (b.broken_target || b) : b;
+      html += '<li style="display:flex; gap:0.5rem; padding:0.3em 0; border-bottom:1px solid var(--border); align-items:center;">';
+      html += '<span style="flex:1; word-break:break-all;"><span style="color:var(--error);">&#10007;</span> ' + escapeHtml(source) + ' → ' + escapeHtml(target) + '</span>';
+      html += '</li>';
     }
-    if (broken.length > 20) html += '<li class="text-muted">… 还有 ' + (broken.length - 20) + ' 条</li>';
+    if (broken.length > 30) html += '<li class="text-muted">… 还有 ' + (broken.length - 30) + ' 条</li>';
     html += '</ul></div>';
   }
 
@@ -77,6 +90,22 @@ function escapeHtml(str) {
   var div = document.createElement('div');
   div.appendChild(document.createTextNode(str));
   return div.innerHTML;
+}
+
+async function fixBroken() {
+  var btn = document.getElementById('fixBtn');
+  btn.disabled = true;
+  btn.textContent = '修复中…';
+  try {
+    var res = await fetch('/v1/lint/fix', { method: 'POST' });
+    var data = await res.json();
+    btn.textContent = '✅ 已修复 ' + (data.fixed || 0) + ' 个';
+    refreshLint();
+  } catch(err) {
+    btn.textContent = '修复失败';
+    btn.disabled = false;
+    setTimeout(function() { btn.textContent = '🔧 一键修复断链'; }, 2000);
+  }
 }
 
 refreshLint();

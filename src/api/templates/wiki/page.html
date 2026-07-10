@@ -24,8 +24,30 @@
       {% include "components/frontmatter-card.html" %}
     {% endif %}
 
+    {# 操作栏 #}
+    <div class="page-title-row" style="margin-bottom:0.75rem;">
+      <div></div>
+      <div class="page-actions">
+        <button class="btn btn-sm btn-secondary" id="editBtn" onclick="toggleEdit()">✏️ 编辑</button>
+        <button class="btn btn-sm btn-secondary" id="deleteBtn" onclick="confirmDelete()" style="color:var(--error);">🗑️ 删除</button>
+      </div>
+    </div>
+
+    {# 编辑区域（默认隐藏） #}
+    <div id="editArea" class="card" style="display:none;">
+      <div class="card-header">编辑页面</div>
+      <div style="margin-bottom:0.5rem;">
+        <textarea id="editContent" style="width:100%; min-height:400px; font-family:monospace; font-size:0.85rem; line-height:1.5; padding:0.75rem;" placeholder="Markdown 内容…">{{ raw_content }}</textarea>
+      </div>
+      <div style="display:flex; gap:0.5rem;">
+        <button class="btn btn-primary btn-sm" id="saveBtn" onclick="saveEdit()">💾 保存</button>
+        <button class="btn btn-sm btn-secondary" onclick="cancelEdit()">取消</button>
+        <span id="editMsg" class="text-sm text-muted" style="align-self:center;"></span>
+      </div>
+    </div>
+
     {# 页面正文 #}
-    <div class="page-content">
+    <div class="page-content" id="pageContent">
       {{ html_body|safe }}
     </div>
 
@@ -124,6 +146,85 @@ function escapeHtml(str) {
   var div = document.createElement('div');
   div.appendChild(document.createTextNode(str));
   return div.innerHTML;
+}
+
+// ===== 4. 编辑功能 =====
+var isEditing = false;
+var originalContent = '';
+
+function toggleEdit() {
+  if (isEditing) return;
+  isEditing = true;
+  originalContent = document.getElementById('editContent').value;
+  document.getElementById('editArea').style.display = 'block';
+  document.getElementById('pageContent').style.display = 'none';
+  document.getElementById('editBtn').textContent = '✏️ 编辑中…';
+  document.getElementById('editBtn').disabled = true;
+}
+
+function cancelEdit() {
+  isEditing = false;
+  document.getElementById('editArea').style.display = 'none';
+  document.getElementById('pageContent').style.display = 'block';
+  document.getElementById('editBtn').textContent = '✏️ 编辑';
+  document.getElementById('editBtn').disabled = false;
+  document.getElementById('editMsg').textContent = '';
+}
+
+function saveEdit() {
+  var content = document.getElementById('editContent').value;
+  var btn = document.getElementById('saveBtn');
+  var msg = document.getElementById('editMsg');
+  btn.disabled = true;
+  msg.textContent = '保存中…';
+
+  var path = '{{ path }}';
+  fetch('/v1/pages/' + encodeURIComponent(path), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ content: content }),
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.status === 'ok') {
+      msg.textContent = '✓ 已保存，正在重新加载…';
+      setTimeout(function() { window.location.reload(); }, 500);
+    } else {
+      msg.textContent = '保存失败: ' + (data.message || data.error || '未知错误');
+      btn.disabled = false;
+    }
+  })
+  .catch(function(err) {
+    msg.textContent = '保存失败: ' + err.message;
+    btn.disabled = false;
+  });
+}
+
+function confirmDelete() {
+  if (!confirm('确定要删除此页面吗？此操作不可撤销。')) return;
+  if (!confirm('再次确认：删除 "' + '{{ path }}' + '"？')) return;
+  var btn = document.getElementById('deleteBtn');
+  btn.disabled = true;
+  btn.textContent = '删除中…';
+
+  fetch('/v1/pages/' + encodeURIComponent('{{ path }}'), {
+    method: 'DELETE',
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.status === 'ok') {
+      window.location.href = '/wiki';
+    } else {
+      alert('删除失败: ' + (data.message || '未知错误'));
+      btn.disabled = false;
+      btn.textContent = '🗑️ 删除';
+    }
+  })
+  .catch(function(err) {
+    alert('删除失败: ' + err.message);
+    btn.disabled = false;
+    btn.textContent = '🗑️ 删除';
+  });
 }
 </script>
 {% endblock %}

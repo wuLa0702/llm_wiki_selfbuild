@@ -187,6 +187,6 @@ async def wiki_page(page_path: str, request: Request):
         request, "wiki/page.html", {
             "path": page_path, "html_body": html_body,
             "breadcrumbs": breadcrumbs, "page_meta": page_meta,
-            "citations": citations,
+            "citations": citations, "raw_content": content,
         },
     )
