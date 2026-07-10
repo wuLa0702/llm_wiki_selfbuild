@@ -60,6 +60,44 @@ function showToast(message) {
   setTimeout(function() { toast.remove(); }, 3000);
 }
 
+/* ========================= 最近访问 ========================= */
+function recordPageVisit(path) {
+  if (!path) return;
+  try {
+    var recent = JSON.parse(localStorage.getItem("wikiRecentPages") || "[]");
+    // 去重：移除同路径
+    recent = recent.filter(function(p) { return p !== path; });
+    recent.unshift(path);
+    if (recent.length > 5) recent = recent.slice(0, 5);
+    localStorage.setItem("wikiRecentPages", JSON.stringify(recent));
+  } catch(e) {}
+}
+
+function renderRecentPages(container) {
+  try {
+    var recent = JSON.parse(localStorage.getItem("wikiRecentPages") || "[]");
+    if (!recent.length) return;
+    var html = '<div class="tree-section"><div class="tree-section-title" onclick="toggleTreeSection(this)">';
+    html += '<span class="chevron open">&#9654;</span> ';
+    html += '<span style="color:var(--accent-blue);">🕐 最近访问 (' + recent.length + ')</span></div>';
+    html += '<ul class="tree-items">';
+    for (var i = 0; i < recent.length; i++) {
+      var isActive = window.location.pathname === "/wiki/" + encodeURIComponent(recent[i]);
+      html += '<li class="tree-item"><a href="/wiki/' + encodeURIComponent(recent[i]) + '"' + (isActive ? ' class="active"' : "") + ">" + escapeHtml(recent[i]) + "</a></li>";
+    }
+    html += "</ul></div><div class=\"tree-section\"><div class=\"icon-bar-divider\" style=\"margin:0.25rem 0;\"></div></div>";
+    container.insertAdjacentHTML("afterbegin", html);
+  } catch(e) {}
+}
+
+// 页面加载时记录当前访问
+(function() {
+  var match = window.location.pathname.match(/^\/wiki\/(.+)/);
+  if (match) {
+    recordPageVisit(decodeURIComponent(match[1]));
+  }
+})();
+
 /* ========================= 知识树加载 ========================= */
 async function loadTree() {
   var container = document.getElementById("tree-content");
@@ -76,6 +114,9 @@ async function loadTree() {
       document.getElementById("tree-stats").textContent = "共 0 页";
       return;
     }
+
+    // 最近访问（顶部）
+    renderRecentPages(container);
 
     // 按类型分组
     var groups = {};

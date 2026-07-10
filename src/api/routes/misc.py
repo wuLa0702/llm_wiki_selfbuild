@@ -3,6 +3,7 @@ import logging
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel
 
 from src.app_state import get_watcher, set_watcher
 from src.core.privacy import PrivacyManager
@@ -248,3 +249,47 @@ async def list_sources(page: int = 1, per_page: int = 50):
         per_page=per_page,
         total_pages=total_pages,
     )
+
+# ------------------------------------------------------------------
+# 用户设置（JSON 文件持久化）
+# ------------------------------------------------------------------
+import json
+
+SETTINGS_FILE = "user_settings.json"
+
+def _load_settings() -> dict:
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def _save_settings(data: dict) -> None:
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+class SettingsResponse(BaseModel):
+    """用户设置"""
+    llm_provider: str = "deepseek"
+    deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-v4-flash"
+    output_language: str = "zh"
+    search_method: str = "bm25"
+    theme: str = "light"
+
+
+@router.get("/v1/settings", response_model=SettingsResponse)
+async def get_settings():
+    """读取用户设置"""
+    saved = _load_settings()
+    defaults = SettingsResponse().model_dump()
+    defaults.update(saved)
+    return SettingsResponse(**defaults)
+
+
+@router.post("/v1/settings", response_model=SettingsResponse)
+async def save_settings(body: SettingsResponse):
+    """保存用户设置"""
+    _save_settings(body.model_dump())
+    return body

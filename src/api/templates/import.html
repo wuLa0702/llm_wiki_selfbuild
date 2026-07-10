@@ -85,9 +85,14 @@ function renderResult(data, isError) {
   html += '<p class="text-sm text-muted" style="margin-top:0.5rem;">创建 ' + (data.pages_created||0) + ' 页，更新 ' + (data.pages_updated||0) + ' 页</p>';
 
   if (data.errors && data.errors.length > 0) {
-    html += '<ul class="text-sm" style="color:var(--error); list-style:none; padding:0;">';
+    html += '<div class="text-sm" style="margin-top:0.5rem;"><strong style="color:var(--error);">失败详情</strong></div>';
+    html += '<ul class="text-sm" style="list-style:none; padding:0; margin-top:0.3rem;">';
     for (var i = 0; i < data.errors.length; i++) {
-      html += '<li>' + data.errors[i].file + ': ' + data.errors[i].error + '</li>';
+      html += '<li style="display:flex; align-items:center; gap:0.5rem; padding:0.3em 0; border-bottom:1px solid var(--border);">';
+      html += '<span style="flex:1; word-break:break-all;"><span style="color:var(--error);">&#10007;</span> ' + data.errors[i].file;
+      html += '<br><span class="text-xs text-muted">' + data.errors[i].error + '</span></span>';
+      html += '<button class="btn btn-sm btn-secondary" style="flex-shrink:0;" onclick="retryFile(\'' + data.errors[i].file.replace(/'/g, "\\'") + '\', this)">重试</button>';
+      html += '</li>';
     }
     html += '</ul>';
   }
@@ -100,6 +105,31 @@ function showResult(type, title, content) {
   document.getElementById('resultContent').innerHTML = content;
   box.style.display = 'block';
   box.style.borderColor = type === 'error' ? 'var(--error)' : 'var(--success)';
+}
+
+function retryFile(filePath, btn) {
+  btn.disabled = true;
+  btn.textContent = '重试中…';
+  fetch('/v1/ingest/folder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder_path: filePath, recurse: false, mode: 'sync' }),
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.success > 0) {
+      btn.textContent = '✓ 成功';
+      btn.style.color = 'var(--success)';
+    } else {
+      btn.textContent = '失败';
+      btn.disabled = false;
+      btn.textContent = '重试';
+    }
+  })
+  .catch(function() {
+    btn.textContent = '重试';
+    btn.disabled = false;
+  });
 }
 
 document.getElementById('folderInput').addEventListener('keydown', function(e) {

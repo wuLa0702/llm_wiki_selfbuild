@@ -5,30 +5,107 @@
 {% block content %}
 <section class="page-header">
   <h1>⚙️ 设置</h1>
-  <p class="text-secondary text-sm">Wiki 应用信息与环境配置</p>
+  <p class="text-secondary text-sm">应用配置项</p>
 </section>
 
-<div class="card">
-  <div class="card-header">ℹ️ 关于</div>
-  <div class="card-body">
-    <dl class="frontmatter-card">
-      <dt>应用</dt>
-      <dd>LLM Wiki</dd>
-      <dt>版本</dt>
-      <dd>Phase 6 (UI 美化)</dd>
-      <dt>引擎</dt>
-      <dd>FastAPI + Jinja2</dd>
-      <dt>数据</dt>
-      <dd>SQLite + Markdown 文件</dd>
-    </dl>
+<form id="settingsForm" onsubmit="saveSettings(event)">
+  <!-- LLM -->
+  <div class="card">
+    <div class="card-header">🤖 LLM</div>
+    <div class="card-body" style="display:grid; gap:0.75rem;">
+      <div>
+        <label class="text-sm text-secondary">Provider</label>
+        <select id="s_llm_provider" style="width:100%;margin-top:0.2rem;">
+          <option value="deepseek">DeepSeek</option>
+          <option value="ark">豆包 Ark</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-sm text-secondary">API Key</label>
+        <input id="s_deepseek_api_key" type="password" placeholder="sk-..." style="width:100%;margin-top:0.2rem;">
+      </div>
+    </div>
   </div>
-</div>
 
-<div class="card">
-  <div class="card-header">🎨 外观</div>
-  <div class="card-body">
-    <p class="text-sm text-secondary">点击导航栏 <strong>🌙</strong> 按钮切换暗色/亮色模式。</p>
-    <p class="text-sm text-secondary">设置保存在浏览器 localStorage 中。</p>
+  <!-- 搜索 -->
+  <div class="card">
+    <div class="card-header">🔍 搜索</div>
+    <div class="card-body" style="display:grid; gap:0.75rem;">
+      <div>
+        <label class="text-sm text-secondary">搜索方式</label>
+        <select id="s_search_method" style="width:100%;margin-top:0.2rem;">
+          <option value="bm25">BM25 关键词</option>
+          <option value="hybrid">Hybrid 融合（需向量模型）</option>
+        </select>
+      </div>
+    </div>
   </div>
-</div>
+
+  <!-- 语言 -->
+  <div class="card">
+    <div class="card-header">🌐 语言</div>
+    <div class="card-body" style="display:grid; gap:0.75rem;">
+      <div>
+        <label class="text-sm text-secondary">输出语言</label>
+        <select id="s_output_language" style="width:100%;margin-top:0.2rem;">
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex; gap:0.5rem; margin-top:1rem;">
+    <button type="submit" class="btn btn-primary" id="saveBtn">保存设置</button>
+    <span id="saveMsg" class="text-sm text-muted" style="align-self:center;"></span>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadSettings() {
+  try {
+    var r = await fetch('/v1/settings');
+    var data = await r.json();
+    document.getElementById('s_llm_provider').value = data.llm_provider || 'deepseek';
+    document.getElementById('s_deepseek_api_key').value = data.deepseek_api_key || '';
+    document.getElementById('s_search_method').value = data.search_method || 'bm25';
+    document.getElementById('s_output_language').value = data.output_language || 'zh';
+  } catch(e) {
+    document.getElementById('saveMsg').textContent = '加载设置失败';
+  }
+}
+
+async function saveSettings(e) {
+  e.preventDefault();
+  var btn = document.getElementById('saveBtn');
+  var msg = document.getElementById('saveMsg');
+  btn.disabled = true;
+  msg.textContent = '保存中…';
+  try {
+    var r = await fetch('/v1/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        llm_provider: document.getElementById('s_llm_provider').value,
+        deepseek_api_key: document.getElementById('s_deepseek_api_key').value,
+        search_method: document.getElementById('s_search_method').value,
+        output_language: document.getElementById('s_output_language').value,
+      }),
+    });
+    if (r.ok) {
+      msg.textContent = '✓ 已保存';
+    } else {
+      msg.textContent = '保存失败';
+    }
+  } catch(e) {
+    msg.textContent = '保存失败: ' + e.message;
+  }
+  btn.disabled = false;
+  setTimeout(function() { msg.textContent = ''; }, 3000);
+}
+
+loadSettings();
+</script>
 {% endblock %}
