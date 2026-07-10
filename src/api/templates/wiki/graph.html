@@ -5,25 +5,33 @@
 {% block head_extra %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.6/dist/vis-network.min.js"></script>
 <style>
-#mynetwork { width: 100%; height: calc(100vh - var(--nav-height) - 2rem); border: 1px solid var(--border); border-radius: var(--radius-md); }
+#mynetwork { width: 100%; height: calc(100vh - 10rem); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .vis-network:focus { outline: none; }
+.main-content { max-width: none; } /* 图谱全宽 */
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="graph-toolbar">
-  <input id="graphSearch" type="search" placeholder="过滤节点…" class="form-input" style="max-width:240px;">
+<div class="graph-toolbar" style="flex-wrap:wrap;">
+  <input id="graphSearch" type="search" placeholder="过滤节点…" class="form-input" style="max-width:200px;">
   <span class="text-muted text-xs" id="stats">加载中…</span>
+  <button class="btn btn-sm btn-secondary" onclick="exportGraph()" id="exportBtn" style="display:none;">📥 导出</button>
   <button class="btn btn-sm btn-secondary" onclick="loadGraph()" style="margin-left:auto;">🔄 刷新</button>
 </div>
 
-<div id="mynetwork" class="graph-canvas"></div>
+<div id="graphCanvas" style="position:relative;">
+  <div id="mynetwork" class="graph-canvas"></div>
 
-<div id="nodeInfo" class="card node-info" style="display:none; position:absolute; bottom:1rem; left:1rem; width:280px; z-index:10;">
-  <div class="card-header" id="nodeInfoTitle"></div>
-  <div class="card-body text-sm" id="nodeInfoBody"></div>
-  <div style="margin-top:0.5rem;">
-    <button class="btn btn-sm btn-primary" id="nodeInfoBtn" onclick="">前往页面 →</button>
+  <!-- 社区图例 -->
+  <div id="graphLegend" class="graph-legend" style="display:none;"></div>
+
+  <!-- 节点信息面板 -->
+  <div id="nodeInfo" class="card node-info" style="display:none;">
+    <div class="card-header" id="nodeInfoTitle"></div>
+    <div class="card-body text-sm" id="nodeInfoBody"></div>
+    <div class="flex gap-sm" style="margin-top:0.5rem;">
+      <button class="btn btn-sm btn-primary" id="nodeInfoBtn" onclick="">前往页面 →</button>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -31,48 +39,76 @@
 {% block scripts %}
 <script>
 var nodes = null, edges = null, network = null;
+var _graphData = null;
+var COMMUNITY_COLORS = [
+  '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
+  '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16',
+  '#06b6d4', '#d946ef', '#10b981', '#eab308', '#64748b',
+];
 
 async function loadGraph() {
   var container = document.getElementById('mynetwork');
   container.innerHTML = '<div class="loading-state"><div class="spinner"></div><span>加载图谱…</span></div>';
 
   try {
-    // 尝试 sessionStorage 缓存
     var cacheKey = 'wiki_graph_v2';
     var cached = sessionStorage.getItem(cacheKey);
     var data = null;
 
     if (cached) {
-      try {
-        data = JSON.parse(cached);
-        console.log('图谱: 使用缓存');
-      } catch(e) { cached = null; }
+      try { data = JSON.parse(cached); } catch(e) { cached = null; }
     }
 
     if (!data) {
-      // 限制边数提升性能：最多 200 条最强边，忽略权重 < 1 的弱边
       var res = await fetch('/v1/graph?max_edges=200&min_weight=1');
       data = await res.json();
-      // 缓存到 sessionStorage（页面关闭即失效）
       try { sessionStorage.setItem(cacheKey, JSON.stringify(data)); } catch(e) {}
     }
 
-    // 如果没有数据或数据异常
     if (!data || !data.nodes || data.nodes.length === 0) {
       container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🕸️</div><p class="text-muted">图谱为空</p></div>';
       return;
     }
 
+    _graphData = data;
+    document.getElementById('exportBtn').style.display = 'inline-flex';
+
     var totalNodes = data.nodes.length;
     var totalEdges = (data.edges || []).length;
 
-    // 构建 vis.js 节点：按 degree 排序取前 50 个，其余缩小
+    // 构建社区信息
+    var communities = {};
+    for (var i = 0; i < data.nodes.length; i++) {
+      var n = data.nodes[i];
+      var cid = n.community_id || 0;
+      if (!communities[cid]) communities[cid] = { id: cid, count: 0, label: '社区 ' + cid };
+      communities[cid].count++;
+    }
+    var commList = Object.values(communities).sort(function(a, b) { return b.count - a.count; });
+
+    // 渲染社区图例 + 过滤按钮
+    var legendHtml = '<div class="flex gap-sm" style="font-size:0.75rem;font-weight:600;color:var(--text-muted);margin-bottom:0.3rem;">🏷️ 社区过滤</div>';
+    legendHtml += '<div class="flex gap-sm" style="flex-wrap:wrap;">';
+    for (var i = 0; i < commList.length; i++) {
+      var c = commList[i];
+      var color = COMMUNITY_COLORS[c.id % COMMUNITY_COLORS.length];
+      legendHtml += '<label style="display:flex;align-items:center;gap:0.25em;font-size:0.75rem;cursor:pointer;padding:0.15em 0.4em;border-radius:4px;background:var(--bg-hover);">';
+      legendHtml += '<input type="checkbox" checked data-community="' + c.id + '" onchange="filterCommunity()" style="width:12px;height:12px;">';
+      legendHtml += '<span style="width:8px;height:8px;border-radius:2px;background:' + color + ';flex-shrink:0;"></span>';
+      legendHtml += c.label + ' (' + c.count + ')</label>';
+    }
+    legendHtml += '</div>';
+
+    var legend = document.getElementById('graphLegend');
+    legend.innerHTML = legendHtml;
+    legend.style.display = 'block';
+
+    // 排序节点 degree
     var sortedNodes = data.nodes.slice().sort(function(a, b) {
       var degA = (a.degree?.in || 0) + (a.degree?.out || 0);
       var degB = (b.degree?.in || 0) + (b.degree?.out || 0);
       return degB - degA;
     });
-
     var top50 = {};
     sortedNodes.slice(0, 50).forEach(function(n) { top50[n.id] = true; });
 
@@ -82,10 +118,11 @@ async function loadGraph() {
       return {
         id: n.id,
         label: n.id.split('/').pop().replace('.md', '') || n.id,
-        title: n.id + ' (入链: ' + (n.degree?.in || 0) + ')',
+        title: n.id + ' | 入链: ' + (n.degree?.in || 0) + ' 出链: ' + (n.degree?.out || 0),
         group: n.community_id || 0,
         size: isTop ? Math.max(8, Math.min(25, 8 + deg * 2)) : 4,
         font: { size: isTop ? 11 : 0 },
+        color: { background: COMMUNITY_COLORS[(n.community_id || 0) % COMMUNITY_COLORS.length], border: '#222' },
       };
     }));
 
@@ -100,16 +137,13 @@ async function loadGraph() {
     }));
 
     var options = {
-      nodes: { shape: 'dot', borderWidth: 1, color: { border: '#222' } },
+      nodes: { shape: 'dot', borderWidth: 1 },
       edges: { smooth: { type: 'continuous' } },
       physics: {
         solver: 'forceAtlas2Based',
         forceAtlas2Based: {
-          gravitationalConstant: -30,
-          centralGravity: 0.005,
-          springLength: 160,
-          springConstant: 0.02,
-          damping: 0.4,
+          gravitationalConstant: -30, centralGravity: 0.005,
+          springLength: 160, springConstant: 0.02, damping: 0.4,
         },
         stabilization: { iterations: 100 },
       },
@@ -119,13 +153,23 @@ async function loadGraph() {
     network = new vis.Network(container, { nodes: nodes, edges: edges }, options);
     document.getElementById('stats').textContent = '节点: ' + totalNodes + ' · 边: ' + totalEdges + (data.stats?.filtered_from ? ' (已过滤)' : '');
 
-    // 点击节点 → 显示信息面板
+    // 点击节点 → 详情面板
     network.on('click', function(params) {
       if (params.nodes.length > 0) {
         var nodeId = params.nodes[0];
         var nodeData = nodes.get(nodeId);
+        var raw = null;
+        for (var i = 0; i < data.nodes.length; i++) {
+          if (data.nodes[i].id === nodeId) { raw = data.nodes[i]; break; }
+        }
         document.getElementById('nodeInfoTitle').textContent = nodeData.label || nodeId;
-        document.getElementById('nodeInfoBody').textContent = nodeData.title || nodeId;
+        var body = nodeId;
+        if (raw) {
+          body += '<br>类型: ' + (raw.page_type || '?');
+          body += '<br>入链: ' + (raw.degree?.in || 0) + ' · 出链: ' + (raw.degree?.out || 0);
+          body += '<br>社区: ' + (raw.community_id ?? '?');
+        }
+        document.getElementById('nodeInfoBody').innerHTML = body;
         document.getElementById('nodeInfoBtn').onclick = function() { window.location.href = '/wiki/' + nodeId; };
         document.getElementById('nodeInfo').style.display = 'block';
       } else {
@@ -138,18 +182,41 @@ async function loadGraph() {
   }
 }
 
+// 社区过滤
+function filterCommunity() {
+  if (!network || !nodes) return;
+  var checkboxes = document.querySelectorAll('#graphLegend input[data-community]');
+  var visible = [];
+  checkboxes.forEach(function(cb) {
+    if (cb.checked) visible.push(parseInt(cb.getAttribute('data-community')));
+  });
+  var allNodes = nodes.get();
+  var ids = allNodes.filter(function(n) { return visible.indexOf(n.group) !== -1; }).map(function(n) { return n.id; });
+  network.selectNodes(ids);
+}
+
 // 搜索过滤
 document.getElementById('graphSearch').addEventListener('input', function() {
   if (!network || !nodes) return;
   var query = this.value.trim().toLowerCase();
-  if (!query) {
-    network.selectNodes([]);
-    return;
-  }
+  if (!query) { network.selectNodes([]); return; }
   var allNodes = nodes.get();
   var matched = allNodes.filter(function(n) { return (n.label || '').toLowerCase().includes(query); }).map(function(n) { return n.id; });
   network.selectNodes(matched);
 });
+
+// 导出
+function exportGraph() {
+  if (!_graphData) return;
+  var blob = new Blob([JSON.stringify(_graphData, null, 2)], { type: 'application/json' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'wiki-graph-' + new Date().toISOString().slice(0, 10) + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('图谱已导出');
+}
 
 loadGraph();
 </script>
