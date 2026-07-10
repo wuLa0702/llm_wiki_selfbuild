@@ -568,6 +568,9 @@ class WikiCompiler:
         # 语义 Lint 缓存置脏（下次 lint 自动重新检测）
         if created or updated:
             mark_lint_cache_dirty()
+            # BM25 搜索索引置脏（下次搜索前重建）
+            from src.core.search import get_search_engine
+            get_search_engine().mark_dirty()
             # 自动生成 embedding（如果启用了）
             from src.core.embedding import get_embedding_engine
             engine = get_embedding_engine()
@@ -665,6 +668,8 @@ class WikiCompiler:
 
         if created or updated:
             mark_lint_cache_dirty()
+            from src.core.search import get_search_engine
+            get_search_engine().mark_dirty()
             from src.core.embedding import get_embedding_engine
             engine = get_embedding_engine()
             for p in created + updated:

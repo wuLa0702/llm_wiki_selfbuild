@@ -96,17 +96,23 @@ async def get_usage(period: str = "today"):
 
 
 @router.post("/v1/search", response_model=SearchResponse)
-async def semantic_search(request: SearchRequest):
-    """语义搜索 Wiki 页面（需要 EMBEDDING_ENABLED=true）"""
-    logger.info("POST /v1/search | query=%s k=%d", request.query, request.k)
+async def unified_search(request: SearchRequest):
+    """统一搜索 Wiki 页面（BM25 / vector / hybrid）
 
-    from src.core.embedding import get_embedding_engine
+    Request:
+        {"query": "Python 异步", "k": 10, "method": "hybrid"}
 
-    engine = get_embedding_engine()
-    if not engine.enabled:
-        return SearchResponse(results=[], enabled=False, error="Embedding 未启用，请设置 EMBEDDING_ENABLED=true")
+    method 支持: bm25（默认）, vector（需启用 embedding）, hybrid（RRF 融合）
+    """
+    logger.info("POST /v1/search | query=%s k=%d method=%s",
+                request.query, request.k, request.method)
 
-    results = engine.search(request.query, k=request.k)
+    from src.core.search import get_search_engine
+
+    engine = get_search_engine()
+    method = getattr(request, "method", "bm25")
+
+    results = engine.search(request.query, method=method, k=request.k)
     return SearchResponse(
         results=[SearchResultItem(**r) for r in results],
         total=len(results),

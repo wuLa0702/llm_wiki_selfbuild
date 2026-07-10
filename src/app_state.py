@@ -63,6 +63,13 @@ def init_services() -> None:
     _ingest_queue = IngestQueue(task_queue=_task_queue)
     _ingest_queue.start()
 
+    # 搜索引擎初始化（BM25 索引）
+    from src.core.search import get_search_engine
+    try:
+        get_search_engine().initialize()
+    except Exception as exc:
+        logger.warning("搜索引擎初始化失败 | %s", exc)
+
     if not settings.watcher_enabled:
         logger.info("SourceWatcher 已禁用（WATCHER_ENABLED=false）")
         return
