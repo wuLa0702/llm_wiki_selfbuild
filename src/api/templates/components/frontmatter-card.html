@@ -1,0 +1,19 @@
+<div class="card frontmatter-card">
+  <div class="card-header">📋 页面信息</div>
+  <dl class="frontmatter-card">
+    <dt>类型</dt>
+    <dd><span class="badge badge-{{ page_meta.page_type or 'other' }}">{{ page_meta.page_type or 'other' }}</span></dd>
+    <dt>标签</dt>
+    <dd>{% if page_meta.tags %}{{ page_meta.tags | join(', ') }}{% else %}<span class="text-muted">无</span>{% endif %}</dd>
+    <dt>创建</dt>
+    <dd>{{ page_meta.created_at | default('-', true) }}</dd>
+    <dt>更新</dt>
+    <dd>{{ page_meta.updated_at | default('-', true) }}</dd>
+    <dt>字数</dt>
+    <dd>{{ page_meta.word_count | default('0', true) }}</dd>
+    <dt>入链</dt>
+    <dd>{{ page_meta.backlinks | length }} 个页面引用此页</dd>
+    <dt>出链</dt>
+    <dd>{{ page_meta.links | length }} 个引用</dd>
+  </dl>
+</div>

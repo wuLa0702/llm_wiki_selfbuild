@@ -1,0 +1,218 @@
+/**
+ * LLM Wiki — 基础 JavaScript
+ * 主题管理 / 树形面板 / 知识树加载 / 活动状态 / 工具函数
+ */
+
+/* ========================= 主题 ========================= */
+function updateThemeIcon() {
+  var icon = document.getElementById("theme-icon");
+  if (icon) {
+    icon.textContent = document.documentElement.classList.contains("dark") ? "☀️" : "🌙";
+  }
+}
+
+function initTheme() {
+  if (localStorage.getItem("theme") === "dark") {
+    document.documentElement.classList.add("dark");
+  }
+  updateThemeIcon();
+}
+
+function toggleTheme() {
+  var html = document.documentElement;
+  html.classList.toggle("dark");
+  localStorage.setItem("theme", html.classList.contains("dark") ? "dark" : "light");
+  updateThemeIcon();
+}
+
+/* ========================= 工具 ========================= */
+function debounce(fn, delay) {
+  var timer = null;
+  return function() {
+    var args = arguments;
+    var ctx = this;
+    clearTimeout(timer);
+    timer = setTimeout(function() { fn.apply(ctx, args); }, delay);
+  };
+}
+
+function escapeHtml(str) {
+  if (!str) return "";
+  var div = document.createElement("div");
+  div.appendChild(document.createTextNode(str));
+  return div.innerHTML;
+}
+
+function formatBytes(bytes) {
+  if (bytes == null || bytes === 0) return "0 B";
+  var units = ["B", "KB", "MB", "GB"];
+  var i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + " " + units[i];
+}
+
+function showToast(message) {
+  var existing = document.querySelector(".toast");
+  if (existing) existing.remove();
+  var toast = document.createElement("div");
+  toast.className = "toast";
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(function() { toast.remove(); }, 3000);
+}
+
+/* ========================= 知识树加载 ========================= */
+async function loadTree() {
+  var container = document.getElementById("tree-content");
+  if (!container) return;
+
+  try {
+    var res = await fetch("/v1/pages");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var data = await res.json();
+    var pages = data.pages || [];
+
+    if (!pages.length) {
+      container.innerHTML = '<div class="empty-state" style="padding:1.5rem"><p class="text-sm">知识库为空<br><a href="/wiki/import">去导入资料</a></p></div>';
+      document.getElementById("tree-stats").textContent = "共 0 页";
+      return;
+    }
+
+    // 按类型分组
+    var groups = {};
+    var typeLabels = { entity: "实体", concept: "概念", source: "来源", query: "问答", other: "其他" };
+    var typeOrder = ["entity", "concept", "source", "query", "other"];
+    var total = 0;
+
+    for (var i = 0; i < pages.length; i++) {
+      var p = pages[i];
+      var type = p.page_type || "other";
+      if (!groups[type]) groups[type] = [];
+      groups[type].push(p);
+      total++;
+    }
+
+    var html = "";
+    for (var t = 0; t < typeOrder.length; t++) {
+      var type = typeOrder[t];
+      var items = groups[type];
+      if (!items || !items.length) continue;
+      html += '<div class="tree-section">';
+      html += '<div class="tree-section-title" onclick="toggleTreeSection(this)">';
+      html += '<span class="chevron open">&#9654;</span> ';
+      html += '<span class="section-label">' + (typeLabels[type] || type) + ' (' + items.length + ')</span>';
+      html += '</div>';
+      html += '<ul class="tree-items">';
+      for (var j = 0; j < items.length; j++) {
+        var path = items[j].path || items[j].name || "";
+        var isActive = window.location.pathname === "/wiki/" + encodeURIComponent(path);
+        html += '<li class="tree-item"><a href="/wiki/' + encodeURIComponent(path) + '"' + (isActive ? ' class="active"' : "") + ">" + escapeHtml(path) + "</a></li>";
+      }
+      html += "</ul></div>";
+    }
+
+    container.innerHTML = html;
+    document.getElementById("tree-stats").textContent = "共 " + total + " 页";
+
+    // 异步获取断链数
+    fetch("/v1/lint?semantic=false")
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var broken = (d.broken_links || []).length;
+        var el = document.getElementById("tree-stats");
+        if (el) el.textContent = "共 " + total + " 页 · " + broken + " 断链";
+      })
+      .catch(function() {});
+  } catch (err) {
+    container.innerHTML = '<div class="error-state" style="padding:1rem"><p>加载失败</p><button class="btn btn-sm" onclick="loadTree()">重试</button></div>';
+  }
+}
+
+function toggleTreeSection(el) {
+  var chevron = el.querySelector(".chevron");
+  var items = el.nextElementSibling;
+  if (chevron) chevron.classList.toggle("open");
+  if (items) items.classList.toggle("hidden");
+}
+
+/* ========================= 活动状态轮询 ========================= */
+async function pollActivity() {
+  try {
+    var res = await fetch("/v1/ingest/queue/status");
+    if (!res.ok) return;
+    var data = await res.json();
+    var total = data.total || 0;
+    var done = data.completed_count || data.done || 0;
+    var dot = document.getElementById("tree-activity-dot");
+    var text = document.getElementById("tree-activity-text");
+    if (!dot || !text) return;
+    if (total > 0 && done < total) {
+      dot.style.background = "var(--accent-blue)";
+      text.textContent = "处理中 " + done + "/" + total;
+    } else {
+      dot.style.background = "var(--text-muted)";
+      text.textContent = "空闲";
+    }
+  } catch (e) {}
+}
+
+/* ========================= 搜索下拉（树形面板内） ========================= */
+var treeSearchInput = document.getElementById("tree-search-input");
+var treeSearchResults = document.getElementById("tree-search-results");
+if (treeSearchInput && treeSearchResults) {
+  var searchTimer = null;
+  treeSearchInput.addEventListener("input", function() {
+    clearTimeout(searchTimer);
+    var q = this.value.trim();
+    if (q.length < 1) { treeSearchResults.classList.add("hidden"); return; }
+    searchTimer = setTimeout(function() {
+      treeSearchResults.innerHTML = '<div class="search-dropdown-empty" style="padding:0.5rem;"><div class="spinner" style="width:18px;height:18px;margin:0 auto;"></div></div>';
+      treeSearchResults.classList.remove("hidden");
+      fetch("/v1/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q, k: 8, method: "hybrid" }),
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.results || !data.results.length) {
+          treeSearchResults.innerHTML = '<div class="search-dropdown-empty">未找到结果</div>';
+          return;
+        }
+        var html = "";
+        for (var i = 0; i < data.results.length; i++) {
+          var r = data.results[i];
+          var path = r.path || "";
+          html += '<a href="/wiki/' + encodeURIComponent(path) + '" class="search-dropdown-item"><span class="search-path">' + escapeHtml(path) + "</span>";
+          if (r.snippet) html += '<span class="search-snippet">' + escapeHtml(r.snippet.substring(0, 60)) + "</span>";
+          html += "</a>";
+        }
+        treeSearchResults.innerHTML = html;
+      })
+      .catch(function() {
+        treeSearchResults.innerHTML = '<div class="search-dropdown-error">搜索暂不可用</div>';
+      });
+    }, 300);
+  });
+  document.addEventListener("click", function(e) {
+    if (!treeSearchResults.contains(e.target) && e.target !== treeSearchInput) {
+      treeSearchResults.classList.add("hidden");
+    }
+  });
+}
+
+/* ========================= 初始化 ========================= */
+document.addEventListener("DOMContentLoaded", function() {
+  initTheme();
+  loadTree();
+  pollActivity();
+  setInterval(pollActivity, 10000);
+
+  // 过滤按钮
+  var filterBtns = document.querySelectorAll("#tree-filters .filter-btn");
+  filterBtns.forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      filterBtns.forEach(function(b) { b.classList.remove("active"); });
+      this.classList.add("active");
+    });
+  });
+});

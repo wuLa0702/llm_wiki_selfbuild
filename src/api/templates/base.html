@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}LLM Wiki{% endblock %}</title>
+  <script>
+    (function() {
+      if (localStorage.getItem('theme') === 'dark') {
+        document.documentElement.classList.add('dark');
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+  <div class="app-layout">
+    {% include "components/icon-sidebar.html" %}
+    {% include "components/tree-sidebar.html" %}
+    <main class="main-area">
+      <div class="main-content">
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="/static/js/base.js"></script>
+  <script src="/static/js/search.js"></script>
+  <script src="/static/js/wikilinks.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

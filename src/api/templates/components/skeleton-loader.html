@@ -1,0 +1,22 @@
+{# 骨架屏宏 #}
+{% macro skeleton_card() %}
+<div class="skeleton skeleton-card">
+  <div class="skeleton-pulse"></div>
+</div>
+{% endmacro %}
+
+{% macro skeleton_row(width="100%") %}
+<div class="skeleton skeleton-row" style="width: {{ width }}">
+  <div class="skeleton-pulse"></div>
+</div>
+{% endmacro %}
+
+{% macro skeleton_stats(count=5) %}
+<div class="stat-cards">
+  {% for i in range(count) %}
+  <div class="skeleton skeleton-card">
+    <div class="skeleton-pulse"></div>
+  </div>
+  {% endfor %}
+</div>
+{% endmacro %}

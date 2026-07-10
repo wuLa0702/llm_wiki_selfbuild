@@ -1,70 +1,47 @@
-<!DOCTYPE html>
-<html lang="zh">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>批量导入 — LLM Wiki</title>
-<style>
-  body { font-family: -apple-system, sans-serif; max-width: 680px; margin: 0 auto; padding: 2em; line-height: 1.7; }
-  a { color: #2a5db0; text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  .header { margin-bottom: 1.5em; color: #888; font-size: 14px; }
-  .header a { color: #2a5db0; }
-  h1 { font-size: 22px; margin-bottom: 0.5em; }
-  p.desc { color: #666; font-size: 14px; margin-bottom: 1.5em; }
-  .form-group { margin-bottom: 1em; }
-  .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 600; }
-  .form-group input[type="text"] { width: 100%; padding: 10px 14px; font-size: 15px; border: 1px solid #ddd; border-radius: 6px; outline: none; box-sizing: border-box; }
-  .form-group input[type="text"]:focus { border-color: #2a5db0; box-shadow: 0 0 0 2px rgba(42,93,176,0.1); }
-  .form-row { display: flex; gap: 16px; align-items: center; }
-  .form-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #555; cursor: pointer; }
-  .form-row select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; outline: none; }
-  button.primary { padding: 10px 32px; font-size: 15px; background: #2a5db0; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
-  button.primary:hover { background: #1d4a8e; }
-  button.primary:disabled { background: #95a5a6; cursor: not-allowed; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .result-box { border: 1px solid #e0e0e0; border-radius: 8px; padding: 1.2em; margin-top: 1.5em; display: none; }
-  .result-box.show { display: block; }
-  .result-box.success { border-color: #27ae60; background: #f0faf4; }
-  .result-box.error { border-color: #e74c3c; background: #fdf0ef; }
-  .stat-row { display: flex; gap: 24px; margin: 0.8em 0; flex-wrap: wrap; text-align: center; }
-  .stat-item .num { font-size: 24px; font-weight: 700; color: #2c3e50; }
-  .stat-item .label { font-size: 12px; color: #888; }
-  .stat-item.success .num { color: #27ae60; }
-  .stat-item.skipped .num { color: #f39c12; }
-  .stat-item.failed .num { color: #e74c3c; }
-  .error-list { margin-top: 0.8em; font-size: 13px; color: #e74c3c; }
-  .hint { color: #aaa; font-size: 13px; text-align: center; padding: 2em 0; }
-  .example { font-size: 12px; color: #aaa; margin-top: 4px; }
-</style>
-</head>
-<body>
-<div class="header"><a href="/wiki">&larr; Wiki 首页</a></div>
-<h1>📁 批量导入文件夹</h1>
-<p class="desc">将 raw/sources/ 下的文件夹批量导入为 Wiki 页面。文件夹名自动作为 LLM 上下文。</p>
+{% extends "base.html" %}
 
-<div class="form-group">
-  <label for="folderInput">文件夹路径（相对于 raw/sources/）</label>
-  <input id="folderInput" type="text" placeholder="例如: llm-papers" autofocus>
-  <div class="example">示例: my-notes、papers/nlp、docs</div>
+{% block title %}批量导入 — LLM Wiki{% endblock %}
+
+{% block content %}
+<section class="page-header">
+  <h1>📁 批量导入文件夹</h1>
+  <p class="text-secondary text-sm">将 raw/sources/ 下的文件夹批量导入为 Wiki 页面。</p>
+</section>
+
+<div class="card">
+  <div class="form-group" style="margin-bottom:1rem;">
+    <label for="folderInput">文件夹路径（相对于 raw/sources/）</label>
+    <input id="folderInput" type="text" class="form-input" placeholder="例如: llm-papers" autofocus>
+    <p class="text-muted text-xs" style="margin-top:0.25rem;">示例: my-notes、papers/nlp、docs</p>
+  </div>
+
+  <div class="flex items-center gap-md" style="flex-wrap:wrap;">
+    <label class="flex items-center gap-sm text-sm">
+      <input type="checkbox" id="recurseCheck" checked> 递归子目录
+    </label>
+    <label class="flex items-center gap-sm text-sm">
+      <span>模式:</span>
+      <select id="modeSelect" style="font-size:0.85rem; padding:0.3em 0.5em; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg-surface); color:var(--text-primary);">
+        <option value="sync">同步（等待结果）</option>
+        <option value="async">异步（后台队列）</option>
+      </select>
+    </label>
+    <button id="importBtn" class="btn btn-primary" onclick="doImport()">开始导入</button>
+  </div>
 </div>
 
-<div class="form-row">
-  <label><input type="checkbox" id="recurseCheck" checked> 递归子目录</label>
-  <label for="modeSelect">模式:</label>
-  <select id="modeSelect">
-    <option value="sync">同步（等待结果）</option>
-    <option value="async">异步（后台队列）</option>
-  </select>
-  <button id="importBtn" class="primary" onclick="doImport()">开始导入</button>
-</div>
-
-<div id="resultBox" class="result-box">
-  <h3 id="resultTitle">导入结果</h3>
+<div id="resultBox" class="card" style="display:none;">
+  <h3 id="resultTitle" style="margin:0 0 0.75rem 0; border:none;">导入结果</h3>
   <div id="resultContent"></div>
 </div>
-<div id="hint" class="hint">输入文件夹路径后点击开始导入。</div>
 
+<div id="hint" class="hint">
+  <div class="empty-state-icon" style="font-size:1.5rem;">📁</div>
+  <p>输入文件夹路径后点击开始导入。</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
 <script>
 function doImport() {
   var folder = document.getElementById('folderInput').value.trim();
@@ -72,7 +49,6 @@ function doImport() {
   var btn = document.getElementById('importBtn');
   var box = document.getElementById('resultBox');
   document.getElementById('hint').style.display = 'none';
-  box.className = 'result-box';
   box.style.display = 'none';
   btn.disabled = true;
   btn.textContent = '导入中…';
@@ -88,49 +64,46 @@ function doImport() {
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
-    if (data.error) { showError(data.error); return; }
-    renderResult(data);
+    if (data.error) { showResult('error', '出错了', data.error); return; }
+    var err = data.failed > 0 && data.success === 0;
+    renderResult(data, err);
   })
-  .catch(function(err) { showError(err.message); })
+  .catch(function(err) { showResult('error', '出错了', err.message); })
   .finally(function() { btn.disabled = false; btn.textContent = '开始导入'; });
 }
 
-function renderResult(data) {
-  var box = document.getElementById('resultBox');
-  var title = document.getElementById('resultTitle');
-  var content = document.getElementById('resultContent');
-  var err = data.failed > 0 && data.success === 0;
-  box.className = 'result-box show ' + (err ? 'error' : 'success');
-  title.textContent = err ? '导入失败' : '✅ 导入完成';
-
+function renderResult(data, isError) {
   var total = data.total || 0, ok = data.success || 0;
   var skip = data.skipped || 0, fail = data.failed || 0;
-  var html = '<div class="stat-row">' +
-    '<div class="stat-item"><div class="num">' + total + '</div><div class="label">文件</div></div>' +
-    '<div class="stat-item success"><div class="num">' + ok + '</div><div class="label">成功</div></div>' +
-    '<div class="stat-item skipped"><div class="num">' + skip + '</div><div class="label">跳过</div></div>' +
-    '<div class="stat-item failed"><div class="num">' + fail + '</div><div class="label">失败</div></div>' +
-    '</div>' +
-    '<p style="font-size:13px;color:#666;">创建 ' + (data.pages_created||0) + ' 页，更新 ' + (data.pages_updated||0) + ' 页</p>';
+  var title = isError ? '导入失败' : '&#9989; 导入完成';
+  var html = '<div class="stat-cards" style="display:flex; gap:0.75rem; flex-wrap:wrap;">';
+  html += '<div class="stat-card" style="flex:1; min-width:60px;"><div class="stat-value" style="font-size:1.5rem;">' + total + '</div><div class="stat-label">文件</div></div>';
+  html += '<div class="stat-card" style="flex:1; min-width:60px; border-top-color:var(--success);"><div class="stat-value" style="font-size:1.5rem; color:var(--success);">' + ok + '</div><div class="stat-label">成功</div></div>';
+  html += '<div class="stat-card" style="flex:1; min-width:60px; border-top-color:var(--warning);"><div class="stat-value" style="font-size:1.5rem; color:var(--warning);">' + skip + '</div><div class="stat-label">跳过</div></div>';
+  html += '<div class="stat-card" style="flex:1; min-width:60px; border-top-color:var(--error);"><div class="stat-value" style="font-size:1.5rem; color:var(--error);">' + fail + '</div><div class="stat-label">失败</div></div>';
+  html += '</div>';
+  html += '<p class="text-sm text-muted" style="margin-top:0.5rem;">创建 ' + (data.pages_created||0) + ' 页，更新 ' + (data.pages_updated||0) + ' 页</p>';
+
   if (data.errors && data.errors.length > 0) {
-    html += '<ul class="error-list">';
+    html += '<ul class="text-sm" style="color:var(--error); list-style:none; padding:0;">';
     for (var i = 0; i < data.errors.length; i++) {
       html += '<li>' + data.errors[i].file + ': ' + data.errors[i].error + '</li>';
     }
     html += '</ul>';
   }
-  content.innerHTML = html;
+  showResult(isError ? 'error' : 'success', title, html);
 }
 
-function showError(msg) {
+function showResult(type, title, content) {
   var box = document.getElementById('resultBox');
-  box.className = 'result-box show error';
-  document.getElementById('resultTitle').textContent = '出错了';
-  document.getElementById('resultContent').textContent = msg;
+  document.getElementById('resultTitle').textContent = title;
+  document.getElementById('resultContent').innerHTML = content;
+  box.style.display = 'block';
+  box.style.borderColor = type === 'error' ? 'var(--error)' : 'var(--success)';
 }
+
 document.getElementById('folderInput').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') doImport();
 });
 </script>
-</body>
-</html>
+{% endblock %}

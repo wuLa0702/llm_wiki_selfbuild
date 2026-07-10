@@ -77,7 +77,7 @@ class PrivacyRuleResponse(BaseModel):
 
 class LintResponse(BaseModel):
     """Lint 检查结果"""
-    summary: dict = {}
+    summary: str = ""
     # 以下字段由静态 lint 或语义 lint 动态填充
     broken_links: list = []
     orphan_pages: list = []

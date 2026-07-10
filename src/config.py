@@ -3,6 +3,9 @@
 
 从 .env 和环境变量读取配置，提供集中式配置访问接口。
 """
+import os
+
+from fastapi.templating import Jinja2Templates
 from pydantic_settings import BaseSettings
 
 
@@ -63,3 +66,9 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Jinja2 模板引擎（路由 / config 共享同一实例）
+# 打包模式下从 LLM_WIKI_RESOURCE_DIR 读取资源
+_tpl_dir = os.environ.get("LLM_WIKI_RESOURCE_DIR", ".")
+_tpl_path = os.path.join(_tpl_dir, "src/api/templates") if os.environ.get("LLM_WIKI_RESOURCE_DIR") else "src/api/templates"
+templates = Jinja2Templates(directory=_tpl_path)

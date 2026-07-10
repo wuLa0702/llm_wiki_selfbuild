@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% from "components/skeleton-loader.html" import skeleton_stats, skeleton_row %}
+
+{% block title %}LLM Wiki{% endblock %}
+
+{% block content %}
+<section class="page-header">
+  <h1>知识库概览</h1>
+</section>
+
+<!-- 统计卡片 -->
+<section id="stats-section">
+  {% if stats.total is defined %}
+    {% include "components/stat-cards.html" %}
+  {% else %}
+    {{ skeleton_stats(5) }}
+  {% endif %}
+</section>
+
+<!-- 操作栏 -->
+<div class="home-actions" style="margin-bottom:1.5rem">
+  <button id="random-btn" class="btn btn-secondary" onclick="randomPage()" {% if not stats.total %}disabled{% endif %}>
+    &#127922; 逛一逛
+  </button>
+</div>
+
+<!-- 最近更新 -->
+<section>
+  <h2>&#128221; 最近更新</h2>
+  <div class="timeline" id="recent-timeline">
+    {% if recent_pages %}
+      {% for p in recent_pages %}
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <div class="timeline-content">
+          <a href="/wiki/{{ p.path }}" class="wikilink">{{ p.path }}</a>
+          <span class="badge badge-{{ p.page_type or 'other' }}">{{ p.page_type or 'other' }}</span>
+          <span class="text-muted text-sm">{{ p.updated_at or '' }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-state">
+        <div class="empty-state-icon">&#128214;</div>
+        <p>暂无更新记录</p>
+        <p class="text-sm text-muted">
+          <a href="/wiki/import">去导入资料</a> 开始构建知识库
+        </p>
+      </div>
+    {% endif %}
+  </div>
+</section>
+
+<!-- 知识图谱入口 -->
+<section>
+  <h2>&#127760; 知识图谱</h2>
+  <div class="card" onclick="window.location='/wiki/graph'" style="cursor:pointer; text-align:center; padding:2rem;">
+    <div style="font-size:2rem; margin-bottom:0.5rem;">&#127759;</div>
+    <p>点击进入全屏图谱视图 &rarr;</p>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function randomPage() {
+  var total = {{ stats.total }};
+  if (!total) return;
+  var offset = Math.floor(Math.random() * total);
+  fetch('/v1/pages?limit=1&offset=' + offset)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var pages = data.pages || [];
+      if (pages.length > 0) {
+        window.location.href = '/wiki/' + encodeURIComponent(pages[0].path);
+      }
+    })
+    .catch(function() { showToast('随机跳转失败'); });
+}
+
+// 异步加载断链数
+fetch('/v1/lint?semantic=false')
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    var el = document.getElementById('broken-count');
+    if (el) el.textContent = (data.broken_links || []).length;
+  })
+  .catch(function() {
+    var el = document.getElementById('broken-count');
+    if (el) el.textContent = '?';
+  });
+</script>
+{% endblock %}

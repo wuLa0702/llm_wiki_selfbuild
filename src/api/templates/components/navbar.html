@@ -1,0 +1,41 @@
+<nav class="navbar layout-navbar">
+  <!-- 汉堡按钮（移动端） -->
+  <button class="hamburger hide-desktop hide-tablet" onclick="toggleSidebar()" aria-label="切换侧栏">
+    <span></span><span></span><span></span>
+  </button>
+
+  <!-- Logo -->
+  <a href="/wiki" class="navbar-logo">&#10022; LLM Wiki</a>
+
+  <!-- 导航链接 -->
+  <div class="navbar-links">
+    {% set nav_items = {
+      "/wiki": "首页",
+      "/wiki/graph": "图谱",
+      "/wiki/sources": "资料源",
+      "/wiki/queue": "队列",
+      "/wiki/import": "导入",
+      "/wiki/query": "问答",
+      "/wiki/lint": "健康",
+      "/wiki/settings": "设置",
+    } %}
+    {% for href, label in nav_items.items() %}
+    <a href="{{ href }}" class="navbar-link {% if request.url.path == href %}active{% endif %}">
+      <span class="navbar-link-label">{{ label }}</span>
+    </a>
+    {% endfor %}
+  </div>
+
+  <!-- 搜索 -->
+  <div class="navbar-search">
+    <input id="nav-search" type="search" placeholder="搜索 Wiki..." autocomplete="off">
+    <div id="search-results" class="search-dropdown hidden"></div>
+  </div>
+
+  <!-- 操作区 -->
+  <div class="navbar-actions">
+    <button class="theme-toggle" onclick="toggleTheme()" title="切换主题" aria-label="切换暗色/亮色模式">
+      <span id="theme-icon">&#127769;</span>
+    </button>
+  </div>
+</nav>

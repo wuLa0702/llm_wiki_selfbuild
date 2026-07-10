@@ -4,8 +4,10 @@ LLM Wiki — FastAPI 服务入口
 职责：App 创建 + 中间件配置 + 路由注册 + 生命周期
 """
 import logging
+import os
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from src.app_state import init_services, shutdown_services
 from src.api.errors import global_exception_handler
@@ -26,6 +28,11 @@ app = FastAPI(
 
 setup_middleware(app)
 app.add_exception_handler(Exception, global_exception_handler)
+
+# 挂载静态资源（CSS / JS / 图片）
+_static_dir = os.environ.get("LLM_WIKI_RESOURCE_DIR", None)
+_static_path = os.path.join(_static_dir, "static") if _static_dir else "static"
+app.mount("/static", StaticFiles(directory=_static_path), name="static")
 
 # 注册路由
 app.include_router(auth.router)

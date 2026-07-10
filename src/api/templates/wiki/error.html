@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}{{ error_code }} — LLM Wiki{% endblock %}
+
+{% block content %}
+<div class="error-state" style="margin-top: 4rem;">
+  <h1 style="margin-top: 1rem; border: none; font-size: 2rem;">{{ error_title }}</h1>
+  <p style="max-width: 450px; margin-top: 0.5rem;">{{ error_message | safe }}</p>
+
+  {% if suggestions %}
+  <div style="margin-top: 1.5rem; text-align: left; max-width: 350px;">
+    <p class="text-sm text-muted" style="margin-bottom:0.5rem;">你可能在找:</p>
+    <ul style="list-style:none; padding:0;">
+      {% for s in suggestions %}
+      <li style="margin-bottom:0.3em;">
+        <a href="/wiki/{{ s }}" class="wikilink" style="font-size:0.9rem;">{{ s | replace('.md', '') }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <div style="margin-top: 1.5rem; display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center;">
+    <a href="/wiki" class="btn btn-primary">← 回到首页</a>
+    <a href="/wiki/query" class="btn btn-secondary">🔍 知识问答</a>
+  </div>
+</div>
+{% endblock %}

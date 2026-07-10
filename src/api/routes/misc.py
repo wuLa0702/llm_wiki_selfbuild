@@ -2,7 +2,7 @@
 import logging
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from src.app_state import get_watcher, set_watcher
 from src.core.privacy import PrivacyManager
@@ -21,10 +21,11 @@ logger = logging.getLogger("api.routes.misc")
 router = APIRouter(tags=["misc"])
 
 
-@router.get("/", response_model=RootResponse)
+@router.get("/")
 async def root():
-    logger.debug("root endpoint 被调用")
-    return RootResponse()
+    """根路径 → 重定向到 Wiki 首页"""
+    logger.debug("root endpoint 被调用，重定向到 /wiki")
+    return RedirectResponse(url="/wiki")
 
 
 @router.get("/health", response_model=HealthResponse)

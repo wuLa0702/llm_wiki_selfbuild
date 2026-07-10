@@ -1,0 +1,39 @@
+<aside class="icon-bar">
+  <a href="/wiki" class="icon-bar-logo" title="LLM Wiki">✦ LLM Wiki</a>
+  <div class="icon-bar-divider"></div>
+
+  <a href="/wiki/query" class="icon-bar-item {% if request.url.path == '/wiki/query' %}active{% endif %}">
+    <span class="icon-bar-icon">💬</span>
+    <span class="icon-bar-label">问答</span>
+  </a>
+  <a href="/wiki" class="icon-bar-item {% if request.url.path == '/wiki' %}active{% endif %}">
+    <span class="icon-bar-icon">📄</span>
+    <span class="icon-bar-label">首页</span>
+  </a>
+  <a href="/wiki/sources" class="icon-bar-item {% if request.url.path == '/wiki/sources' %}active{% endif %}">
+    <span class="icon-bar-icon">📁</span>
+    <span class="icon-bar-label">资料源</span>
+  </a>
+  <a href="/wiki/graph" class="icon-bar-item {% if request.url.path == '/wiki/graph' %}active{% endif %}">
+    <span class="icon-bar-icon">🕸️</span>
+    <span class="icon-bar-label">图谱</span>
+  </a>
+  <a href="/wiki/lint" class="icon-bar-item {% if request.url.path == '/wiki/lint' %}active{% endif %}">
+    <span class="icon-bar-icon">✅</span>
+    <span class="icon-bar-label">健康</span>
+  </a>
+
+  <div class="icon-bar-spacer"></div>
+
+  <div class="icon-bar-bottom">
+    <div class="icon-bar-divider"></div>
+    <button class="icon-bar-item" onclick="toggleTheme()" title="切换主题" aria-label="切换主题">
+      <span class="icon-bar-icon" id="theme-icon">🌙</span>
+      <span class="icon-bar-label">主题</span>
+    </button>
+    <a href="/wiki/settings" class="icon-bar-item {% if request.url.path == '/wiki/settings' %}active{% endif %}">
+      <span class="icon-bar-icon">⚙️</span>
+      <span class="icon-bar-label">设置</span>
+    </a>
+  </div>
+</aside>

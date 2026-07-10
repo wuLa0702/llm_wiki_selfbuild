@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}健康检查 — LLM Wiki{% endblock %}
+
+{% block content %}
+<section class="page-header">
+  <h1>🏥 健康检查</h1>
+  <p class="text-secondary text-sm">Wiki 知识库静态质量检测</p>
+</section>
+
+<div class="lint-actions">
+  <button class="btn btn-primary" onclick="refreshLint()">🔄 刷新检查</button>
+  <span id="lint-updated" class="text-muted text-sm" style="margin-left:0.5rem;"></span>
+</div>
+
+<div id="lint-panel">
+  <div class="loading-state">
+    <div class="spinner"></div>
+    <span>检查中…</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function refreshLint() {
+  var panel = document.getElementById('lint-panel');
+  panel.innerHTML = '<div class="loading-state"><div class="spinner"></div><span>检查中…</span></div>';
+
+  try {
+    var res = await fetch('/v1/lint?semantic=false');
+    var data = await res.json();
+    renderLint(data);
+    document.getElementById('lint-updated').textContent = '更新于 ' + new Date().toLocaleTimeString();
+  } catch (err) {
+    panel.innerHTML = '<div class="error-state"><span>检查失败</span><span class="text-sm">' + err.message + '</span></div>';
+  }
+}
+
+function renderLint(data) {
+  var html = '';
+
+  // 健康评分
+  var score = data.health_score ?? 100;
+  var scoreColor = score >= 80 ? 'var(--success)' : score >= 50 ? 'var(--warning)' : 'var(--error)';
+  html += '<div class="stat-cards" style="margin-bottom:1.5rem;">';
+  html += '<div class="stat-card" style="border-top:3px solid ' + scoreColor + ';"><div class="stat-value" style="color:' + scoreColor + ';">' + score + '</div><div class="stat-label">健康评分</div></div>';
+
+  var stats = [
+    { label: '断链', value: (data.broken_links || []).length, color: 'var(--error)' },
+    { label: '孤页', value: (data.orphan_pages || []).length, color: 'var(--warning)' },
+    { label: 'Index 缺口', value: (data.index_gaps || []).length, color: 'var(--accent)' },
+  ];
+  for (var i = 0; i < stats.length; i++) {
+    html += '<div class="stat-card" style="border-top:3px solid ' + stats[i].color + ';"><div class="stat-value" style="color:' + stats[i].color + ';">' + stats[i].value + '</div><div class="stat-label">' + stats[i].label + '</div></div>';
+  }
+  html += '</div>';
+
+  html += '<div class="card" style="margin-bottom:1rem;"><div class="card-header">📋 摘要</div><div class="card-body">' + (data.summary || '—') + '</div></div>';
+
+  // 断链详情
+  var broken = data.broken_links || [];
+  if (broken.length > 0) {
+    html += '<div class="lint-section"><h3>🔗 断链 (' + broken.length + ')</h3><ul class="text-sm">';
+    for (var i = 0; i < Math.min(broken.length, 20); i++) {
+      html += '<li style="margin-bottom:0.3em; color:var(--error);">' + escapeHtml(broken[i]) + '</li>';
+    }
+    if (broken.length > 20) html += '<li class="text-muted">… 还有 ' + (broken.length - 20) + ' 条</li>';
+    html += '</ul></div>';
+  }
+
+  panel.innerHTML = html;
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  var div = document.createElement('div');
+  div.appendChild(document.createTextNode(str));
+  return div.innerHTML;
+}
+
+refreshLint();
+</script>
+{% endblock %}

@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+
+{% block title %}图谱 — LLM Wiki{% endblock %}
+
+{% block head_extra %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.6/dist/vis-network.min.js"></script>
+<style>
+#mynetwork { width: 100%; height: calc(100vh - var(--nav-height) - 2rem); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.vis-network:focus { outline: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="graph-toolbar">
+  <input id="graphSearch" type="search" placeholder="过滤节点…" class="form-input" style="max-width:240px;">
+  <span class="text-muted text-xs" id="stats">加载中…</span>
+  <button class="btn btn-sm btn-secondary" onclick="loadGraph()" style="margin-left:auto;">🔄 刷新</button>
+</div>
+
+<div id="mynetwork" class="graph-canvas"></div>
+
+<div id="nodeInfo" class="card node-info" style="display:none; position:absolute; bottom:1rem; left:1rem; width:280px; z-index:10;">
+  <div class="card-header" id="nodeInfoTitle"></div>
+  <div class="card-body text-sm" id="nodeInfoBody"></div>
+  <div style="margin-top:0.5rem;">
+    <button class="btn btn-sm btn-primary" id="nodeInfoBtn" onclick="">前往页面 →</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var nodes = null, edges = null, network = null;
+
+async function loadGraph() {
+  var container = document.getElementById('mynetwork');
+  container.innerHTML = '<div class="loading-state"><div class="spinner"></div><span>加载图谱…</span></div>';
+
+  try {
+    // 尝试 sessionStorage 缓存
+    var cacheKey = 'wiki_graph_v2';
+    var cached = sessionStorage.getItem(cacheKey);
+    var data = null;
+
+    if (cached) {
+      try {
+        data = JSON.parse(cached);
+        console.log('图谱: 使用缓存');
+      } catch(e) { cached = null; }
+    }
+
+    if (!data) {
+      // 限制边数提升性能：最多 200 条最强边，忽略权重 < 1 的弱边
+      var res = await fetch('/v1/graph?max_edges=200&min_weight=1');
+      data = await res.json();
+      // 缓存到 sessionStorage（页面关闭即失效）
+      try { sessionStorage.setItem(cacheKey, JSON.stringify(data)); } catch(e) {}
+    }
+
+    // 如果没有数据或数据异常
+    if (!data || !data.nodes || data.nodes.length === 0) {
+      container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🕸️</div><p class="text-muted">图谱为空</p></div>';
+      return;
+    }
+
+    var totalNodes = data.nodes.length;
+    var totalEdges = (data.edges || []).length;
+
+    // 构建 vis.js 节点：按 degree 排序取前 50 个，其余缩小
+    var sortedNodes = data.nodes.slice().sort(function(a, b) {
+      var degA = (a.degree?.in || 0) + (a.degree?.out || 0);
+      var degB = (b.degree?.in || 0) + (b.degree?.out || 0);
+      return degB - degA;
+    });
+
+    var top50 = {};
+    sortedNodes.slice(0, 50).forEach(function(n) { top50[n.id] = true; });
+
+    nodes = new vis.DataSet(data.nodes.map(function(n) {
+      var deg = (n.degree?.in || 0) + (n.degree?.out || 0);
+      var isTop = !!top50[n.id];
+      return {
+        id: n.id,
+        label: n.id.split('/').pop().replace('.md', '') || n.id,
+        title: n.id + ' (入链: ' + (n.degree?.in || 0) + ')',
+        group: n.community_id || 0,
+        size: isTop ? Math.max(8, Math.min(25, 8 + deg * 2)) : 4,
+        font: { size: isTop ? 11 : 0 },
+      };
+    }));
+
+    edges = new vis.DataSet((data.edges || []).map(function(e) {
+      return {
+        from: e.from || e.source,
+        to: e.to || e.target,
+        value: Math.max(0.5, (e.weight || 1) / 2),
+        title: '权重: ' + (e.weight || 1),
+        color: { color: 'var(--border)', highlight: 'var(--accent)' },
+      };
+    }));
+
+    var options = {
+      nodes: { shape: 'dot', borderWidth: 1, color: { border: '#222' } },
+      edges: { smooth: { type: 'continuous' } },
+      physics: {
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: {
+          gravitationalConstant: -30,
+          centralGravity: 0.005,
+          springLength: 160,
+          springConstant: 0.02,
+          damping: 0.4,
+        },
+        stabilization: { iterations: 100 },
+      },
+      interaction: { hover: true, tooltipDelay: 200 },
+    };
+
+    network = new vis.Network(container, { nodes: nodes, edges: edges }, options);
+    document.getElementById('stats').textContent = '节点: ' + totalNodes + ' · 边: ' + totalEdges + (data.stats?.filtered_from ? ' (已过滤)' : '');
+
+    // 点击节点 → 显示信息面板
+    network.on('click', function(params) {
+      if (params.nodes.length > 0) {
+        var nodeId = params.nodes[0];
+        var nodeData = nodes.get(nodeId);
+        document.getElementById('nodeInfoTitle').textContent = nodeData.label || nodeId;
+        document.getElementById('nodeInfoBody').textContent = nodeData.title || nodeId;
+        document.getElementById('nodeInfoBtn').onclick = function() { window.location.href = '/wiki/' + nodeId; };
+        document.getElementById('nodeInfo').style.display = 'block';
+      } else {
+        document.getElementById('nodeInfo').style.display = 'none';
+      }
+    });
+
+  } catch (err) {
+    container.innerHTML = '<div class="error-state"><span>图谱数据加载失败</span><span class="text-sm">' + err.message + '</span></div>';
+  }
+}
+
+// 搜索过滤
+document.getElementById('graphSearch').addEventListener('input', function() {
+  if (!network || !nodes) return;
+  var query = this.value.trim().toLowerCase();
+  if (!query) {
+    network.selectNodes([]);
+    return;
+  }
+  var allNodes = nodes.get();
+  var matched = allNodes.filter(function(n) { return (n.label || '').toLowerCase().includes(query); }).map(function(n) { return n.id; });
+  network.selectNodes(matched);
+});
+
+loadGraph();
+</script>
+{% endblock %}
