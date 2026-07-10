@@ -238,7 +238,14 @@ async function loadFileTree() {
 function renderFileTree(tree, prefix, depth) {
   depth = depth || 0;
   var html = '<ul class="tree-items" style="padding-left:0;">';
-  var keys = Object.keys(tree).sort();
+  // 目录排前面，文件排后面，各自按字母排序
+  var keys = Object.keys(tree).sort(function(a, b) {
+    var aIsDir = tree[a].type === "directory";
+    var bIsDir = tree[b].type === "directory";
+    if (aIsDir && !bIsDir) return -1;
+    if (!aIsDir && bIsDir) return 1;
+    return a.localeCompare(b);
+  });
   for (var i = 0; i < keys.length; i++) {
     var name = keys[i];
     var item = tree[name];
