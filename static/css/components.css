@@ -12,10 +12,9 @@
   gap: 2px;
 }
 .icon-bar-logo {
-  display: flex; align-items: center;
-  gap: 6px;
-  padding: 0.35rem 0.75rem;
-  margin: 0 0.4rem 0.5rem;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0.5rem 0;
+  margin: 0 0.5rem 0.5rem;
   font-size: 1rem; font-weight: 700;
   color: var(--accent) !important; text-decoration: none !important;
   border-radius: var(--radius-md);
@@ -53,6 +52,22 @@
   display: flex; flex-direction: column; gap: 2px;
   margin-top: auto; padding-top: 0.5rem;
 }
+
+/* ========================= 树形面板 Tabs ========================= */
+.tree-tabs {
+  display: flex; border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.tree-tab {
+  flex: 1; padding: 0.5rem 0; text-align: center;
+  font-size: 0.82rem; font-family: inherit;
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); transition: color 0.12s, border-color 0.12s;
+  border-bottom: 2px solid transparent;
+}
+.tree-tab:hover { color: var(--text-primary); }
+.tree-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tree-tab-content { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 
 /* ========================= 树形面板 ========================= */
 .tree-panel {
@@ -97,6 +112,7 @@
   color: var(--accent-blue) !important;
   background: rgba(45,125,210,0.08);
 }
+.tree-divider { height: 1px; background: var(--border); margin: 0 0 0.5rem; }
 .tree-footer {
   padding: 0.6rem 0.75rem;
   border-top: 1px solid var(--border);

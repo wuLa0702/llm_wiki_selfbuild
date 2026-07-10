@@ -1,28 +1,31 @@
 <aside class="tree-panel" id="treePanel">
-  <!-- 搜索框 -->
-  <div class="tree-search" style="position:relative;">
-    <input id="tree-search-input" type="search" placeholder="搜索 Wiki..." autocomplete="off">
-    <div id="tree-search-results" class="search-dropdown hidden"></div>
+  <!-- Tab 切换 -->
+  <div class="tree-tabs">
+    <button class="tree-tab active" data-tab="knowledge" onclick="switchTab('knowledge')">📚 知识库</button>
+    <button class="tree-tab" data-tab="files" onclick="switchTab('files')">📁 文件</button>
   </div>
 
-  <!-- 过滤按钮 -->
-  <div class="tree-filters" id="tree-filters">
-    <button class="filter-btn active" data-filter="all">全部</button>
-    <button class="filter-btn" data-filter="entity">实体</button>
-    <button class="filter-btn" data-filter="concept">概念</button>
-    <button class="filter-btn" data-filter="source">来源</button>
-    <button class="filter-btn" data-filter="query">问答</button>
-  </div>
-
-  <!-- 知识树 -->
-  <div class="tree-content" id="tree-content">
-    <div class="loading-state" style="padding:1.5rem;">
-      <div class="spinner" style="width:18px;height:18px;"></div>
+  <!-- 知识库 tab -->
+  <div id="tab-knowledge" class="tree-tab-content">
+    <div class="tree-content" id="tree-content">
+      <div class="loading-state" style="padding:1.5rem;">
+        <div class="spinner" style="width:18px;height:18px;"></div>
+      </div>
     </div>
   </div>
 
-  <!-- 底部统计 + 活动 -->
+  <!-- 文件 tab -->
+  <div id="tab-files" class="tree-tab-content" style="display:none;">
+    <div class="tree-content" id="file-tree-content">
+      <div class="loading-state" style="padding:1.5rem;">
+        <div class="spinner" style="width:18px;height:18px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部统计 + 分隔线 -->
   <div class="tree-footer">
+    <div class="tree-divider"></div>
     <div class="flex justify-between" style="margin-bottom:0.3rem;">
       <span id="tree-stats">加载中...</span>
     </div>

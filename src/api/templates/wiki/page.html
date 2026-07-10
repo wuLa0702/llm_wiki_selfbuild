@@ -91,64 +91,7 @@
 
 {% block scripts %}
 <script>
-// ===== 1. TOC 生成 =====
-(function() {
-  var toc = document.getElementById('toc-list');
-  var tocSidebar = document.getElementById('page-toc');
-  if (!toc) return;
-
-  var headings = document.querySelectorAll('.page-content h1, .page-content h2, .page-content h3');
-  if (headings.length < 2) return; // 少于 2 个标题不显示
-
-  // 计算内容高度决定是否显示
-  var contentEl = document.querySelector('.page-content');
-  if (contentEl && contentEl.scrollHeight < 600) return;
-
-  var html = '';
-  for (var i = 0; i < headings.length; i++) {
-    var h = headings[i];
-    var level = parseInt(h.tagName[1], 10);
-    var id = 'toc-' + i;
-    h.setAttribute('id', id);
-
-    var text = h.textContent || '';
-    html += '<li class="toc-level-' + level + '"><a href="#' + id + '">' + escapeHtml(text) + '</a></li>';
-  }
-  toc.innerHTML = html;
-  tocSidebar.style.display = 'block';
-
-  // 滚动监听：高亮当前标题
-  var links = toc.querySelectorAll('a');
-  var observer = new IntersectionObserver(function(entries) {
-    entries.forEach(function(entry) {
-      if (entry.isIntersecting) {
-        var id = entry.target.getAttribute('id');
-        links.forEach(function(link) {
-          link.classList.toggle('toc-active', link.getAttribute('href') === '#' + id);
-        });
-      }
-    });
-  }, { rootMargin: '-80px 0px -60% 0px' });
-
-  headings.forEach(function(h) { observer.observe(h); });
-})();
-
-// ===== 2. 代码高亮 =====
-document.querySelectorAll('pre code').forEach(function(block) {
-  if (typeof hljs !== 'undefined') {
-    hljs.highlightElement(block);
-  }
-});
-
-// ===== 3. 工具函数 =====
-function escapeHtml(str) {
-  if (!str) return '';
-  var div = document.createElement('div');
-  div.appendChild(document.createTextNode(str));
-  return div.innerHTML;
-}
-
-// ===== 4. 编辑功能 =====
+// 编辑功能
 var isEditing = false;
 var originalContent = '';
 

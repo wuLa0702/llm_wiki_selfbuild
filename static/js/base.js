@@ -3,12 +3,29 @@
  * 主题管理 / 树形面板 / 知识树加载 / 活动状态 / 工具函数
  */
 
+/* ========================= 图标栏激活 ========================= */
+function setActiveIcon(btn) {
+  document.querySelectorAll('.icon-bar-item').forEach(function(el) { el.classList.remove('active'); });
+  btn.classList.add('active');
+}
+
+function initActiveIcon() {
+  var path = window.location.pathname;
+  document.querySelectorAll('.icon-bar-item').forEach(function(el) {
+    var dp = el.getAttribute('data-path');
+    if (dp === path) el.classList.add('active');
+    // 子路径匹配
+    if (path.startsWith(dp + '/') && dp !== '/wiki') el.classList.add('active');
+  });
+}
+
 /* ========================= 主题 ========================= */
 function updateThemeIcon() {
-  var icon = document.getElementById("theme-icon");
-  if (icon) {
-    icon.textContent = document.documentElement.classList.contains("dark") ? "☀️" : "🌙";
-  }
+  var isDark = document.documentElement.classList.contains("dark");
+  var icons = document.querySelectorAll("#theme-icon, #settingsThemeIcon");
+  icons.forEach(function(el) {
+    el.textContent = isDark ? "☀️" : "🌙";
+  });
 }
 
 function initTheme() {
@@ -142,11 +159,15 @@ async function loadTree() {
       var items = groups[type];
       if (!items || !items.length) continue;
       html += '<div class="tree-section">';
-      html += '<div class="tree-section-title" onclick="toggleTreeSection(this)">';
-      html += '<span class="chevron open">&#9654;</span> ';
+      var sectionKey = "wikiSection_" + (typeLabels[type] || type);
+      var sectionState = "collapsed";
+      try { sectionState = localStorage.getItem(sectionKey) || "collapsed"; } catch(e) {}
+      var isCollapsed = sectionState === "collapsed";
+      html += '<div class="tree-section-title" onclick="toggleTreeSection(this)" data-section="' + (typeLabels[type] || type) + '">';
+      html += '<span class="chevron ' + (isCollapsed ? "" : "open") + '">&#9654;</span> ';
       html += '<span class="section-label">' + (typeLabels[type] || type) + ' (' + items.length + ')</span>';
       html += '</div>';
-      html += '<ul class="tree-items">';
+      html += '<ul class="tree-items ' + (isCollapsed ? "hidden" : "") + '">';
       for (var j = 0; j < items.length; j++) {
         var path = items[j].path || items[j].name || "";
         var isActive = window.location.pathname === "/wiki/" + encodeURIComponent(path);
@@ -177,6 +198,96 @@ function toggleTreeSection(el) {
   var items = el.nextElementSibling;
   if (chevron) chevron.classList.toggle("open");
   if (items) items.classList.toggle("hidden");
+  // 使用 data-section 属性（与 loadTree 用同样的 key 算法）
+  var sectionName = el.getAttribute("data-section");
+  if (sectionName) {
+    var key = "wikiSection_" + sectionName;
+    var isHidden = items && items.classList.contains("hidden");
+    try { localStorage.setItem(key, isHidden ? "collapsed" : "open"); } catch(e) {}
+  }
+}
+
+function switchTab(tab) {
+  // 切换 tab 高亮
+  document.querySelectorAll(".tree-tab").forEach(function(t) {
+    t.classList.toggle("active", t.getAttribute("data-tab") === tab);
+  });
+  // 显示/隐藏内容
+  document.getElementById("tab-knowledge").style.display = tab === "knowledge" ? "" : "none";
+  document.getElementById("tab-files").style.display = tab === "files" ? "" : "none";
+  // 懒加载文件树
+  if (tab === "files") loadFileTree();
+  // 保存当前 tab
+  try { localStorage.setItem("wikiTreeTab", tab); } catch(e) {}
+}
+
+async function loadFileTree() {
+  var container = document.getElementById("file-tree-content");
+  if (!container || container.querySelector(".file-tree-rendered")) return;
+
+  try {
+    var res = await fetch("/v1/file-tree");
+    var tree = await res.json();
+    var html = renderFileTree(tree, "");
+    container.innerHTML = '<div class="file-tree-rendered">' + html + '</div>';
+  } catch(err) {
+    container.innerHTML = '<div class="error-state" style="padding:1rem"><p>加载失败</p></div>';
+  }
+}
+
+function renderFileTree(tree, prefix, depth) {
+  depth = depth || 0;
+  var html = '<ul class="tree-items" style="padding-left:0;">';
+  var keys = Object.keys(tree).sort();
+  for (var i = 0; i < keys.length; i++) {
+    var name = keys[i];
+    var item = tree[name];
+    var fullPath = prefix ? prefix + "/" + name : name;
+    if (item.type === "directory") {
+      var isExpanded = depth === 0; // 只展开第一级
+      var childrenHtml = item.children ? renderFileTree(item.children, fullPath, depth + 1) : "";
+      html += '<li class="tree-item">';
+      html += '<div class="tree-section-title" onclick="toggleFileSection(this)"><span class="chevron ' + (isExpanded ? 'open' : '') + '">&#9654;</span> 📁 ' + name + '</div>';
+      html += '<div class="tree-items ' + (isExpanded ? '' : 'hidden') + '" style="padding-left:1rem;">' + childrenHtml + '</div>';
+      html += '</li>';
+    } else {
+      var icon = name === "schema.md" ? "📋" : name === "purpose.md" ? "🎯" : "📄";
+      html += '<li class="tree-item"><a href="#" onclick="event.preventDefault(); openFile(\'' + fullPath + '\')">' + icon + ' ' + name + '</a></li>';
+    }
+  }
+  html += '</ul>';
+  return html;
+}
+
+function toggleFileSection(el) {
+  var chevron = el.querySelector(".chevron");
+  var items = el.nextElementSibling;
+  if (chevron) chevron.classList.toggle("open");
+  if (items) items.classList.toggle("hidden");
+}
+
+function openFile(path) {
+  // 读取文件内容并加载到主内容区
+  fetch("/v1/file-content?path=" + encodeURIComponent(path))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.content !== undefined) {
+        // 在主内容区展示
+        var main = document.querySelector(".main-content");
+        if (main) {
+          var ext = path.split(".").pop();
+          if (ext === "md") {
+            // Markdown 文件：简单渲染
+            main.innerHTML = '<div class="breadcrumb"><a href="/wiki">首页</a><span class="breadcrumb-separator">/</span><span>' + path + '</span></div><div style="white-space:pre-wrap; font-family:monospace; font-size:0.85rem; line-height:1.6; background:var(--bg-surface); padding:1rem; border-radius:var(--radius-md);">' + escapeHtml(data.content) + '</div>';
+          } else {
+            main.innerHTML = '<div class="breadcrumb"><a href="/wiki">首页</a><span class="breadcrumb-separator">/</span><span>' + path + '</span></div><pre style="white-space:pre-wrap;">' + escapeHtml(data.content) + '</pre>';
+          }
+        }
+      } else {
+        showToast("加载失败");
+      }
+    })
+    .catch(function() { showToast("加载失败"); });
 }
 
 /* ========================= 活动状态轮询 ========================= */
@@ -271,16 +382,60 @@ if (treeSearchInput && treeSearchResults) {
 /* ========================= 初始化 ========================= */
 document.addEventListener("DOMContentLoaded", function() {
   initTheme();
+  initActiveIcon();
   loadTree();
   pollActivity();
   setInterval(pollActivity, 10000);
 
-  // 过滤按钮
-  var filterBtns = document.querySelectorAll("#tree-filters .filter-btn");
-  filterBtns.forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      filterBtns.forEach(function(b) { b.classList.remove("active"); });
-      this.classList.add("active");
-    });
+  // 恢复上次的 tab
+  try {
+    var savedTab = localStorage.getItem("wikiTreeTab") || "knowledge";
+    switchTab(savedTab);
+  } catch(e) {}
+});
+
+// htmx 内容加载后：重新初始化页面级功能
+function reinitMainContent() {
+  // 代码高亮
+  document.querySelectorAll('pre code').forEach(function(block) {
+    if (typeof hljs !== 'undefined') hljs.highlightElement(block);
   });
+  // TOC 生成（页面内 h1-h3）
+  var toc = document.getElementById('toc-list');
+  var tocSidebar = document.getElementById('page-toc');
+  if (toc && tocSidebar) {
+    var headings = document.querySelectorAll('.page-content h1, .page-content h2, .page-content h3');
+    if (headings.length >= 2) {
+      var contentEl = document.querySelector('.page-content');
+      if (contentEl && contentEl.scrollHeight >= 600) {
+        var html = '';
+        for (var i = 0; i < headings.length; i++) {
+          var h = headings[i];
+          var level = parseInt(h.tagName[1], 10);
+          var id = 'toc-' + i;
+          h.setAttribute('id', id);
+          var text = h.textContent || '';
+          html += '<li class="toc-level-' + level + '"><a href="#' + id + '">' + escapeHtml(text) + '</a></li>';
+        }
+        toc.innerHTML = html;
+        tocSidebar.style.display = 'block';
+      }
+    }
+  }
+  // 记录页面访问
+  var match = window.location.pathname.match(/^\/wiki\/(.+)/);
+  if (match) recordPageVisit(decodeURIComponent(match[1]));
+}
+
+document.addEventListener("htmx:afterSwap", function(evt) {
+  // 执行页面级内嵌脚本
+  var target = evt.detail.target;
+  if (target) {
+    target.querySelectorAll('script').forEach(function(s) {
+      var ns = document.createElement('script');
+      ns.textContent = s.textContent;
+      document.body.appendChild(ns).parentNode.removeChild(ns);
+    });
+  }
+  reinitMainContent();
 });
