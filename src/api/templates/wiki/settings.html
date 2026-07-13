@@ -1,127 +1,203 @@
 {% extends "base.html" %}
-
 {% block title %}设置 — LLM Wiki{% endblock %}
-{% block sidebar_content %}{% endblock %}
+{% block sidebar_content %}
+<!-- 设置菜单 -->
+<nav class="settings-menu">
+  <div class="settings-menu-item active" data-section="watcher" onclick="switchSection('watcher')">⚡ 定时导入</div>
+  <div class="settings-menu-item" data-section="output" onclick="switchSection('output')">🎨 输出偏好</div>
+  <div class="settings-menu-item" data-section="ui" onclick="switchSection('ui')">🖥️ 界面</div>
+  <div class="settings-menu-item" data-section="changelog" onclick="switchSection('changelog')">📋 更新日志</div>
+  <div class="settings-menu-item" data-section="about" onclick="switchSection('about')">ℹ️ 关于</div>
+</nav>
+{% endblock %}
+
+{% block head_extra %}
+<style>
+/* 设置菜单（在 sidebar-zone 内） */
+.settings-menu {
+  height: 100%; display: flex; flex-direction: column;
+  background: var(--bg-tree);
+  padding: 1rem 0; overflow-y: auto;
+}
+.settings-menu-item {
+  display: flex; align-items: center; gap: 0.5em;
+  padding: 0.55em 1rem; cursor: pointer;
+  font-size: 0.88rem; color: var(--text-secondary);
+  transition: background 0.1s, color 0.1s;
+}
+.settings-menu-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.settings-menu-item.active { color: var(--accent); background: var(--bg-hover); font-weight: 600; }
+.settings-content {
+  flex: 1; padding: 2rem 3rem; max-width: 640px; overflow-y: auto;
+}
+.settings-section { display: none; }
+.settings-section.active { display: block; }
+</style>
+{% endblock %}
 
 {% block content %}
-<section class="page-header">
-  <h1>⚙️ 设置</h1>
-  <p class="text-secondary text-sm">应用配置项</p>
-</section>
-
-<form id="settingsForm" onsubmit="saveSettings(event)">
-  <!-- LLM -->
-  <div class="card">
-    <div class="card-header">🤖 LLM</div>
-    <div class="card-body" style="display:grid; gap:0.75rem;">
-      <div>
-        <label class="text-sm text-secondary">Provider</label>
-        <select id="s_llm_provider" style="width:100%;margin-top:0.2rem;">
-          <option value="deepseek">DeepSeek</option>
-          <option value="ark">豆包 Ark</option>
-        </select>
+<div class="settings-content">
+    <!-- 定时导入 -->
+    <div id="sec-watcher" class="settings-section active">
+      <h2 style="border:none; margin-top:0;">⚡ 定时导入</h2>
+      <p class="text-sm text-secondary">自动监控 raw/sources/ 目录，发现新文件自动导入。</p>
+      <div class="card" style="margin-top:1rem;">
+        <div class="card-header">Watcher 状态</div>
+        <div class="card-body" id="watcher-status">
+          <div class="loading-state" style="padding:1rem;"><div class="spinner" style="width:18px;height:18px;"></div></div>
+        </div>
       </div>
-      <div>
-        <label class="text-sm text-secondary">API Key</label>
-        <input id="s_deepseek_api_key" type="password" placeholder="sk-..." style="width:100%;margin-top:0.2rem;">
-      </div>
-    </div>
-  </div>
-
-  <!-- 搜索 -->
-  <div class="card">
-    <div class="card-header">🔍 搜索</div>
-    <div class="card-body" style="display:grid; gap:0.75rem;">
-      <div>
-        <label class="text-sm text-secondary">搜索方式</label>
-        <select id="s_search_method" style="width:100%;margin-top:0.2rem;">
-          <option value="bm25">BM25 关键词</option>
-          <option value="hybrid">Hybrid 融合（需向量模型）</option>
-        </select>
+      <div class="card">
+        <div class="card-header">配置</div>
+        <div class="card-body" style="display:grid; gap:0.75rem;">
+          <div><label class="text-sm text-secondary">轮询间隔（秒）</label>
+            <input id="s_poll_interval" type="number" value="10" min="1" max="3600" style="width:100%;margin-top:0.2rem;">
+          </div>
+          <div><label class="text-sm text-secondary">监控目录</label>
+            <input id="s_sources_dir" type="text" value="raw/sources" style="width:100%;margin-top:0.2rem;">
+          </div>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- 语言 -->
-  <div class="card">
-    <div class="card-header">🌐 语言</div>
-    <div class="card-body" style="display:grid; gap:0.75rem;">
-      <div>
-        <label class="text-sm text-secondary">输出语言</label>
-        <select id="s_output_language" style="width:100%;margin-top:0.2rem;">
-          <option value="zh">中文</option>
-          <option value="en">English</option>
-        </select>
+    <!-- 输出偏好 -->
+    <div id="sec-output" class="settings-section">
+      <h2 style="border:none; margin-top:0;">🎨 输出偏好</h2>
+      <div class="card">
+        <div class="card-header">LLM 语言</div>
+        <div class="card-body" style="display:grid; gap:0.75rem;">
+          <div><label class="text-sm text-secondary">输出语言</label>
+            <select id="s_output_language" style="width:100%;margin-top:0.2rem;">
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- 外观 -->
-  <div class="card">
-    <div class="card-header">🎨 外观</div>
-    <div class="card-body" style="display:grid; gap:0.75rem;">
-      <div>
-        <label class="text-sm text-secondary">主题</label>
-        <div style="margin-top:0.3rem;">
-          <button class="btn btn-sm btn-secondary" onclick="toggleTheme()" id="settingsThemeBtn">
-            <span id="settingsThemeIcon">🌙</span> 切换暗色/亮色
-          </button>
+    <!-- 界面 -->
+    <div id="sec-ui" class="settings-section">
+      <h2 style="border:none; margin-top:0;">🖥️ 界面</h2>
+      <div class="card">
+        <div class="card-header">外观</div>
+        <div class="card-body" style="display:grid; gap:0.75rem;">
+          <div>
+            <label class="text-sm text-secondary">主题</label>
+            <div style="margin-top:0.3rem;">
+              <button class="btn btn-sm btn-secondary" onclick="toggleTheme()" id="settingsThemeBtn">
+                <span id="settingsThemeIcon">🌙</span> 切换暗色/亮色
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 更新日志 -->
+    <div id="sec-changelog" class="settings-section">
+      <h2 style="border:none; margin-top:0;">📋 更新日志</h2>
+      <div class="card">
+        <div class="card-body text-sm" style="line-height:1.8;">
+          <p><strong>Phase 6.5</strong> — 2026-07-13<br>资料源重构、设置多页化、定时导入</p>
+          <p><strong>Phase 6</strong> — 2026-07-10<br>UI 美化：三栏布局、图标侧栏、树形面板</p>
+          <p><strong>Phase 5</strong> — 2026-07<br>搜索增强：BM25 + 向量搜索</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 关于 -->
+    <div id="sec-about" class="settings-section">
+      <h2 style="border:none; margin-top:0;">ℹ️ 关于</h2>
+      <div class="card">
+        <div class="card-body">
+          <dl class="frontmatter-card">
+            <dt>应用</dt><dd>LLM Wiki</dd>
+            <dt>版本</dt><dd>Phase 6.5</dd>
+            <dt>引擎</dt><dd>FastAPI + Jinja2</dd>
+            <dt>数据</dt><dd>SQLite + Markdown 文件</dd>
+          </dl>
         </div>
       </div>
     </div>
   </div>
-
-  <div style="display:flex; gap:0.5rem; margin-top:1rem;">
-    <button type="submit" class="btn btn-primary" id="saveBtn">保存设置</button>
-    <span id="saveMsg" class="text-sm text-muted" style="align-self:center;"></span>
-  </div>
-</form>
 {% endblock %}
 
 {% block scripts %}
 <script>
+/* ===== 设置子页面切换 ===== */
+function switchSection(name) {
+  document.querySelectorAll('.settings-menu-item').forEach(function(el) {
+    el.classList.toggle('active', el.getAttribute('data-section') === name);
+  });
+  document.querySelectorAll('.settings-section').forEach(function(el) {
+    el.classList.toggle('active', el.id === 'sec-' + name);
+  });
+  try { localStorage.setItem('settingsSection', name); } catch(e) {}
+  if (name === 'watcher') loadWatcherStatus();
+}
+
+/* ===== 定时导入状态 ===== */
+async function loadWatcherStatus() {
+  var el = document.getElementById('watcher-status');
+  try {
+    var r = await fetch('/v1/watcher/status');
+    var d = await r.json();
+    if (d.running) {
+      el.innerHTML = '<p>状态: <span style="color:var(--success);">运行中</span></p><p class="text-xs text-muted">' + (d.detail || '') + '</p><button class="btn btn-sm btn-secondary" style="margin-top:0.5rem;" onclick="stopWatcher()">停止</button>';
+    } else {
+      el.innerHTML = '<p>状态: <span style="color:var(--text-muted);">已停止</span></p><button class="btn btn-sm btn-primary" style="margin-top:0.5rem;" onclick="startWatcher()">启动</button>';
+    }
+  } catch(e) {
+    el.innerHTML = '<p class="text-muted">无法获取状态</p>';
+  }
+}
+
+async function startWatcher() {
+  var el = document.getElementById('watcher-status');
+  el.innerHTML = '<div class="loading-state" style="padding:0.5rem;"><div class="spinner" style="width:16px;height:16px;"></div></div>';
+  var r = await fetch('/v1/watcher/start', { method: 'POST' });
+  if (r.ok) loadWatcherStatus();
+}
+
+async function stopWatcher() {
+  var el = document.getElementById('watcher-status');
+  el.innerHTML = '<div class="loading-state" style="padding:0.5rem;"><div class="spinner" style="width:16px;height:16px;"></div></div>';
+  var r = await fetch('/v1/watcher/stop', { method: 'POST' });
+  if (r.ok) loadWatcherStatus();
+}
+
+/* ===== 加载设置 ===== */
 async function loadSettings() {
   try {
     var r = await fetch('/v1/settings');
-    var data = await r.json();
-    document.getElementById('s_llm_provider').value = data.llm_provider || 'deepseek';
-    document.getElementById('s_deepseek_api_key').value = data.deepseek_api_key || '';
-    document.getElementById('s_search_method').value = data.search_method || 'bm25';
-    document.getElementById('s_output_language').value = data.output_language || 'zh';
-  } catch(e) {
-    document.getElementById('saveMsg').textContent = '加载设置失败';
-  }
+    var d = await r.json();
+    document.getElementById('s_output_language').value = d.output_language || 'zh';
+  } catch(e) {}
 }
-
-async function saveSettings(e) {
-  e.preventDefault();
-  var btn = document.getElementById('saveBtn');
-  var msg = document.getElementById('saveMsg');
-  btn.disabled = true;
-  msg.textContent = '保存中…';
-  try {
-    var r = await fetch('/v1/settings', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        llm_provider: document.getElementById('s_llm_provider').value,
-        deepseek_api_key: document.getElementById('s_deepseek_api_key').value,
-        search_method: document.getElementById('s_search_method').value,
-        output_language: document.getElementById('s_output_language').value,
-      }),
-    });
-    if (r.ok) {
-      msg.textContent = '✓ 已保存';
-    } else {
-      msg.textContent = '保存失败';
-    }
-  } catch(e) {
-    msg.textContent = '保存失败: ' + e.message;
-  }
-  btn.disabled = false;
-  setTimeout(function() { msg.textContent = ''; }, 3000);
+function saveSettings() {
+  var lang = document.getElementById('s_output_language').value;
+  fetch('/v1/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      output_language: lang,
+      search_method: 'bm25',
+      llm_provider: 'deepseek',
+      deepseek_api_key: '',
+      deepseek_model: 'deepseek-v4-flash',
+      theme: 'light',
+    })
+  }).then(function(r) {
+    showToast(r.ok ? '已保存' : '保存失败');
+  });
 }
+document.getElementById('s_output_language').addEventListener('change', saveSettings);
 
+/* ===== 初始化 ===== */
 loadSettings();
+loadWatcherStatus();
+try {
+  var saved = localStorage.getItem('settingsSection') || 'watcher';
+  switchSection(saved);
+} catch(e) {}
 </script>
 {% endblock %}

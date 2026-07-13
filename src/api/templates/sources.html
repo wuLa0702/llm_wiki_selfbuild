@@ -2,74 +2,227 @@
 
 {% block title %}资料源 — LLM Wiki{% endblock %}
 
-{% block content %}
-<section class="page-header">
-  <h1>📂 资料源文件</h1>
-  <p class="text-secondary text-sm" id="summary">加载中…</p>
-</section>
+{% block head_extra %}
+<style>
+.sources-layout { display: flex; min-height: calc(100vh - 2rem); gap: 1px; }
 
-<div id="sourceList"></div>
-<div id="sentinel" class="sentinel" style="height:1px;"></div>
-<div id="loading" class="loading-state hidden">
-  <div class="spinner"></div>
-  <span>加载更多…</span>
+/* 左侧文件夹树 */
+.sources-tree-panel {
+  width: 300px; flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  background: var(--bg-tree);
+}
+.sources-tree-header {
+  padding: 0.75rem; border-bottom: 1px solid var(--border);
+  font-weight: 600; font-size: 0.85rem;
+  color: var(--text-primary);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.sources-tree-body { padding: 0.5rem 0; font-size: 0.82rem; }
+.sources-tree-item {
+  display: flex; align-items: center; gap: 0.3em;
+  padding: 0.25em 0.75rem; cursor: pointer;
+  color: var(--text-secondary); user-select: none;
+  transition: background 0.1s;
+}
+.sources-tree-item:hover { background: var(--bg-hover); }
+.sources-tree-item.active { color: var(--accent-blue); background: rgba(59,130,246,0.08); }
+.sources-tree-item .sources-icon { font-size: 0.9rem; flex-shrink: 0; }
+.sources-tree-item .sources-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sources-tree-item .sources-actions { display: none; gap: 0.2em; }
+.sources-tree-item:hover .sources-actions { display: flex; }
+.sources-tree-children { padding-left: 1rem; }
+.sources-tree-dir .chevron { font-size: 0.6rem; transition: transform 0.15s; }
+.sources-tree-dir .chevron.open { transform: rotate(90deg); }
+
+/* 右侧预览 */
+.sources-preview {
+  flex: 1; min-width: 0;
+  padding: 1.5rem 2rem; overflow-y: auto;
+}
+.sources-empty { text-align: center; padding: 4rem 2rem; color: var(--text-muted); }
+
+/* 操作按钮 */
+.sources-actions-row { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.btn-danger { background: none; color: var(--error); border-color: var(--error); }
+.btn-danger:hover { background: rgba(213,68,60,0.08); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sources-actions-row">
+  <button class="btn btn-sm btn-primary" onclick="document.getElementById('fileUploadInput').click()">📤 导入单个文件</button>
+  <button class="btn btn-sm btn-secondary" onclick="importFolder()">📁 导入文件夹</button>
+  <input type="file" id="fileUploadInput" style="display:none;" onchange="uploadFile(this)">
+  <span class="text-xs text-muted" style="align-self:center;">raw/sources/</span>
 </div>
-<div id="loading-done" class="empty-state hidden" style="padding:1rem;">
-  <p class="text-muted text-sm">— 已加载全部 —</p>
+
+<div class="sources-layout">
+  <!-- 文件夹树 -->
+  <aside class="sources-tree-panel">
+    <div class="sources-tree-header">
+      <span>📂 资料来源文件</span>
+    </div>
+    <div class="sources-tree-body" id="sources-tree">
+      <div class="loading-state" style="padding:1.5rem;">
+        <div class="spinner" style="width:18px;height:18px;"></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 预览区 -->
+  <div class="sources-preview" id="sources-preview">
+    <div class="sources-empty">
+      <div style="font-size:2.5rem; opacity:0.3; margin-bottom:1rem;">📂</div>
+      <p>从左侧选择文件查看详情</p>
+      <p class="text-sm text-muted">支持导入 Markdown、PDF、Word 等格式</p>
+    </div>
+  </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-let page = 1;
-let totalPages = 1;
-let loading = false;
+var _selectedPath = null;
 
-async function loadPage() {
-  if (loading || page > totalPages) return;
-  loading = true;
-  document.getElementById('loading').classList.remove('hidden');
-
+/* ===== 加载文件夹树 ===== */
+async function loadSourcesTree() {
+  var container = document.getElementById('sources-tree');
   try {
-    const res = await fetch('/v1/sources?page=' + page + '&per_page=50');
-    const data = await res.json();
-    totalPages = data.total_pages || 1;
-    document.getElementById('summary').textContent = '共 ' + data.total + ' 个源文件';
-
-    const list = document.getElementById('sourceList');
-    for (const s of data.sources || []) {
-      const item = document.createElement('div');
-      item.className = 'source-item';
-      item.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:0.6em 0.8em; border-bottom:1px solid var(--border); font-size:0.9rem;';
-      const sizeStr = s.size > 10240 ? (s.size / 1024).toFixed(1) + ' KB' : s.size + ' B';
-      item.innerHTML =
-        '<span class="source-name" style="flex:1; color:var(--accent); cursor:pointer; word-break:break-all;" onclick="window.location=\'/wiki/sources/' + s.path + '\'">' +
-        '{{ "&#128196;" }} ' + s.path + '</span>' +
-        '<span class="source-meta" style="flex-shrink:0; text-align:right; margin-left:1em;">' +
-        '<span class="source-size text-muted text-sm">' + sizeStr + '</span>' +
-        '<span class="source-date text-muted text-xs" style="margin-left:0.5em;">' + (s.modified || '') + '</span>' +
-        '</span>';
-      list.appendChild(item);
+    var r = await fetch('/v1/sources/tree');
+    var d = await r.json();
+    if (!d.tree || !d.tree.length) {
+      container.innerHTML = '<div class="empty-state" style="padding:1.5rem;"><p class="text-sm">暂无资料源文件</p></div>';
+      return;
     }
-    page++;
-  } catch (err) {
-    document.getElementById('loading').innerHTML = '<span>加载失败: ' + err.message + '</span>';
-  }
-  loading = false;
-  if (page > totalPages) {
-    document.getElementById('loading').classList.add('hidden');
-    document.getElementById('loading-done').classList.remove('hidden');
-  } else {
-    document.getElementById('loading').classList.add('hidden');
+    container.innerHTML = renderSourceTree(d.tree);
+  } catch(e) {
+    container.innerHTML = '<div class="error-state" style="padding:1rem;"><p>加载失败</p></div>';
   }
 }
 
-const sentinel = document.getElementById('sentinel');
-const observer = new IntersectionObserver(entries => {
-  if (entries[0].isIntersecting) loadPage();
-});
-observer.observe(sentinel);
+function renderSourceTree(tree) {
+  var html = '<ul style="list-style:none;padding:0;margin:0;">';
+  for (var i = 0; i < tree.length; i++) {
+    var item = tree[i];
+    if (item.type === 'directory') {
+      html += '<li class="sources-tree-item sources-tree-dir" onclick="event.stopPropagation(); toggleSourceDir(this);" data-path="' + item.path + '">';
+      html += '<span class="chevron">&#9654;</span> <span class="sources-icon">📁</span> ';
+      html += '<span class="sources-name">' + item.name + '</span>';
+      html += '<span class="sources-actions">';
+      html += '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteFolder(\'' + item.path + '\')" title="删除文件夹">🗑</button>';
+      html += '</span>';
+      html += '</li>';
+      html += '<li class="sources-tree-children hidden">' + renderSourceTree(item.children || []) + '</li>';
+    } else {
+      html += '<li class="sources-tree-item" onclick="selectSource(\'' + item.path + '\', this)" data-path="' + item.path + '">';
+      html += '<span class="sources-icon">📄</span> ';
+      html += '<span class="sources-name">' + item.name + '</span>';
+      html += '<span class="sources-actions">';
+      html += '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteFile(\'' + item.path + '\')" title="删除">🗑</button>';
+      html += '<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();extractFile(\'' + item.path + '\')" title="提取到Wiki">✨</button>';
+      html += '</span>';
+      html += '</li>';
+    }
+  }
+  html += '</ul>';
+  return html;
+}
 
-loadPage();
+function toggleSourceDir(el) {
+  var chevron = el.querySelector('.chevron');
+  var children = el.nextElementSibling;
+  if (chevron) chevron.classList.toggle('open');
+  if (children) children.classList.toggle('hidden');
+}
+
+/* ===== 选中文件 → 预览 ===== */
+async function selectSource(path, el) {
+  _selectedPath = path;
+  document.querySelectorAll('.sources-tree-item').forEach(function(e) { e.classList.remove('active'); });
+  el.classList.add('active');
+  var preview = document.getElementById('sources-preview');
+  preview.innerHTML = '<div class="loading-state"><div class="spinner" style="width:18px;height:18px;"></div></div>';
+
+  try {
+    var r = await fetch('/v1/file-content?path=' + encodeURIComponent(path));
+    var d = await r.json();
+    if (d.content !== undefined) {
+      var content = d.content;
+      var sizeStr = d.size > 10240 ? (d.size/1024).toFixed(1) + ' KB' : d.size + ' B';
+      var html = '<h2 style="border:none;margin-top:0;">' + path.split('/').pop() + '</h2>';
+      html += '<div class="flex gap-sm" style="margin-bottom:1rem;">';
+      html += '<button class="btn btn-sm btn-secondary" onclick="deleteFile(\'' + path + '\')">🗑 删除</button>';
+      html += '<button class="btn btn-sm btn-secondary" onclick="extractFile(\'' + path + '\')">✨ 提取到 Wiki</button>';
+      html += '<span class="text-xs text-muted" style="align-self:center;">' + sizeStr + '</span></div>';
+      if (path.endsWith('.md') && typeof marked !== 'undefined') {
+        html += '<div class="page-content">' + marked.parse(content) + '</div>';
+      } else {
+        html += '<pre style="white-space:pre-wrap;word-break:break-word;font-size:0.82rem;line-height:1.5;background:var(--bg-surface);padding:1rem;border-radius:var(--radius-md);">' + escapeHtml(content.substring(0, 5000)) + '</pre>';
+      }
+      preview.innerHTML = html;
+      // 代码高亮
+      setTimeout(function() {
+        document.querySelectorAll('pre code').forEach(function(b) { if (typeof hljs !== 'undefined') hljs.highlightElement(b); });
+      }, 50);
+    }
+  } catch(e) {
+    preview.innerHTML = '<div class="error-state"><p>加载失败: ' + e.message + '</p></div>';
+  }
+}
+
+/* ===== 操作 ===== */
+async function deleteFile(path) {
+  if (!confirm('删除此文件？将同时删除关联的 Wiki 页面。')) return;
+  var r = await fetch('/v1/sources/' + encodeURIComponent(path), { method: 'DELETE' });
+  var d = await r.json();
+  if (d.status === 'deleted') {
+    document.getElementById('sources-preview').innerHTML = '<div class="sources-empty"><p>文件已删除</p><p class="text-sm text-muted">Wiki 页面级联删除: ' + d.wiki_pages_deleted + '</p></div>';
+    loadSourcesTree();
+  } else {
+    alert('删除失败: ' + (d.error || '未知错误'));
+  }
+}
+
+async function deleteFolder(path) {
+  if (!confirm('确定删除此文件夹及其所有子文件？将级联删除关联的 Wiki 页面。')) return;
+  var r = await fetch('/v1/sources/folder/' + encodeURIComponent(path), { method: 'DELETE' });
+  var d = await r.json();
+  if (d.status === 'deleted') {
+    document.getElementById('sources-preview').innerHTML = '<div class="sources-empty"><p>文件夹已删除</p><p class="text-sm text-muted">文件: ' + d.files_deleted + '，Wiki 页面: ' + d.wiki_pages_deleted + '</p></div>';
+    loadSourcesTree();
+  } else {
+    alert('删除失败: ' + (d.error || '未知错误'));
+  }
+}
+
+async function extractFile(path) {
+  var preview = document.getElementById('sources-preview');
+  preview.innerHTML = '<div class="loading-state"><div class="spinner"></div><span>Agent 提取中…</span></div>';
+  try {
+    var r = await fetch('/v1/sources/extract-to-wiki', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ source_path: path }) });
+    var d = await r.json();
+    if (d.status === 'ok') {
+      preview.innerHTML = '<div class="empty-state"><div style="font-size:1.5rem;">✅</div><p>提取完成</p><p class="text-sm text-muted">创建: ' + (d.pages_created?.length || 0) + '，更新: ' + (d.pages_updated?.length || 0) + '</p><ul class="text-sm">' + (d.pages_created || []).map(function(p) { return '<li><a href="/wiki/' + p + '">' + p + '</a></li>'; }).join('') + '</ul></div>';
+      loadSourcesTree();
+    } else {
+      preview.innerHTML = '<div class="error-state"><p>' + (d.error || '提取失败') + '</p></div>';
+    }
+  } catch(e) {
+    preview.innerHTML = '<div class="error-state"><p>' + e.message + '</p></div>';
+  }
+}
+
+function importFolder() {
+  var folder = prompt('请输入文件夹路径（相对于 raw/sources/）：', '');
+  if (!folder) return;
+  fetch('/v1/ingest/folder', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({folder_path: folder, recurse: true, mode: 'async'})})
+    .then(function(r) { return r.json(); })
+    .then(function(d) { showToast('导入中: ' + (d.total || 0) + ' 个文件'); loadSourcesTree(); })
+    .catch(function() { showToast('导入失败'); });
+}
+
+loadSourcesTree();
 </script>
 {% endblock %}
