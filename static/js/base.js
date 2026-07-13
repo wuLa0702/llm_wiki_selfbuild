@@ -274,21 +274,25 @@ function toggleFileSection(el) {
 }
 
 function openFile(path) {
-  // 读取文件内容并加载到主内容区
   fetch("/v1/file-content?path=" + encodeURIComponent(path))
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (data.content !== undefined) {
-        // 在主内容区展示
         var main = document.querySelector(".main-content");
-        if (main) {
-          var ext = path.split(".").pop();
-          if (ext === "md") {
-            // Markdown 文件：简单渲染
-            main.innerHTML = '<div class="breadcrumb"><a href="/wiki">首页</a><span class="breadcrumb-separator">/</span><span>' + path + '</span></div><div style="white-space:pre-wrap; font-family:monospace; font-size:0.85rem; line-height:1.6; background:var(--bg-surface); padding:1rem; border-radius:var(--radius-md);">' + escapeHtml(data.content) + '</div>';
-          } else {
-            main.innerHTML = '<div class="breadcrumb"><a href="/wiki">首页</a><span class="breadcrumb-separator">/</span><span>' + path + '</span></div><pre style="white-space:pre-wrap;">' + escapeHtml(data.content) + '</pre>';
-          }
+        if (!main) return;
+        var breadcrumb = '<nav class="breadcrumb"><a href="/wiki">首页</a><span class="breadcrumb-separator">/</span><span>' + escapeHtml(path) + '</span></nav>';
+        if (path.endsWith(".md") && typeof marked !== 'undefined') {
+          // 用 marked.js 渲染 markdown
+          var html = marked.parse(data.content);
+          main.innerHTML = breadcrumb + '<div class="page-content">' + html + '</div>';
+          // 代码高亮
+          setTimeout(function() {
+            document.querySelectorAll('pre code').forEach(function(b) {
+              if (typeof hljs !== 'undefined') hljs.highlightElement(b);
+            });
+          }, 50);
+        } else {
+          main.innerHTML = breadcrumb + '<pre style="white-space:pre-wrap; word-break:break-word; font-size:0.85rem; line-height:1.5; background:var(--bg-surface); padding:1rem; border-radius:var(--radius-md);">' + escapeHtml(data.content) + '</pre>';
         }
       } else {
         showToast("加载失败");
@@ -451,4 +455,8 @@ document.addEventListener("htmx:afterSwap", function(evt) {
     });
   }
   reinitMainContent();
+  // 侧栏也被 oob 替换了，重新填充知识树
+  if (document.getElementById("tree-content")) {
+    loadTree();
+  }
 });

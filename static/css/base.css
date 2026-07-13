@@ -69,8 +69,9 @@ body {
 .app-layout { display: flex; min-height: 100vh; }
 .icon-bar { width: var(--icon-bar-width); flex-shrink: 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 .tree-panel { width: var(--sidebar-width); flex-shrink: 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; border-right: 1px solid var(--border); }
+#sidebar-zone:empty { display: none; }
 .main-area { flex: 1; min-width: 0; overflow-y: auto; }
-.main-content { max-width: 920px; margin: 0 auto; padding: 2rem; }
+.main-content { padding: 2rem 2.5rem 2rem 3rem; }
 
 /* ========================= 排版 ========================= */
 h1, h2, h3, h4, h5, h6 { font-weight: 600; line-height: 1.4; margin-top: 1.5em; margin-bottom: 0.5em; }

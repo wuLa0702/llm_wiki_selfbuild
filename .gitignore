@@ -227,3 +227,9 @@ wiki.db
 /notes/
 .models/
 /chroma_db/
+dist-llm-wiki/
+sandbox/
+dist/
+run.py
+wiki.spec
+user_settings.json

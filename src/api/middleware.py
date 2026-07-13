@@ -19,11 +19,15 @@ def setup_middleware(app: FastAPI) -> None:
         allow_headers=["*"],
     )
 
-    # 请求追踪 ID
+    # 请求追踪 ID + 禁用缓存
     @app.middleware("http")
     async def add_request_id(request, call_next):
         request_id = request.headers.get("X-Request-ID", uuid.uuid4().hex[:12])
         request.state.request_id = request_id
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
+        # 禁用所有缓存，确保始终加载最新内容
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
         return response
