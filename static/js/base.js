@@ -394,6 +394,12 @@ document.addEventListener("DOMContentLoaded", function() {
   pollActivity();
   setInterval(pollActivity, 10000);
 
+  // 初始加载也检查空侧栏
+  var sz = document.getElementById("sidebar-zone");
+  if (sz && sz.innerHTML.trim() === "") {
+    sz.style.display = "none";
+  }
+
   // 恢复上次的 tab
   try {
     var savedTab = localStorage.getItem("wikiTreeTab") || "knowledge";

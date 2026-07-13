@@ -21,7 +21,9 @@
 <body>
   <div class="app-layout">
     {% include "components/icon-sidebar.html" %}
-    {% include "components/tree-sidebar.html" %}
+    {% block tree_panel %}
+      {% include "components/tree-sidebar.html" %}
+    {% endblock %}
     <main class="main-area">
       <div class="main-content">
         {% block content %}{% endblock %}

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}设置 — LLM Wiki{% endblock %}
+{% block tree_panel %}{% endblock %}
 
 {% block content %}
 <section class="page-header">
@@ -51,6 +52,21 @@
           <option value="zh">中文</option>
           <option value="en">English</option>
         </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- 外观 -->
+  <div class="card">
+    <div class="card-header">🎨 外观</div>
+    <div class="card-body" style="display:grid; gap:0.75rem;">
+      <div>
+        <label class="text-sm text-secondary">主题</label>
+        <div style="margin-top:0.3rem;">
+          <button class="btn btn-sm btn-secondary" onclick="toggleTheme()" id="settingsThemeBtn">
+            <span id="settingsThemeIcon">🌙</span> 切换暗色/亮色
+          </button>
+        </div>
       </div>
     </div>
   </div>
