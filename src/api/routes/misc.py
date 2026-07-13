@@ -163,6 +163,25 @@ async def watcher_status():
     return WatcherStatusResponse(running=True, detail=watcher.status())
 
 
+class WatcherConfigRequest(BaseModel):
+    """Watcher 配置请求"""
+    poll_interval: int = 10
+    sources_dir: str = "raw/sources"
+
+
+@router.post("/v1/watcher/config")
+async def watcher_config(body: WatcherConfigRequest):
+    """配置 Source 监听参数"""
+    watcher = get_watcher()
+    if watcher is None:
+        return JSONResponse(status_code=400, content={"error": "Watcher 未启动，请先 POST /v1/watcher/start"})
+    if watcher._running:
+        return JSONResponse(status_code=400, content={"error": "请先停止 Watcher 再修改配置"})
+    watcher.poll_interval = body.poll_interval
+    watcher.sources_dir = body.sources_dir
+    return {"status": "ok", "poll_interval": watcher.poll_interval, "sources_dir": watcher.sources_dir}
+
+
 # ------------------------------------------------------------------
 # Privacy Rules
 # ------------------------------------------------------------------
