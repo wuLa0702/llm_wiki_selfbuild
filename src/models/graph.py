@@ -8,6 +8,7 @@ class GraphStats(BaseModel):
     total_edges: int = 0
     avg_degree: float = 0.0
     filtered_from: int | None = None
+    filtered_nodes_from: int | None = None
 
 
 class GraphResponse(BaseModel):
