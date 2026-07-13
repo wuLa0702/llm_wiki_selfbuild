@@ -16,24 +16,42 @@
   <link rel="stylesheet" href="/static/css/components.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   {% block head_extra %}{% endblock %}
 </head>
 <body>
-  <div class="app-layout">
-    {% include "components/icon-sidebar.html" %}
-    {% block tree_panel %}
-      {% include "components/tree-sidebar.html" %}
-    {% endblock %}
-    <main class="main-area">
-      <div class="main-content">
-        {% block content %}{% endblock %}
-      </div>
-    </main>
-  </div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-  <script src="/static/js/base.js"></script>
-  <script src="/static/js/search.js"></script>
-  <script src="/static/js/wikilinks.js"></script>
-  {% block scripts %}{% endblock %}
+
+{# 侧栏内容 — 子页面可覆盖。默认：树形面板 #}
+{% block sidebar_content %}
+  {% include "components/tree-sidebar.html" %}
+{% endblock %}
+
+{# 主内容 — 子页面必覆盖 #}
+{% block content %}{% endblock %}
+
+{% set is_hx = request and request.headers.get("hx-request") %}
+
+{% if not is_hx %}
+{# ====== 全页加载：完整布局 ====== #}
+<div class="app-layout">
+  {% include "components/icon-sidebar.html" %}
+  <aside id="sidebar-zone" class="tree-panel">{{ self.sidebar_content() }}</aside>
+  <main class="main-area">
+    <div class="main-content" id="main-zone">{{ self.content() }}</div>
+  </main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="/static/js/base.js"></script>
+<script src="/static/js/search.js"></script>
+<script src="/static/js/wikilinks.js"></script>
+
+{% else %}
+{# ====== htmx 导航：双 zone oob 替换 ====== #}
+<div id="sidebar-zone" hx-swap-oob="true">{{ self.sidebar_content() }}</div>
+<div id="main-zone">{{ self.content() }}</div>
+
+{% endif %}
+
+{% block scripts %}{% endblock %}
 </body>
 </html>

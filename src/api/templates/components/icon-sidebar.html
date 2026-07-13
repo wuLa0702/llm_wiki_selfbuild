@@ -1,29 +1,29 @@
 <aside class="icon-bar">
-  <a href="/wiki" class="icon-bar-logo" title="LLM Wiki"
-     hx-get="/wiki" hx-select=".main-content" hx-target=".main-content" hx-swap="innerHTML" hx-push-url="true">LLM Wiki</a>
+  <button class="icon-bar-logo" hx-get="/wiki" hx-target="#main-zone" hx-swap="innerHTML" hx-push-url="true"
+     onclick="setActiveIcon(this)" data-path="/wiki">LLM Wiki</button>
   <div class="icon-bar-divider"></div>
 
-  <button class="icon-bar-item" hx-get="/wiki/query" hx-select=".main-content" hx-target=".main-content" hx-swap="innerHTML" hx-push-url="true"
+  <button class="icon-bar-item" hx-get="/wiki/query" hx-target="#main-zone" hx-swap="innerHTML" hx-push-url="true"
      onclick="setActiveIcon(this)" data-path="/wiki/query">
     <span class="icon-bar-icon">💬</span>
     <span class="icon-bar-label">问答</span>
   </button>
-  <button class="icon-bar-item" hx-get="/wiki" hx-select=".main-content" hx-target=".main-content" hx-swap="innerHTML" hx-push-url="true"
+  <button class="icon-bar-item" hx-get="/wiki" hx-target="#main-zone" hx-swap="innerHTML" hx-push-url="true"
      onclick="setActiveIcon(this)" data-path="/wiki">
     <span class="icon-bar-icon">📄</span>
     <span class="icon-bar-label">首页</span>
   </button>
-  <button class="icon-bar-item" hx-get="/wiki/sources" hx-select=".main-content" hx-target=".main-content" hx-swap="innerHTML" hx-push-url="true"
+  <button class="icon-bar-item" hx-get="/wiki/sources" hx-target="#main-zone" hx-swap="innerHTML" hx-push-url="true"
      onclick="setActiveIcon(this)" data-path="/wiki/sources">
     <span class="icon-bar-icon">📁</span>
     <span class="icon-bar-label">资料源</span>
   </button>
-  <button class="icon-bar-item" hx-get="/wiki/graph" hx-select=".main-content" hx-target=".main-content" hx-swap="innerHTML" hx-push-url="true"
+  <button class="icon-bar-item" hx-get="/wiki/graph" hx-target="#main-zone" hx-swap="innerHTML" hx-push-url="true"
      onclick="setActiveIcon(this)" data-path="/wiki/graph">
     <span class="icon-bar-icon">🕸️</span>
     <span class="icon-bar-label">图谱</span>
   </button>
-  <button class="icon-bar-item" hx-get="/wiki/lint" hx-select=".main-content" hx-target=".main-content" hx-swap="innerHTML" hx-push-url="true"
+  <button class="icon-bar-item" hx-get="/wiki/lint" hx-target="#main-zone" hx-swap="innerHTML" hx-push-url="true"
      onclick="setActiveIcon(this)" data-path="/wiki/lint">
     <span class="icon-bar-icon">✅</span>
     <span class="icon-bar-label">健康</span>
@@ -32,7 +32,7 @@
   <div class="icon-bar-spacer"></div>
 
   <div class="icon-bar-bottom">
-    <button class="icon-bar-item" hx-get="/wiki/settings" hx-select=".main-content" hx-target=".main-content" hx-swap="innerHTML" hx-push-url="true"
+    <button class="icon-bar-item" hx-get="/wiki/settings" hx-target="#main-zone" hx-swap="innerHTML" hx-push-url="true"
        onclick="setActiveIcon(this)" data-path="/wiki/settings">
       <span class="icon-bar-icon">⚙️</span>
       <span class="icon-bar-label">设置</span>
