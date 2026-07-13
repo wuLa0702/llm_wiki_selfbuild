@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from src.app_state import init_services, shutdown_services
 from src.api.errors import global_exception_handler
 from src.api.middleware import setup_middleware
-from src.api.routes import auth, graph, ingest, lint, misc, pages, purpose, wiki
+from src.api.routes import auth, graph, ingest, lint, misc, pages, purpose, sources, wiki
 
 # 保持向后兼容 — 测试仍 import 这些符号
 from src.api.helpers import (_check_page_access, _convert_wikilinks,
@@ -43,6 +43,7 @@ app.include_router(misc.router)
 app.include_router(pages.router)
 app.include_router(wiki.router)
 app.include_router(purpose.router)
+app.include_router(sources.router)
 
 logger.info("LLM Wiki API 启动 | version=0.1.0")
 
