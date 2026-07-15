@@ -209,14 +209,31 @@ class WikiCompiler:
 
         return "\n".join(lines)
 
+    def _get_project_root(self) -> str:
+        """返回项目根目录的绝对路径"""
+        import os as _os
+        return _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
+
     def _get_purpose_context(self) -> str:
         """读取 purpose.md 作为知识库方向上下文"""
         import os as _os
-        purpose_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "purpose.md")
+        purpose_path = _os.path.join(self._get_project_root(), "purpose.md")
         if not _os.path.isfile(purpose_path):
             return ""
         try:
             with open(purpose_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    def _get_schema_context(self) -> str:
+        """读取 wiki/wiki-schema.md 作为页面结构规范"""
+        import os as _os
+        schema_path = _os.path.join(self._get_project_root(), "wiki", "wiki-schema.md")
+        if not _os.path.isfile(schema_path):
+            return ""
+        try:
+            with open(schema_path, "r", encoding="utf-8") as f:
                 return f.read()
         except OSError:
             return ""
@@ -500,13 +517,16 @@ class WikiCompiler:
 
         index_context = self._index_summary()
         purpose_context = self._get_purpose_context()
+        schema_context = self._get_schema_context()
 
-        # Step 1 — 分析（注入 purpose.md + folder_context + 语言指令）
+        # Step 1 — 分析（注入 purpose.md + wiki-schema.md + folder_context + 语言指令）
         purpose_section = f"知识库目标：\n{purpose_context}\n\n" if purpose_context else ""
+        schema_section = f"Wiki 页面规范（需遵守的页面类型和格式）：\n{schema_context}\n\n" if schema_context else ""
         folder_section = f"文件夹上下文：{folder_context}\n\n" if folder_context else ""
         lang_section = self._get_lang_instruction()
         step1_prompt = (
             f"{purpose_section}"
+            f"{schema_section}"
             f"{folder_section}"
             f"{lang_section}\n\n"
             f"现有 Wiki 索引:\n\n{index_context}\n\n"
