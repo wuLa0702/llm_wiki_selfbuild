@@ -11,7 +11,7 @@ class ValidatorError(Exception):
 class WikiValidator:
     """Wiki 页面内容校验器"""
 
-    VALID_TYPES = {"entity", "concept", "source", "query", "synthesis"}
+    VALID_TYPES = {"entity", "concept", "source", "query", "comparison", "synthesis", "overview"}
     FORBIDDEN_PATTERNS = [
         r"<script[^>]*>.*?</script>",
         r"<iframe[^>]*>.*?</iframe>",
@@ -28,8 +28,8 @@ class WikiValidator:
         校验页面路径
 
         允许规则：
-          - 根目录文件: index.md, log.md, overview.md
-          - 子目录文件: entities/xxx.md, concepts/xxx.md, sources/xxx.md, queries/xxx.md
+          - 根目录文件: index.md, log.md, overview.md, purpose.md
+          - 子目录文件: entities/, concepts/, sources/, queries/, comparisons/, synthesis/
 
         Raises:
             ValidatorError: 路径为空、含 ../、不在允许目录下
@@ -46,10 +46,13 @@ class WikiValidator:
                 raise ValidatorError(f"Path must end with .md: {path}")
             return
 
-        allowed_prefixes = ("entities/", "concepts/", "sources/", "queries/")
+        allowed_prefixes = (
+            "entities/", "concepts/", "sources/", "queries/",
+            "comparisons/", "synthesis/",
+        )
         if not any(path.startswith(p) for p in allowed_prefixes):
             raise ValidatorError(
-                f"Path must be under entities/ concepts/ sources/ or queries/: {path}"
+                f"Path must be under entities/ concepts/ sources/ queries/ comparisons/ or synthesis/: {path}"
             )
 
         if not path.endswith(".md"):

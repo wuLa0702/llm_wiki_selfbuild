@@ -27,6 +27,8 @@ SYSTEM_PROMPT_INGEST = """你是一个 Wiki Compiler Agent。你的任务是将�
 - 实体页面放在 entities/ 目录下，如 entities/python.md
 - 概念页面放在 concepts/ 目录下，如 concepts/machine_learning.md
 - 来源页面放在 sources/ 目录下
+- 对比分析放在 comparisons/ 目录下
+- 综合综述放在 synthesis/ 目录下
 - **标题优先使用中文**：中文源文件 → 中文标题 + 中文文件名（如 `entities/注意力机制.md`）
 - 英文专业术语保留原文（如 `GPT`、`Transformer`），不强行翻译
 
@@ -97,7 +99,7 @@ SYSTEM_PROMPT_INGEST_GENERATE = """你是一个 Wiki 页面生成器（Wiki Page
 ```yaml
 ---
 title: "页面标题"
-type: concept  # entity / concept / source / query
+type: concept  # entity / concept / source / query / comparison / synthesis / overview
 created: YYYY-MM-DD
 tags: [tag1, tag2]
 sources:
@@ -112,6 +114,17 @@ confidence: high  # high / medium / low
 - **medium** — 基于原文的合理推断，有上下文支撑
 - **low** — LLM 背景知识补充，原文未直接提及
 
+### 资料类页面（type: source）额外字段
+
+当生成 type 为 source 的页面时，frontmatter 必须额外包含：
+
+```yaml
+authors: [作者名1, 作者名2]
+year: 2024
+url: "https://..."
+venue: "会议/期刊名称"
+```
+
 ## 输出格式
 
 ---PAGE:<wiki路径>---
@@ -125,7 +138,7 @@ confidence: high  # high / medium / low
 ## 页数要求
 
 1. 每个页面至少包含 **2 个 `[[wikilinks]]`** 出站链接，连接到相关页面
-2. 路径规范：entity 放 entities/，concept 放 concepts/，source 放 sources/
+2. 路径规范：entity 放 entities/，concept 放 concepts/，source 放 sources/，comparison 放 comparisons/，synthesis 放 synthesis/
 3. 正文 1-3 段，简洁但信息完整
 
 ## 路径规范
@@ -133,6 +146,8 @@ confidence: high  # high / medium / low
 - 实体页面放在 entities/ 目录下，如 entities/python.md
 - 概念页面放在 concepts/ 目录下，如 concepts/machine_learning.md
 - 来源页面放在 sources/ 目录下
+- 对比分析放在 comparisons/ 目录下
+- 综合综述放在 synthesis/ 目录下
 - **标题优先使用中文**：中文源文件 → 中文标题 + 中文文件名（如 `entities/注意力机制.md`）
 - 英文专业术语保留原文（如 `GPT`、`Transformer`），不强行翻译
 """

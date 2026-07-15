@@ -112,9 +112,22 @@ class WikiCompiler:
         return {k: v for k, v in summary.items() if v > 0}
 
     def _guess_type(self, path: str) -> str:
-        for t in ("entity", "concept", "source", "query"):
-            if path.startswith(t) or path.startswith(f"{t}s/"):
-                return t
+        prefix_map = {
+            "entity": "entity", "entities/": "entity",
+            "concept": "concept", "concepts/": "concept",
+            "source": "source", "sources/": "source",
+            "query": "query", "queries/": "query",
+            "comparison": "comparison", "comparisons/": "comparison",
+            "synthesis": "synthesis", "synthesis/": "synthesis",
+        }
+        for prefix, type_ in prefix_map.items():
+            if path.startswith(prefix):
+                return type_
+        # root-level files without path prefix
+        root_type_map = {"overview.md": "overview", "purpose.md": "overview"}
+        filename = path.rsplit("/", 1)[-1]
+        if filename in root_type_map:
+            return root_type_map[filename]
         return "entity"
 
     @staticmethod

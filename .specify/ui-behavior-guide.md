@@ -158,7 +158,21 @@
 
 ---
 
-## 六、文件组织
+## 六、关键经验（多次踩坑，写入规范）
+
+1. **主内容区左右间距绝对不能去除**。`.main-content` 的基础间距是 `padding: 2rem 2.5rem 2rem 3rem`。即使页面需要全高或特殊布局，最低保留 `padding: 0 1.5rem`（左右各留 1.5rem）。query 页和 graph 页曾多次被设成 `padding: 0`，导致内容贴边——已修正，禁止再犯。
+
+2. **block 块只定义一次**。Jinja2 的 `{% block %}` 既是定义也是渲染，放在 body 顶头会被渲染成 stray 元素。只在下游位置（if/else 分支内的实际 DOM 位置）定义。
+
+3. **颜色不硬编码**。页面内嵌 `<style>` 中需要颜色时，用 `var(--xxx)`，不写死 hex。
+
+4. **新增页面遵循三区模型**。声明 `sidebar_content` + `content`，不自己造布局容器。
+
+5. **`<script type="module">` 不能 appendChild 后立即 remove**。module 脚本异步执行（类似 defer），`createElement → appendChild` 后浏览器才开始 fetch import 的 CDN 资源。如果在同一 tick 内 `removeChild`，脚本还没执行就被杀掉了。正确做法：`<script>`（普通同步脚本）执行完可移除；`<script type="module">` 留在 DOM 中不删。
+
+---
+
+## 七、文件组织
 
 ```
 src/api/templates/
