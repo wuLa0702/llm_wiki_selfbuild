@@ -94,8 +94,8 @@ class LLMAdapter:
             model=model,
             api_key=api_key,
             base_url=base_url,
-            timeout=15,
-            max_retries=1,
+            timeout=120,
+            max_retries=0,
         )
 
         logger.info(
