@@ -6,6 +6,7 @@
   <div class="settings-menu-item active" data-section="watcher" onclick="switchSection('watcher')">⚡ 定时导入</div>
   <div class="settings-menu-item" data-section="output" onclick="switchSection('output')">🎨 输出偏好</div>
   <div class="settings-menu-item" data-section="ui" onclick="switchSection('ui')">🖥️ 界面</div>
+  <div class="settings-menu-item" data-section="maintenance" onclick="switchSection('maintenance')">⚙️ 维护</div>
   <div class="settings-menu-item" data-section="changelog" onclick="switchSection('changelog')">📋 更新日志</div>
   <div class="settings-menu-item" data-section="about" onclick="switchSection('about')">ℹ️ 关于</div>
 </nav>
@@ -89,6 +90,21 @@
                 <span id="settingsThemeIcon">🌙</span> 切换暗色/亮色
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 维护 -->
+    <div id="sec-maintenance" class="settings-section">
+      <h2 style="border:none; margin-top:0;">⚙️ 维护</h2>
+      <div class="card">
+        <div class="card-header">重置初始化</div>
+        <div class="card-body">
+          <p class="text-sm text-secondary">清空所有 wiki 页面、数据库和原始文件，重新生成模板。</p>
+          <div style="margin-top:0.75rem;">
+            <button class="btn btn-sm btn-primary" style="background:var(--error);border-color:var(--error);" onclick="confirmReset()">⚠️ 重置初始化</button>
+            <span id="resetMsg" class="text-sm text-muted" style="margin-left:0.5rem;"></span>
           </div>
         </div>
       </div>
@@ -193,6 +209,33 @@ function saveSettings() {
 document.getElementById('s_output_language').addEventListener('change', saveSettings);
 
 /* ===== 初始化 ===== */
+function confirmReset() {
+  if (!confirm('确定要重置初始化吗？此操作将清空所有 Wiki 页面、数据库和原始文件。')) return;
+  if (!confirm('再次确认：所有数据将被永久删除。输入 "确认" 继续。')) return;
+  var btn = document.querySelector('#sec-maintenance .btn');
+  var msg = document.getElementById('resetMsg');
+  btn.disabled = true;
+  btn.textContent = '重置中…';
+  msg.textContent = '请稍候…';
+  fetch('/v1/system/reset', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.status === 'ok') {
+        msg.textContent = '✅ 已重置';
+        btn.textContent = '✅ 已完成';
+      } else {
+        msg.textContent = '❌ ' + (d.message || '失败');
+        btn.disabled = false;
+        btn.textContent = '⚠️ 重置初始化';
+      }
+    })
+    .catch(function(e) {
+      msg.textContent = '❌ ' + e.message;
+      btn.disabled = false;
+      btn.textContent = '⚠️ 重置初始化';
+    });
+}
+
 loadSettings();
 loadWatcherStatus();
 try {
