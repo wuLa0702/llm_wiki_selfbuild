@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from src.app_state import get_ingest_queue, get_task_queue
-from src.models.common import FolderImportResponse, QueueActionResponse, QueueProgressResponse
+from src.models.common import FolderImportAsyncResponse, FolderImportResponse, QueueActionResponse, QueueProgressResponse
 from src.models.ingest import IngestRequest, IngestResponse
 from src.core.compiler import CompilerError, WikiCompiler
 from src.llm.adapter import LLMError
@@ -75,7 +75,7 @@ async def ingest_queue_retry(job_id: str):
     return QueueActionResponse(status="ok" if ok else "not_found", job_id=job_id)
 
 
-@router.post("/v1/ingest/folder", response_model=FolderImportResponse)
+@router.post("/v1/ingest/folder")
 async def ingest_folder(request: Request):
     """批量导入文件夹
 
@@ -97,7 +97,9 @@ async def ingest_folder(request: Request):
     importer = FolderImporter()
 
     if mode == "async":
-        return importer.import_folder_async(folder_path, get_ingest_queue(), recurse=recurse)
+        # async 模式返回 enqueued 而非 success/created
+        result = importer.import_folder_async(folder_path, get_ingest_queue(), recurse=recurse)
+        return JSONResponse(content=result)
     else:
         compiler = WikiCompiler(task_queue=get_task_queue())
         return importer.import_folder(folder_path, recurse=recurse, compiler=compiler)
