@@ -3,6 +3,7 @@ import logging
 import os
 from pathlib import Path
 
+import frontmatter as fm
 import markdown
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -172,8 +173,23 @@ async def wiki_page(page_path: str, request: Request):
         )
 
     page_meta = repo.get_page(page_path)
+
+    # 剥离 YAML frontmatter，只渲染正文
+    try:
+        post = fm.loads(content)
+        content_body = post.content
+        fm_data = dict(post.metadata) if hasattr(post, 'metadata') else {}
+        if fm_data:
+            if page_meta is None:
+                page_meta = {}
+            if fm_data.get("title") and not page_meta.get("title"):
+                page_meta["title"] = fm_data["title"]
+    except Exception:
+        content_body = content
+        fm_data = {}
+
     citations = _group_citations(page_meta.get("links", [])) if page_meta else {}
-    linked = _convert_wikilinks(content, existing_pages)
+    linked = _convert_wikilinks(content_body, existing_pages)
     html_body = markdown.markdown(linked, extensions=["extra", "fenced_code"])
 
     parts = page_path.replace(".md", "").split("/")
