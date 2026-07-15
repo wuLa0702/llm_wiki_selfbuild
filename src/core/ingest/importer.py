@@ -93,12 +93,18 @@ class FolderImporter:
                 errors.append({"file": source_path, "error": str(exc)})
                 logger.error("文件夹导入失败 | file=%s error=%s", source_path, exc)
 
+        # 导入后自动修复裸名 wikilink → 完整路径
+        from src.core.lint import auto_fix_wikilinks
+        fix_result = auto_fix_wikilinks()
+        if fix_result.get("fixed", 0) > 0:
+            logger.info("自动修复 wikilinks | fixed=%d unfixable=%d", fix_result["fixed"], fix_result.get("unfixable", 0))
+
         logger.info(
             "文件夹导入完成 | folder=%s total=%d success=%d skipped=%d failed=%d created=%d",
             folder_name, total, success, skipped, failed, pages_created,
         )
 
-        return {
+        result = {
             "total": total,
             "success": success,
             "skipped": skipped,
@@ -107,7 +113,10 @@ class FolderImporter:
             "pages_updated": pages_updated,
             "errors": errors,
             "folder_name": folder_name,
+            "wikilinks_fixed": fix_result.get("fixed", 0),
+            "wikilinks_unfixable": fix_result.get("unfixable", 0),
         }
+        return result
 
     # ------------------------------------------------------------------
     # 队列导入（异步）

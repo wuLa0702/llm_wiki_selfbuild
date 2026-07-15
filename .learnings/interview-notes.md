@@ -122,3 +122,29 @@ schema 改 → 只对新 ingest 生效。已有 24 个页面保持原格式不�
 ### 涉及文件
 
 `src/api/routes/ingest.py:78`
+
+---
+
+## 2026-07-15：断链修复——三层策略（建议修正→存根→补充）
+
+### 背景
+
+原有 `POST /v1/lint/fix` 直接删除所有断链 wikilink，误杀有效链接。参考项目使用模糊匹配、存根创建、孤页补反链的三层修复，而非删除。
+
+### 决策
+
+- **格式修复（裸名→完整路径）**：自动——`auto_fix_wikilinks()` 在导入后同步执行
+- **模糊修正 + 存根 + 缺链补充**：手动——`POST /v1/lint/fix`
+- 用户调用，而非自动，参考项目的做法
+
+### 策略详情
+
+策略1（建议修正）：difflib.SequenceMatcher 模糊匹配(threshold=0.5)，匹配到已有页面则重写 `[[target]]`。  
+策略2（创建存根）：无匹配时为断链创建 type:query 占位页，保留原链接。  
+策略3（补充缺失）：入链=0 的页面，在同类最相关页面尾部追加 wikilink。
+
+### 代码
+
+- `linter.py`：`auto_fix_wikilinks()`, `suggest_correction()`, `create_stub()`, `fill_missing_links()`
+- `lint.py`：`POST /v1/lint/fix` 返回 `{rewritten, stubs, filled}`
+- `importer.py`：导入完成自动调 `auto_fix_wikilinks()`，返回 `wikilinks_fixed`

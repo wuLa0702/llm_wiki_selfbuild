@@ -503,3 +503,102 @@ def mark_lint_cache_dirty() -> None:
     global _LINT_CACHE_DIRTY
     _LINT_CACHE_DIRTY = True
     logger.debug("语义 Lint 缓存已置脏")
+
+
+def auto_fix_wikilinks(wiki_dir: str = "wiki") -> dict:
+    """导入后自动修复裸名 wikilink → 完整路径。"""
+    import re, os
+    name_to_path = {}
+    for root, dirs, fnames in os.walk(wiki_dir):
+        for f in fnames:
+            if not f.endswith('.md'): continue
+            full = os.path.relpath(os.path.join(root, f), wiki_dir).replace("\\", "/")
+            bare = f.replace('.md', '')
+            name_to_path[bare] = full
+            name_to_path[full.replace('.md', '')] = full
+    fixed = 0; unfixable = 0
+    pat = re.compile(r'\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]')
+    for root, dirs, fnames in os.walk(wiki_dir):
+        for f in fnames:
+            if not f.endswith('.md'): continue
+            fp = os.path.join(root, f)
+            content = open(fp, 'r', encoding='utf-8').read()
+            modified = False
+            def repl(m):
+                nonlocal modified
+                t = m.group(1).strip()
+                d = m.group(2)
+                if '/' in t:
+                    if not t.endswith('.md'):
+                        full = name_to_path.get(t)
+                        if full: modified = True; return f'[[{full}|{d or t}]]'
+                    return m.group(0)
+                full = name_to_path.get(t)
+                if full: modified = True; return f'[[{full}|{d or t}]]'
+                return m.group(0)
+            new_c = pat.sub(repl, content)
+            if modified:
+                open(fp, 'w', encoding='utf-8').write(new_c); fixed += 1
+    for root, dirs, fnames in os.walk(wiki_dir):
+        for f in fnames:
+            if not f.endswith('.md'): continue
+            for m in pat.finditer(open(os.path.join(root,f),'r',encoding='utf-8').read()):
+                t = m.group(1).strip()
+                if '/' not in t and t not in name_to_path: unfixable += 1
+    return {"fixed": fixed, "unfixable": unfixable}
+
+
+def suggest_correction(broken_target: str, existing_nodes: set[str], threshold: float = 0.6) -> str | None:
+    """模糊匹配断链目标到已有页面。"""
+    import difflib
+    best, best_score = None, threshold
+    for node in existing_nodes:
+        bare_node = node.split('/')[-1].replace('.md','')
+        bare_target = broken_target.split('/')[-1].replace('.md','')
+        score = difflib.SequenceMatcher(None, bare_target.lower(), bare_node.lower()).ratio()
+        if score > best_score: best_score, best = score, node
+    return best
+
+
+def create_stub(target: str, wiki_dir: str = "wiki") -> str | None:
+    """为断链创建存根页面。"""
+    import datetime, os
+    fp = os.path.join(wiki_dir, target)
+    if os.path.exists(fp): return None
+    os.makedirs(os.path.dirname(fp), exist_ok=True)
+    name = target.split('/')[-1].replace('.md','')
+    stub = f"---\ntitle: '{name}'\ntype: query\ncreated: {datetime.date.today().isoformat()}\ntags: [待补充]\n---\n\n# {name}\n\n> 此页面由健康检查自动创建，等待后续导入时填充内容。\n"
+    open(fp, 'w', encoding='utf-8').write(stub)
+    return target
+
+
+def fill_missing_links(wiki_dir: str = "wiki") -> int:
+    """为入链=0的页面补充反向引用。"""
+    import re, os
+    NAV_FILES = {'index.md','overview.md','log.md','wiki-schema.md'}
+    all_pages = []
+    page_links = {}
+    for root, dirs, fnames in os.walk(wiki_dir):
+        for f in fnames:
+            if f.endswith('.md'):
+                path = os.path.relpath(os.path.join(root,f),wiki_dir).replace("\\","/")
+                content = open(os.path.join(root,f),'r',encoding='utf-8').read()
+                page_links[path] = set(re.findall(r'\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]', content))
+                all_pages.append(path)
+    inbound = {p: set() for p in all_pages}
+    for src, targets in page_links.items():
+        for t in targets:
+            for p in all_pages:
+                if p == t or p.endswith('/'+t.replace('.md','')) or t == p.split('/')[-1].replace('.md',''):
+                    inbound[p].add(src)
+    orphans = [p for p in all_pages if len(inbound[p])==0 and p not in NAV_FILES]
+    modified = 0
+    for orphan in orphans[:10]:
+        prefix = orphan.split('/')[0]+'/' if '/' in orphan else ''
+        candidates = [p for p in all_pages if p!=orphan and p.startswith(prefix)] or [p for p in all_pages if p!=orphan and p not in NAV_FILES]
+        if not candidates: continue
+        best = max(candidates, key=lambda p: len(page_links.get(p,set())))
+        with open(os.path.join(wiki_dir,best),'a',encoding='utf-8') as fh:
+            fh.write(f'\n\n[[{orphan}]]')
+        modified += 1
+    return modified

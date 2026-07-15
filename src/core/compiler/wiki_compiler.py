@@ -285,6 +285,16 @@ class WikiCompiler:
                 page_content = self._inject_sources_frontmatter(page_content, source_path)
             if privacy_matches:
                 page_content = self._inject_privacy_frontmatter(page_content, privacy_matches)
+            # 保证 frontmatter 有 title 字段（校验器要求）
+            if 'title:' not in page_content.split("---")[1] if page_content.count("---") >= 2 else "":
+                title = self._extract_title(page_content) or path.split("/")[-1].replace(".md", "")
+                page_type = self._guess_type(path)
+                if page_content.lstrip().startswith("---"):
+                    parts = page_content.split("---", 2)
+                    parts[1] = parts[1].rstrip() + f"\ntitle: \"{title}\"\ntype: {page_type}\n"
+                    page_content = "---".join(parts)
+                else:
+                    page_content = f"---\ntitle: \"{title}\"\ntype: {page_type}\n---\n\n{page_content}"
             existing = self.repo.get_page(path)
             if existing:
                 updated.append(path)

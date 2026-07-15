@@ -1,5 +1,6 @@
 """路由: Lint — /v1/lint"""
 import logging
+import re
 
 from fastapi import APIRouter
 
@@ -25,21 +26,26 @@ async def lint(semantic: bool = False):
 
 @router.post("/v1/lint/fix")
 async def lint_fix():
-    """修复所有断链（删除受损链接标记）"""
+    """三层修复：建议修正→创建存根→补充缺失"""
     logger.info("POST /v1/lint/fix")
     compiler = WikiCompiler()
     result = compiler.lint(semantic=False)
     broken = result.get("broken_links", [])
     if not broken:
-        return {"fixed": 0, "message": "没有断链需要修复"}
+        return {"rewritten": 0, "stubs": 0, "filled": 0, "message": "没有需要修复的断链"}
 
     from src.tools.read_tool import ReadTool
     from src.tools.write_tool import WriteTool
-    import re
+    from src.core.lint.linter import suggest_correction, create_stub, fill_missing_links
 
     reader = ReadTool("wiki")
     writer = WriteTool("wiki")
-    fixed_count = 0
+    g = compiler.graph
+    existing_nodes = set(g.nodes())
+
+    rewritten = 0
+    stubs = 0
+    skipped = []
 
     for link in broken:
         source = link.get("source_page", "") if isinstance(link, dict) else ""
@@ -51,11 +57,31 @@ async def lint_fix():
         except Exception:
             continue
 
-        # 删除 [[target]] 和 [[target|显示名]]
-        pattern = r"\[\[" + re.escape(target) + r"(?:\|[^\]]*)?\]\]"
-        new_content = re.sub(pattern, "", content)
-        if new_content != content:
-            writer.write_page(source, new_content, validate=False)
-            fixed_count += 1
+        # 策略1：模糊匹配修正
+        suggestion = suggest_correction(target, existing_nodes, threshold=0.5)
+        if suggestion and suggestion != target:
+            pattern = r"\[\[" + re.escape(target) + r"(?:\|[^\]]*)?\]\]"
+            new_content = re.sub(pattern, f"[[{suggestion}]]", content)
+            if new_content != content:
+                writer.write_page(source, new_content, validate=False)
+                rewritten += 1
+                continue
 
-    return {"fixed": fixed_count, "message": f"已修复 {fixed_count} 个断链"}
+        # 策略2：创建存根
+        stub_path = create_stub(target)
+        if stub_path:
+            stubs += 1
+            continue
+
+        skipped.append(target)
+
+    # 策略3：补充缺失
+    filled = fill_missing_links()
+
+    return {
+        "rewritten": rewritten,
+        "stubs": stubs,
+        "filled": filled,
+        "skipped": len(skipped),
+        "message": f"重写 {rewritten} 个 · 存根 {stubs} 个 · 补充 {filled} 个",
+    }
