@@ -450,8 +450,13 @@ document.addEventListener("htmx:afterSwap", function(evt) {
   if (target) {
     target.querySelectorAll('script').forEach(function(s) {
       var ns = document.createElement('script');
+      if (s.type) ns.type = s.type;
       ns.textContent = s.textContent;
-      document.body.appendChild(ns).parentNode.removeChild(ns);
+      document.body.appendChild(ns);
+      // module 异步执行，不能立即 remove；普通 script 同步完后可安全移除
+      if (ns.type !== 'module') {
+        ns.parentNode.removeChild(ns);
+      }
     });
   }
   reinitMainContent();
