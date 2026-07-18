@@ -233,3 +233,7 @@ dist/
 run.py
 wiki.spec
 user_settings.json
+.codemoss/
+.playwright-mcp/
+wiki-ui/node_modules/
+wiki-ui/dist/
