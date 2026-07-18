@@ -53,18 +53,29 @@ function doImport() {
   btn.disabled = true;
   btn.textContent = '导入中…';
 
+  var mode = document.getElementById('modeSelect').value;
   fetch('/v1/ingest/folder', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       folder_path: folder,
       recurse: document.getElementById('recurseCheck').checked,
-      mode: document.getElementById('modeSelect').value,
+      mode: mode,
     }),
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
     if (data.error) { showResult('error', '出错了', data.error); return; }
+    if (mode === 'async') {
+      // 异步模式：轮询进度
+      var btn2 = document.getElementById('importBtn');
+      var total = data.total || data.enqueued || 0;
+      if (total > 0) {
+        btn2.textContent = '排队中 0/' + total;
+        pollQueueProgress(total, btn2);
+        return;
+      }
+    }
     var err = data.failed > 0 && data.success === 0;
     renderResult(data, err);
   })
@@ -105,6 +116,25 @@ function showResult(type, title, content) {
   document.getElementById('resultContent').innerHTML = content;
   box.style.display = 'block';
   box.style.borderColor = type === 'error' ? 'var(--error)' : 'var(--success)';
+}
+
+function pollQueueProgress(total, btn) {
+  var interval = setInterval(function() {
+    fetch('/v1/ingest/queue/status')
+      .then(function(r) { return r.json(); })
+      .then(function(q) {
+        var done = (q.done || 0) + (q.failed || 0);
+        btn.textContent = '导入中 ' + done + '/' + total;
+        if (done >= total) {
+          clearInterval(interval);
+          btn.disabled = false;
+          btn.textContent = '开始导入';
+          // 尝试获取最终结果
+          showToast('导入完成: ' + total + ' 个文件');
+        }
+      })
+      .catch(function() { clearInterval(interval); btn.disabled = false; btn.textContent = '开始导入'; });
+  }, 2000);
 }
 
 function retryFile(filePath, btn) {

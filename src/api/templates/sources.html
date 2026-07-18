@@ -214,13 +214,36 @@ async function extractFile(path) {
   }
 }
 
+function pollImportProgress(total, btn) {
+  var interval = setInterval(function() {
+    fetch('/v1/ingest/queue/status')
+      .then(function(r) { return r.json(); })
+      .then(function(q) {
+        var done = (q.done || 0) + (q.failed || 0);
+        btn.textContent = '导入中 ' + done + '/' + total;
+        if (done >= total) {
+          clearInterval(interval);
+          btn.disabled = false;
+          btn.textContent = '📁 导入文件夹';
+          loadSourcesTree();
+          showToast('导入完成: ' + total + ' 个文件');
+        }
+      })
+      .catch(function() { clearInterval(interval); btn.disabled = false; btn.textContent = '📁 导入文件夹'; });
+  }, 2000);
+}
+
 function importFolder() {
   var folder = prompt('请输入文件夹路径（相对于 raw/sources/）：', '');
   if (!folder) return;
+  var btn = document.querySelector('.sources-actions-row .btn.btn-primary');
+  if (!btn) btn = document.querySelector('[onclick*="importFolder"]');
+  btn.disabled = true;
+  btn.textContent = '导入中…';
   fetch('/v1/ingest/folder', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({folder_path: folder, recurse: true, mode: 'async'})})
     .then(function(r) { return r.json(); })
-    .then(function(d) { showToast('导入中: ' + (d.total || 0) + ' 个文件'); loadSourcesTree(); })
-    .catch(function() { showToast('导入失败'); });
+    .then(function(d) { pollImportProgress(d.total || d.enqueued || 0, btn); })
+    .catch(function() { btn.disabled = false; btn.textContent = '📁 导入文件夹'; showToast('导入失败'); });
 }
 
 loadSourcesTree();
