@@ -274,41 +274,59 @@ async def list_sources(page: int = 1, per_page: int = 50):
 # ------------------------------------------------------------------
 import json
 
-SETTINGS_FILE = "user_settings.json"
-
-def _load_settings() -> dict:
-    try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-def _save_settings(data: dict) -> None:
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
 class SettingsResponse(BaseModel):
-    """用户设置"""
+    """系统设置（全部存 DB wiki_settings 表）"""
+    # 用户偏好
     llm_provider: str = "deepseek"
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-v4-flash"
     output_language: str = "zh"
     search_method: str = "bm25"
     theme: str = "light"
+    # 资料监控
+    watcher_enabled: bool = False
+    watcher_auto_extract: bool = True
+    watcher_max_file_size_mb: int = 100
+    watcher_allowed_extensions: str = ".md,.mdx,.txt,.pdf,.doc,.docx,.odt,.rtf,.pptx,.odp,.xls,.xlsx,.ods,.csv,.html,.htm"
+    watcher_exclude_folders: str = ".git,.svn,.hg,.obsidian,.idea,.vscode,node_modules,.cache,__pycache__"
+    watcher_exclude_extensions: str = "tmp,temp,bak,swp,part,partial,crdownload,exe,dll,so,dylib,bin,iso,dmg"
+    watcher_exclude_patterns: str = "~$*,~lock~#*,*.draft.*,draft-*,*.private.*"
+
+
+def _load_settings_from_db() -> dict:
+    """从 wiki_settings 表读取全部设置"""
+    from src.db.repository import WikiRepository
+    repo = WikiRepository()
+    defaults = SettingsResponse().model_dump()
+    result = {}
+    for key in defaults:
+        val = repo.get_setting(f"settings.{key}")
+        if val is not None:
+            # 尝试 JSON 解析（列表/数字/bool），失败则原样返回
+            try:
+                result[key] = json.loads(val)
+            except (json.JSONDecodeError, TypeError):
+                result[key] = val
+    defaults.update(result)
+    return defaults
+
+
+def _save_settings_to_db(data: dict) -> None:
+    """全部设置写入 wiki_settings 表"""
+    from src.db.repository import WikiRepository
+    repo = WikiRepository()
+    for key, val in data.items():
+        repo.set_setting(f"settings.{key}", json.dumps(val, ensure_ascii=False))
 
 
 @router.get("/v1/settings", response_model=SettingsResponse)
 async def get_settings():
-    """读取用户设置"""
-    saved = _load_settings()
-    defaults = SettingsResponse().model_dump()
-    defaults.update(saved)
-    return SettingsResponse(**defaults)
+    """读取系统设置（DB wiki_settings 表）"""
+    return SettingsResponse(**_load_settings_from_db())
 
 
 @router.post("/v1/settings", response_model=SettingsResponse)
 async def save_settings(body: SettingsResponse):
-    """保存用户设置"""
-    _save_settings(body.model_dump())
+    """保存系统设置"""
+    _save_settings_to_db(body.model_dump())
     return body
