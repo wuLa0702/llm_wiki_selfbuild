@@ -3,80 +3,37 @@
 {% block title %}资料源 — LLM Wiki{% endblock %}
 
 {% block head_extra %}
-<style>
-.sources-layout { display: flex; min-height: calc(100vh - 2rem); gap: 1px; }
-
-/* 左侧文件夹树 */
-.sources-tree-panel {
-  width: 300px; flex-shrink: 0;
-  border-right: 1px solid var(--border);
-  overflow-y: auto;
-  background: var(--bg-tree);
-}
-.sources-tree-header {
-  padding: 0.75rem; border-bottom: 1px solid var(--border);
-  font-weight: 600; font-size: 0.85rem;
-  color: var(--text-primary);
-  display: flex; justify-content: space-between; align-items: center;
-}
-.sources-tree-body { padding: 0.5rem 0; font-size: 0.82rem; }
-.sources-tree-item {
-  display: flex; align-items: center; gap: 0.3em;
-  padding: 0.25em 0.75rem; cursor: pointer;
-  color: var(--text-secondary); user-select: none;
-  transition: background 0.1s;
-}
-.sources-tree-item:hover { background: var(--bg-hover); }
-.sources-tree-item.active { color: var(--accent-blue); background: rgba(59,130,246,0.08); }
-.sources-tree-item .sources-icon { font-size: 0.9rem; flex-shrink: 0; }
-.sources-tree-item .sources-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sources-tree-item .sources-actions { display: none; gap: 0.2em; }
-.sources-tree-item:hover .sources-actions { display: flex; }
-.sources-tree-children { padding-left: 1rem; }
-.sources-tree-dir .chevron { font-size: 0.6rem; transition: transform 0.15s; }
-.sources-tree-dir .chevron.open { transform: rotate(90deg); }
-
-/* 右侧预览 */
-.sources-preview {
-  flex: 1; min-width: 0;
-  padding: 1.5rem 2rem; overflow-y: auto;
-}
-.sources-empty { text-align: center; padding: 4rem 2rem; color: var(--text-muted); }
-
-/* 操作按钮 */
-.sources-actions-row { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
-.btn-danger { background: none; color: var(--error); border-color: var(--error); }
-.btn-danger:hover { background: rgba(213,68,60,0.08); }
-</style>
+{# 样式已迁移至 static/css/components.css（ht mx 导航需要） #}
 {% endblock %}
 
 {% block content %}
-<div class="sources-actions-row">
-  <button class="btn btn-sm btn-primary" onclick="document.getElementById('folderUploadInput').click()">📁 导入文件夹</button>
-  <input type="file" id="folderUploadInput" style="display:none;" webkitdirectory multiple onchange="uploadFolder(this)">
-  <span class="text-xs text-muted" style="align-self:center;">raw/sources/</span>
-</div>
-
-<div class="sources-layout">
-  <!-- 文件夹树 -->
-  <aside class="sources-tree-panel">
-    <div class="sources-tree-header">
-      <span>📂 资料来源文件</span>
+<div class="sources-main">
+  <!-- 头部 -->
+  <div class="sources-header">
+    <span class="sources-header-title">📂 原始资料</span>
+    <div class="sources-header-actions">
+      <button class="btn btn-sm" onclick="loadSourceFiles()" title="刷新">🔄</button>
+      <button class="btn btn-sm btn-primary" onclick="document.getElementById('singleFileInput').click()">+ 导入</button>
+      <button class="btn btn-sm" onclick="document.getElementById('folderUploadInput').click()">+ 文件夹</button>
+      <input type="file" id="singleFileInput" style="display:none;" multiple onchange="uploadFiles(this)">
+      <input type="file" id="folderUploadInput" style="display:none;" webkitdirectory multiple onchange="uploadFolder(this)">
     </div>
-    <div class="sources-tree-body" id="sources-tree">
-      <div class="loading-state" style="padding:1.5rem;">
-        <div class="spinner" style="width:18px;height:18px;"></div>
+  </div>
+
+  <!-- 文件列表 / 预览 -->
+  <div id="sources-content-area" style="flex:1;display:flex;flex-direction:column;min-height:0;">
+    <div class="sources-list" id="sources-list">
+      <div class="loading-state" style="padding:2rem;">
+        <div class="spinner" style="width:20px;height:20px;"></div>
       </div>
     </div>
-  </aside>
+    <div class="sources-preview hidden" id="sources-preview"></div>
+  </div>
 
-  <!-- 预览区 -->
-  <div class="sources-preview" id="sources-preview">
-    <div class="sources-empty">
-      <div style="font-size:2.5rem; opacity:0.3; margin-bottom:1rem;">📂</div>
-      <p>从左侧选择文件查看详情</p>
-      <p class="text-sm text-muted">支持导入 Markdown、PDF、Word 等格式</p>
-    </div>
+  <!-- 底部 -->
+  <div class="sources-footer">
+    <span id="sources-footer-text">0 个资料</span>
+    <button class="btn btn-sm" onclick="loadSourceFiles()">🔄 刷新文件夹</button>
   </div>
 </div>
 {% endblock %}
@@ -85,51 +42,88 @@
 <script>
 var _selectedPath = null;
 
-/* ===== 加载文件夹树 ===== */
-async function loadSourcesTree() {
-  var container = document.getElementById('sources-tree');
+/* ===== 加载文件列表 ===== */
+async function loadSourceFiles() {
+  var list = document.getElementById('sources-list');
+  var preview = document.getElementById('sources-preview');
+  // foot er text updated below via getElementById
+  if (!list) return;
+  list.classList.remove('hidden');
+  preview.classList.add('hidden');
+  list.innerHTML = '<div class="loading-state" style="padding:2rem;"><div class="spinner" style="width:20px;height:20px;"></div></div>';
+
   try {
     var r = await fetch('/v1/sources/tree');
     var d = await r.json();
-    if (!d.tree || !d.tree.length) {
-      container.innerHTML = '<div class="empty-state" style="padding:1.5rem;"><p class="text-sm">暂无资料源文件</p></div>';
+    var tree = d.tree || [];
+    var totalFiles = d.total_files || 0;
+    document.getElementById('sources-footer-text').textContent = totalFiles + ' 个资料';
+
+    if (!tree.length) {
+      list.innerHTML = '<div class="sources-empty"><div class="sources-empty-icon">📂</div><p>暂无资料源文件</p><p class="text-sm text-muted">点击右上角「导入」添加文件</p></div>';
       return;
     }
-    container.innerHTML = renderSourceTree(d.tree);
+
+    list.innerHTML = renderFileListView(tree);
   } catch(e) {
-    container.innerHTML = '<div class="error-state" style="padding:1rem;"><p>加载失败</p></div>';
+    list.innerHTML = '<div class="error-state" style="margin:1rem;"><p>加载失败: ' + e.message + '</p><button class="btn btn-sm" onclick="loadSourceFiles()">重试</button></div>';
   }
 }
 
-function renderSourceTree(tree) {
-  var html = '<ul style="list-style:none;padding:0;margin:0;">';
-  for (var i = 0; i < tree.length; i++) {
-    var item = tree[i];
-    if (item.type === 'directory') {
-      html += '<li class="sources-tree-item sources-tree-dir" onclick="event.stopPropagation(); toggleSourceDir(this);" data-path="' + item.path + '">';
-      html += '<span class="chevron">&#9654;</span> <span class="sources-icon">📁</span> ';
-      html += '<span class="sources-name">' + item.name + '</span>';
-      html += '<span class="sources-actions">';
-      html += '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteFolder(\'' + item.path + '\')" title="删除文件夹">🗑</button>';
-      html += '</span>';
-      html += '</li>';
-      html += '<li class="sources-tree-children hidden">' + renderSourceTree(item.children || []) + '</li>';
-    } else {
-      html += '<li class="sources-tree-item" onclick="selectSource(\'' + item.path + '\', this)" data-path="' + item.path + '">';
-      html += '<span class="sources-icon">📄</span> ';
-      html += '<span class="sources-name">' + item.name + '</span>';
-      html += '<span class="sources-actions">';
-      html += '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteFile(\'' + item.path + '\')" title="删除">🗑</button>';
-      html += '<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();extractFile(\'' + item.path + '\')" title="提取到Wiki">✨</button>';
-      html += '</span>';
-      html += '</li>';
+function renderFileListView(tree) {
+  var html = '';
+  // 目录排前面，文件排后面
+  var dirs = tree.filter(function(i) { return i.type === 'directory'; });
+  var files = tree.filter(function(i) { return i.type === 'file'; });
+
+  for (var d = 0; d < dirs.length; d++) {
+    var dir = dirs[d];
+    var children = dir.children || [];
+    var fileCount = children.filter(function(c) { return c.type === 'file'; }).length;
+    html += '<div class="sources-folder-group">';
+    html += '<div class="sources-folder-header" onclick="toggleFolder(this)" data-path="' + dir.path + '">';
+    html += '<span class="chevron open">&#9654;</span> 📁 <span class="file-name">' + dir.name + '</span>';
+    html += '<span class="sources-folder-count">' + fileCount + '</span>';
+    html += '<span class="folder-actions">';
+    html += '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteFolder(\'' + dir.path + '\')" title="删除文件夹">🗑</button>';
+    html += '</span>';
+    html += '</div>';
+    html += '<div class="sources-folder-children">';
+    // 子文件
+    for (var f = 0; f < children.length; f++) {
+      var child = children[f];
+      if (child.type === 'file') {
+        html += '<div class="sources-file-row" onclick="selectSource(\'' + child.path + '\', this)" data-path="' + child.path + '">';
+        html += '<span class="file-icon">📄</span>';
+        html += '<span class="file-name">' + child.name + '</span>';
+        html += '<span class="file-actions">';
+        html += '<button class="btn btn-sm" onclick="event.stopPropagation();extractFile(\'' + child.path + '\')" title="提取到Wiki">✨</button>';
+        html += '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteFile(\'' + child.path + '\')" title="删除">🗑</button>';
+        html += '</span>';
+        html += '</div>';
+      }
     }
+    html += '</div></div>';
   }
-  html += '</ul>';
+
+  // 根目录文件
+  for (var f = 0; f < files.length; f++) {
+    var file = files[f];
+    html += '<div class="sources-folder-group">';
+    html += '<div class="sources-file-row" onclick="selectSource(\'' + file.path + '\', this)" data-path="' + file.path + '" style="padding-left:1.25rem;">';
+    html += '<span class="file-icon">📄</span>';
+    html += '<span class="file-name">' + file.name + '</span>';
+    html += '<span class="file-actions">';
+    html += '<button class="btn btn-sm" onclick="event.stopPropagation();extractFile(\'' + file.path + '\')" title="提取到Wiki">✨</button>';
+    html += '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteFile(\'' + file.path + '\')" title="删除">🗑</button>';
+    html += '</span>';
+    html += '</div></div>';
+  }
+
   return html;
 }
 
-function toggleSourceDir(el) {
+function toggleFolder(el) {
   var chevron = el.querySelector('.chevron');
   var children = el.nextElementSibling;
   if (chevron) chevron.classList.toggle('open');
@@ -139,10 +133,15 @@ function toggleSourceDir(el) {
 /* ===== 选中文件 → 预览 ===== */
 async function selectSource(path, el) {
   _selectedPath = path;
-  document.querySelectorAll('.sources-tree-item').forEach(function(e) { e.classList.remove('active'); });
-  el.classList.add('active');
+  // 高亮
+  document.querySelectorAll('.sources-file-row.active').forEach(function(e) { e.classList.remove('active'); });
+  if (el) el.classList.add('active');
+
+  var list = document.getElementById('sources-list');
   var preview = document.getElementById('sources-preview');
-  preview.innerHTML = '<div class="loading-state"><div class="spinner" style="width:18px;height:18px;"></div></div>';
+  list.classList.add('hidden');
+  preview.classList.remove('hidden');
+  preview.innerHTML = '<div class="loading-state"><div class="spinner" style="width:20px;height:20px;"></div></div>';
 
   try {
     var r = await fetch('/v1/file-content?path=' + encodeURIComponent(path));
@@ -150,18 +149,20 @@ async function selectSource(path, el) {
     if (d.content !== undefined) {
       var content = d.content;
       var sizeStr = d.size > 10240 ? (d.size/1024).toFixed(1) + ' KB' : d.size + ' B';
-      var html = '<h2 style="border:none;margin-top:0;">' + path.split('/').pop() + '</h2>';
-      html += '<div class="flex gap-sm" style="margin-bottom:1rem;">';
-      html += '<button class="btn btn-sm btn-secondary" onclick="deleteFile(\'' + path + '\')">🗑 删除</button>';
-      html += '<button class="btn btn-sm btn-secondary" onclick="extractFile(\'' + path + '\')">✨ 提取到 Wiki</button>';
-      html += '<span class="text-xs text-muted" style="align-self:center;">' + sizeStr + '</span></div>';
+      var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">';
+      html += '<h2 style="border:none;margin:0;">' + path.split('/').pop() + '</h2>';
+      html += '<div class="flex gap-sm">';
+      html += '<button class="btn btn-sm" onclick="deleteFile(\'' + path + '\')">🗑 删除</button>';
+      html += '<button class="btn btn-sm btn-primary" onclick="extractFile(\'' + path + '\')">✨ 提取到 Wiki</button>';
+      html += '<span class="text-xs text-muted" style="align-self:center;">' + sizeStr + '</span>';
+      html += '<button class="btn btn-sm" onclick="backToList()">✕ 关闭</button>';
+      html += '</div></div>';
       if (path.endsWith('.md') && typeof marked !== 'undefined') {
         html += '<div class="page-content">' + marked.parse(content) + '</div>';
       } else {
         html += '<pre style="white-space:pre-wrap;word-break:break-word;font-size:0.82rem;line-height:1.5;background:var(--bg-surface);padding:1rem;border-radius:var(--radius-md);">' + escapeHtml(content.substring(0, 5000)) + '</pre>';
       }
       preview.innerHTML = html;
-      // 代码高亮
       setTimeout(function() {
         document.querySelectorAll('pre code').forEach(function(b) { if (typeof hljs !== 'undefined') hljs.highlightElement(b); });
       }, 50);
@@ -171,14 +172,22 @@ async function selectSource(path, el) {
   }
 }
 
+function backToList() {
+  document.getElementById('sources-list').classList.remove('hidden');
+  document.getElementById('sources-preview').classList.add('hidden');
+}
+
 /* ===== 操作 ===== */
 async function deleteFile(path) {
   if (!confirm('删除此文件？将同时删除关联的 Wiki 页面。')) return;
-  var r = await fetch('/v1/sources/' + encodeURIComponent(path), { method: 'DELETE' });
+  var r = await fetch('/v1/sources/delete?path=' + encodeURIComponent(path), { method: 'DELETE' });
   var d = await r.json();
   if (d.status === 'deleted') {
-    document.getElementById('sources-preview').innerHTML = '<div class="sources-empty"><p>文件已删除</p><p class="text-sm text-muted">Wiki 页面级联删除: ' + d.wiki_pages_deleted + '</p></div>';
-    loadSourcesTree();
+    showToast('已删除，级联删除了 ' + d.wiki_pages_deleted + ' 个 Wiki 页面');
+    backToList();
+    loadSourceFiles();
+    if (typeof loadTree === 'function') loadTree();
+    if (typeof pollActivity === 'function') pollActivity();
   } else {
     alert('删除失败: ' + (d.error || '未知错误'));
   }
@@ -186,11 +195,13 @@ async function deleteFile(path) {
 
 async function deleteFolder(path) {
   if (!confirm('确定删除此文件夹及其所有子文件？将级联删除关联的 Wiki 页面。')) return;
-  var r = await fetch('/v1/sources/folder/' + encodeURIComponent(path), { method: 'DELETE' });
+  var r = await fetch('/v1/sources/folder/' + path, { method: 'DELETE' });
   var d = await r.json();
   if (d.status === 'deleted') {
-    document.getElementById('sources-preview').innerHTML = '<div class="sources-empty"><p>文件夹已删除</p><p class="text-sm text-muted">文件: ' + d.files_deleted + '，Wiki 页面: ' + d.wiki_pages_deleted + '</p></div>';
-    loadSourcesTree();
+    showToast('已删除文件夹及 ' + d.wiki_pages_deleted + ' 个关联页面');
+    loadSourceFiles();
+    if (typeof loadTree === 'function') loadTree();
+    if (typeof pollActivity === 'function') pollActivity();
   } else {
     alert('删除失败: ' + (d.error || '未知错误'));
   }
@@ -198,46 +209,71 @@ async function deleteFolder(path) {
 
 async function extractFile(path) {
   var preview = document.getElementById('sources-preview');
-  preview.innerHTML = '<div class="loading-state"><div class="spinner"></div><span>Agent 提取中…</span></div>';
+  preview.innerHTML = '<div class="loading-state"><div class="spinner" style="width:24px;height:24px;"></div><span>Agent 提取中…</span></div>';
   try {
     var r = await fetch('/v1/sources/extract-to-wiki', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ source_path: path }) });
     var d = await r.json();
     if (d.status === 'ok') {
-      preview.innerHTML = '<div class="empty-state"><div style="font-size:1.5rem;">✅</div><p>提取完成</p><p class="text-sm text-muted">创建: ' + (d.pages_created?.length || 0) + '，更新: ' + (d.pages_updated?.length || 0) + '</p><ul class="text-sm">' + (d.pages_created || []).map(function(p) { return '<li><a href="/wiki/' + p + '">' + p + '</a></li>'; }).join('') + '</ul></div>';
-      loadSourcesTree();
+      preview.innerHTML = '<div class="empty-state"><div style="font-size:1.5rem;">✅</div><p>提取完成</p><p class="text-sm text-muted">创建: ' + (d.pages_created?.length || 0) + '，更新: ' + (d.pages_updated?.length || 0) + '</p><ul class="text-sm">' + (d.pages_created || []).map(function(p) { return '<li><a href="/wiki/' + encodeURIComponent(p) + '">' + p + '</a></li>'; }).join('') + '</ul><button class="btn btn-sm" style="margin-top:0.5rem;" onclick="backToList()">返回列表</button></div>';
+      loadSourceFiles();
     } else {
-      preview.innerHTML = '<div class="error-state"><p>' + (d.error || '提取失败') + '</p></div>';
+      preview.innerHTML = '<div class="error-state"><p>' + (d.error || '提取失败') + '</p><button class="btn btn-sm" onclick="backToList()">返回</button></div>';
     }
   } catch(e) {
-    preview.innerHTML = '<div class="error-state"><p>' + e.message + '</p></div>';
+    preview.innerHTML = '<div class="error-state"><p>' + e.message + '</p><button class="btn btn-sm" onclick="backToList()">返回</button></div>';
   }
 }
 
+/* ===== 导入 + 文件夹 ===== */
 function pollImportProgress(total, btn) {
   var interval = setInterval(function() {
     fetch('/v1/ingest/queue/status')
       .then(function(r) { return r.json(); })
       .then(function(q) {
         var done = (q.done || 0) + (q.failed || 0);
-        btn.textContent = '导入中 ' + done + '/' + total;
+        if (btn) btn.textContent = '导入中 ' + done + '/' + total;
         if (done >= total) {
           clearInterval(interval);
-          btn.disabled = false;
-          btn.textContent = '📁 导入文件夹';
-          loadSourcesTree();
+          if (btn) { btn.disabled = false; btn.textContent = '📁 导入'; }
+          loadSourceFiles();
+          pollActivity();
           showToast('导入完成: ' + total + ' 个文件');
         }
       })
-      .catch(function() { clearInterval(interval); btn.disabled = false; btn.textContent = '📁 导入文件夹'; });
+      .catch(function() { clearInterval(interval); if (btn) { btn.disabled = false; btn.textContent = '📁 导入'; } });
   }, 2000);
+}
+
+function uploadFiles(input) {
+  var files = input.files;
+  if (!files || !files.length) return;
+  var btn = document.querySelector('.sources-header-actions .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = '上传中…'; }
+  var fd = new FormData();
+  for (var i = 0; i < files.length; i++) {
+    fd.append('files', files[i], files[i].name);
+  }
+  fetch('/v1/ingest/upload', { method:'POST', body: fd })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var total = d.total || d.enqueued || 0;
+      if (d.saved > 0 && total > 0) {
+        pollImportProgress(total, btn);
+      } else {
+        if (btn) { btn.disabled = false; btn.textContent = '+ 导入'; }
+        showToast('没有可导入的文件');
+      }
+      loadSourceFiles();
+    })
+    .catch(function() { if (btn) { btn.disabled = false; btn.textContent = '+ 导入'; } showToast('上传失败'); });
+  input.value = '';
 }
 
 function uploadFolder(input) {
   var files = input.files;
   if (!files || !files.length) return;
-  var btn = document.querySelector('.sources-actions-row .btn.btn-primary');
-  btn.disabled = true;
-  btn.textContent = '上传中…';
+  var btn = document.querySelector('[onclick*="folderUploadInput"]');
+  if (btn) { btn.disabled = true; btn.textContent = '上传中…'; }
   var fd = new FormData();
   for (var i = 0; i < files.length; i++) {
     fd.append('files', files[i], files[i].webkitRelativePath || files[i].name);
@@ -249,15 +285,15 @@ function uploadFolder(input) {
       if (d.saved > 0 && total > 0) {
         pollImportProgress(total, btn);
       } else {
-        btn.disabled = false; btn.textContent = '📁 导入文件夹';
+        if (btn) { btn.disabled = false; btn.textContent = '+ 文件夹'; }
         showToast('没有可导入的文件');
       }
-      loadSourcesTree();
+      loadSourceFiles();
     })
-    .catch(function() { btn.disabled = false; btn.textContent = '📁 导入文件夹'; showToast('上传失败'); });
-  input.value = ''; // 允许重复选择同一文件夹
+    .catch(function() { if (btn) { btn.disabled = false; btn.textContent = '+ 文件夹'; } showToast('上传失败'); });
+  input.value = '';
 }
 
-loadSourcesTree();
+loadSourceFiles();
 </script>
 {% endblock %}

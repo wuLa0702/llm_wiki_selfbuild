@@ -223,7 +223,7 @@ function switchTab(tab) {
 
 async function loadFileTree() {
   var container = document.getElementById("file-tree-content");
-  if (!container || container.querySelector(".file-tree-rendered")) return;
+  if (!container) return;
 
   try {
     var res = await fetch("/v1/file-tree");
@@ -301,25 +301,262 @@ function openFile(path) {
     .catch(function() { showToast("加载失败"); });
 }
 
-/* ========================= 活动状态轮询 ========================= */
+/* ========================= 任务队列轮询（完整状态） ========================= */
+var STATUS_LABELS = {
+  pending: { icon: "⏳", label: "排队中" },
+  processing: { icon: "🔄", label: "处理中" },
+  done: { icon: "✅", label: "成功" },
+  failed: { icon: "❌", label: "失败" },
+  cancelled: { icon: "🚫", label: "已取消" },
+};
+
 async function pollActivity() {
   try {
-    var res = await fetch("/v1/ingest/queue/status");
+    var [statusRes, recentRes] = await Promise.all([
+      fetch("/v1/ingest/queue/status"),
+      fetch("/v1/ingest/queue/recent?limit=20"),
+    ]);
+    if (!statusRes.ok || !recentRes.ok) return;
+    var status = await statusRes.json();
+    var recent = await recentRes.json();
+
+    var pending = status.pending || 0;
+    var processing = status.processing || 0;
+    var done = status.done || 0;
+    var failed = status.failed || 0;
+    var total = status.total || 0;
+
+    // ── 顶部状态点 ──
+    var dot = document.getElementById("queue-status-dot");
+    var title = document.getElementById("task-queue-title");
+    if (dot) {
+      if (failed > 0) { dot.className = "queue-dot error"; }
+      else if (pending > 0 || processing > 0) { dot.className = "queue-dot busy"; }
+      else { dot.className = "queue-dot idle"; }
+    }
+    if (title) {
+      if (pending > 0 || processing > 0) title.textContent = "任务队列 · 运行中";
+      else if (failed > 0) title.textContent = "任务队列 · " + failed + " 失败";
+      else title.textContent = "任务队列";
+    }
+
+    // ── 状态摘要 ──
+    var summary = document.getElementById("queue-summary");
+    if (summary) {
+      summary.innerHTML =
+        '<span class="queue-stat pending">排队 ' + pending + '</span>' +
+        '<span class="queue-stat processing">处理中 ' + processing + '</span>' +
+        '<span class="queue-stat done">成功 ' + done + '</span>' +
+        '<span class="queue-stat failed">失败 ' + failed + '</span>';
+    }
+
+    // ── 渲染任务列表 ──
+    var jobs = recent.jobs || [];
+    renderQueueActive(jobs);
+    renderQueueDone(jobs);
+    renderQueueFailed(jobs);
+
+    // ── 原始源文件 ──
+    loadRecentSources();
+  } catch (e) {}
+}
+
+function renderQueueActive(jobs) {
+  var container = document.getElementById("queue-active-list");
+  if (!container) return;
+  var active = jobs.filter(function(j) { return j.status === "pending" || j.status === "processing"; });
+  if (!active.length) {
+    container.innerHTML = '<div class="queue-empty">暂无活跃任务</div>';
+    return;
+  }
+  var html = "";
+  for (var i = 0; i < active.length; i++) {
+    var j = active[i];
+    var info = STATUS_LABELS[j.status] || { icon: "❓", label: j.status };
+    html += '<div class="queue-item">';
+    html += '<span class="queue-icon">' + info.icon + '</span>';
+    html += '<span class="queue-name" title="' + escapeHtml(j.source_path || "") + '">' + escapeHtml(j.source_path || j.job_id) + '</span>';
+    html += '<span class="queue-status">' + info.label + '</span>';
+    html += '<span class="queue-actions">';
+    html += '<button class="queue-action-btn queue-del" title="删除此记录" onclick="deleteQueueJob(\'' + j.job_id + '\', this)">✕</button>';
+    html += '</span>';
+    html += '</div>';
+  }
+  container.innerHTML = html;
+}
+
+function renderQueueDone(jobs) {
+  var container = document.getElementById("queue-done-list");
+  if (!container) return;
+  var done = jobs.filter(function(j) { return j.status === "done"; }).slice(0, 5);
+  if (!done.length) {
+    container.innerHTML = '<div class="queue-empty">暂无</div>';
+    return;
+  }
+  var html = "";
+  for (var i = 0; i < done.length; i++) {
+    var j = done[i];
+    html += '<div class="queue-item queue-done">';
+    html += '<span class="queue-icon">✅</span>';
+    html += '<span class="queue-name" title="' + escapeHtml(j.source_path || "") + '">' + escapeHtml(j.source_path || j.job_id) + '</span>';
+    html += '<span class="queue-extra">' + (j.result_summary || "") + '</span>';
+    html += '<span class="queue-actions">';
+    html += '<button class="queue-action-btn queue-del" title="删除此记录" onclick="deleteQueueJob(\'' + j.job_id + '\', this)">✕</button>';
+    html += '</span>';
+    html += '</div>';
+  }
+  container.innerHTML = html;
+}
+
+function renderQueueFailed(jobs) {
+  var container = document.getElementById("queue-failed-list");
+  if (!container) return;
+  var failed = jobs.filter(function(j) { return j.status === "failed"; });
+  if (!failed.length) {
+    container.innerHTML = '<div class="queue-empty">暂无失败任务</div>';
+    return;
+  }
+  var html = "";
+  for (var i = 0; i < failed.length; i++) {
+    var j = failed[i];
+    var err = j.error || "未知错误";
+    if (err.length > 40) err = err.substring(0, 40) + "…";
+    html += '<div class="queue-item queue-failed">';
+    html += '<span class="queue-icon">❌</span>';
+    html += '<span class="queue-name" title="' + escapeHtml(j.error || "") + '">' + escapeHtml(j.source_path || j.job_id) + '</span>';
+    html += '<span class="queue-status" style="color:var(--error);">' + escapeHtml(err) + '</span>';
+    html += '<span class="queue-actions">';
+    html += '<button class="queue-action-btn queue-retry" title="重新处理此文件" onclick="retryFailedJob(\'' + j.job_id + '\', this)">↻</button>';
+    html += '<button class="queue-action-btn queue-del" title="删除此记录" onclick="deleteQueueJob(\'' + j.job_id + '\', this)">✕</button>';
+    html += '</span>';
+    html += '</div>';
+  }
+  container.innerHTML = html;
+}
+
+async function deleteQueueJob(jobId, btn) {
+  if (!confirm("确定删除此任务记录？")) return;
+  btn.disabled = true;
+  try {
+    await fetch("/v1/ingest/queue/" + jobId, { method: "DELETE" });
+    showToast("已删除");
+    pollActivity();
+  } catch(e) {
+    showToast("删除失败");
+    btn.disabled = false;
+  }
+}
+
+/* ========================= 重试 / 清空 ========================= */
+async function retryFailedJob(jobId, btn) {
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    var res = await fetch("/v1/ingest/queue/retry/" + jobId, { method: "POST" });
+    var data = await res.json();
+    if (data.status === "ok") {
+      showToast("已重新加入队列");
+      setTimeout(pollActivity, 500);
+    } else {
+      showToast("重试失败");
+      btn.disabled = false;
+      btn.textContent = "重试";
+    }
+  } catch(e) {
+    showToast("重试失败");
+    btn.disabled = false;
+    btn.textContent = "重试";
+  }
+}
+
+async function retryAllFailed() {
+  try {
+    var res = await fetch("/v1/ingest/queue/failed");
     if (!res.ok) return;
     var data = await res.json();
-    var total = data.total || 0;
-    var done = data.completed_count || data.done || 0;
-    var dot = document.getElementById("tree-activity-dot");
-    var text = document.getElementById("tree-activity-text");
-    if (!dot || !text) return;
-    if (total > 0 && done < total) {
-      dot.style.background = "var(--accent-blue)";
-      text.textContent = "处理中 " + done + "/" + total;
-    } else {
-      dot.style.background = "var(--text-muted)";
-      text.textContent = "空闲";
+    var jobs = data.jobs || [];
+    if (!jobs.length) { showToast("没有失败任务"); return; }
+    var count = 0;
+    for (var i = 0; i < jobs.length; i++) {
+      try {
+        await fetch("/v1/ingest/queue/retry/" + jobs[i].job_id, { method: "POST" });
+        count++;
+      } catch(e) {}
     }
-  } catch (e) {}
+    showToast("已重试 " + count + " 个任务");
+    setTimeout(pollActivity, 500);
+  } catch(e) {
+    showToast("操作失败");
+  }
+}
+
+async function clearAllFailed() {
+  if (!confirm("确定清空所有失败任务记录？")) return;
+  try {
+    var res = await fetch("/v1/ingest/queue/failed", { method: "DELETE" });
+    var data = await res.json();
+    if (data.status === "ok") {
+      showToast("已清空 " + data.deleted + " 个失败记录");
+      pollActivity();
+    }
+  } catch(e) {
+    showToast("清空失败");
+  }
+}
+
+/* ========================= 最近导入 ========================= */
+async function loadRecentSources() {
+  var body = document.getElementById("source-files-body");
+  var countEl = document.getElementById("source-files-count");
+  if (!body || !countEl) return;
+  try {
+    var res = await fetch("/v1/sources/tree");
+    var treeData = await res.json();
+    var tree = treeData.tree || [];
+
+    var items = [];
+    function walk(node) {
+      if (node.type === "file") {
+        items.push(node);
+      }
+      if (node.children) {
+        for (var i = 0; i < node.children.length; i++) {
+          walk(node.children[i]);
+        }
+      }
+    }
+    for (var i = 0; i < tree.length; i++) walk(tree[i]);
+
+    // 取最近 8 个
+    var recent = items.slice(-8).reverse();
+    countEl.textContent = recent.length;
+    if (!recent.length) {
+      body.innerHTML = '<div class="tree-source-item" style="color:var(--text-muted);justify-content:center;">暂无文件</div>';
+      return;
+    }
+    var html = "";
+    for (var i = 0; i < recent.length; i++) {
+      html += '<div class="tree-source-item">';
+      html += '<span class="file-status ok">✅</span>';
+      html += '<span class="file-name">' + escapeHtml(recent[i].name) + '</span>';
+      html += '</div>';
+    }
+    body.innerHTML = html;
+  } catch(e) {}
+}
+
+function toggleTaskQueue(el) {
+  var chevron = el.querySelector(".chevron");
+  var body = document.getElementById("task-queue-body");
+  if (chevron) chevron.classList.toggle("open");
+  if (body) body.classList.toggle("hidden");
+}
+
+function toggleSourceFiles(el) {
+  var chevron = el.querySelector(".chevron");
+  var body = document.getElementById("source-files-body");
+  if (chevron) chevron.classList.toggle("open");
+  if (body) body.classList.toggle("hidden");
 }
 
 /* ========================= 搜索下拉（本地即时 + API 补充） ========================= */

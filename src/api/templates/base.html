@@ -46,7 +46,7 @@
 {% else %}
 {# ====== htmx 导航：双 zone oob 替换 ====== #}
 <div id="sidebar-zone" hx-swap-oob="true">{{ self.sidebar_content() }}</div>
-<div id="main-zone">{{ self.content() }}</div>
+<div id="main-zone" class="main-content">{{ self.content() }}</div>
 
 {% endif %}
 

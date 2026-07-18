@@ -70,7 +70,7 @@ body {
 .icon-bar { width: var(--icon-bar-width); flex-shrink: 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 .tree-panel { width: var(--sidebar-width); flex-shrink: 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; border-right: 1px solid var(--border); }
 #sidebar-zone:empty { display: none; }
-.main-area { flex: 1; min-width: 0; overflow-y: auto; }
+.main-area { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; }
 .main-content { padding: 2rem 2.5rem 2rem 3rem; }
 
 /* ========================= 排版 ========================= */

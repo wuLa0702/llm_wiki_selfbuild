@@ -23,15 +23,63 @@
     </div>
   </div>
 
-  <!-- 底部统计 + 分隔线 -->
-  <div class="tree-footer">
-    <div class="tree-divider"></div>
-    <div class="flex justify-between" style="margin-bottom:0.3rem;">
+  <!-- 底部统计 -->
+  <div class="tree-footer" style="padding:0.5rem 0.75rem;">
+    <div class="flex justify-between" style="margin-bottom:0.2rem;">
       <span id="tree-stats">加载中...</span>
     </div>
-    <div class="tree-activity">
-      <span id="tree-activity-dot" style="width:6px;height:6px;border-radius:50%;background:var(--text-muted);flex-shrink:0;"></span>
-      <span id="tree-activity-text" class="text-muted">空闲</span>
+  </div>
+
+  <!-- 原始源文件（最近导入+失败） -->
+  <div class="tree-source-files" id="tree-source-files">
+    <div class="tree-source-header" onclick="toggleSourceFiles(this)">
+      <span class="chevron">&#9654;</span>
+      <span>📂 原始源文件</span>
+      <span class="tree-source-count" id="source-files-count">0</span>
+    </div>
+    <div class="tree-source-body hidden" id="source-files-body"></div>
+  </div>
+
+  <!-- 任务队列（常驻底部） -->
+  <div class="tree-task-section" id="tree-task-section">
+    <div class="tree-task-header" onclick="toggleTaskQueue(this)">
+      <span style="display:flex;align-items:center;gap:0.35em;">
+        <span class="chevron">&#9654;</span>
+        <span id="task-queue-title">任务队列</span>
+      </span>
+      <span id="task-queue-badge" style="display:flex;gap:0.3em;align-items:center;">
+        <span class="queue-dot idle" id="queue-status-dot"></span>
+      </span>
+    </div>
+    <div class="tree-task-body hidden" id="task-queue-body">
+      <!-- 状态摘要 -->
+      <div class="queue-summary" id="queue-summary">
+        <span class="queue-stat pending">排队 0</span>
+        <span class="queue-stat processing">处理中 0</span>
+        <span class="queue-stat done">成功 0</span>
+        <span class="queue-stat failed">失败 0</span>
+      </div>
+      <!-- 活跃任务 -->
+      <div class="queue-section" id="queue-active-section">
+        <div class="queue-section-title">活跃任务</div>
+        <div id="queue-active-list"><div class="queue-empty">暂无活跃任务</div></div>
+      </div>
+      <!-- 最近完成 -->
+      <div class="queue-section" id="queue-done-section">
+        <div class="queue-section-title">最近完成</div>
+        <div id="queue-done-list"><div class="queue-empty">暂无</div></div>
+      </div>
+      <!-- 失败任务 -->
+      <div class="queue-section" id="queue-failed-section">
+        <div class="queue-section-title">
+          失败任务
+          <span class="queue-section-actions">
+            <button class="task-btn" onclick="retryAllFailed()">重试全部</button>
+            <button class="task-btn danger" onclick="clearAllFailed()">清空</button>
+          </span>
+        </div>
+        <div id="queue-failed-list"><div class="queue-empty">暂无失败任务</div></div>
+      </div>
     </div>
   </div>
 </aside>
