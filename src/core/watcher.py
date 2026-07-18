@@ -41,6 +41,7 @@ class SourceWatcher:
         self._stop_event = threading.Event()
         self._files_processed = 0
         self._last_check: str | None = None
+        self.config = self._load_config()
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -126,25 +127,105 @@ class SourceWatcher:
             self._last_check = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
             self._stop_event.wait(self.poll_interval)
 
+    def _load_config(self) -> dict:
+        """从 DB 加载资料监控配置"""
+        from src.db.repository import WikiRepository
+        import json
+        repo = WikiRepository()
+        cfg = {
+            "enabled": True, "auto_extract": True, "max_size_mb": 100,
+            "allowed_ext": {".md",".txt",".pdf",".html",".htm",".csv"},
+            "exclude_folders": {".git","__pycache__","node_modules"},
+            "exclude_ext": {"tmp","bak","exe","dll","iso"},
+            "exclude_patterns": [],
+        }
+        raw = repo.get_setting("settings.watcher_enabled")
+        if raw is not None:
+            try: cfg["enabled"] = json.loads(raw)
+            except: pass
+        raw = repo.get_setting("settings.watcher_auto_extract")
+        if raw is not None:
+            try: cfg["auto_extract"] = json.loads(raw)
+            except: pass
+        raw = repo.get_setting("settings.watcher_max_file_size_mb")
+        if raw is not None:
+            try: cfg["max_size_mb"] = int(json.loads(raw))
+            except: pass
+        raw = repo.get_setting("settings.watcher_allowed_extensions")
+        if raw:
+            try:
+                v = json.loads(raw)
+                if v: cfg["allowed_ext"] = {x.strip().lower() for x in v.split(",") if x.strip()}
+            except: pass
+        raw = repo.get_setting("settings.watcher_exclude_folders")
+        if raw:
+            try:
+                v = json.loads(raw)
+                if v: cfg["exclude_folders"] = {x.strip().lower() for x in v.split(",") if x.strip()}
+            except: pass
+        raw = repo.get_setting("settings.watcher_exclude_extensions")
+        if raw:
+            try:
+                v = json.loads(raw)
+                if v: cfg["exclude_ext"] = {x.strip().lower().lstrip(".") for x in v.split(",") if x.strip()}
+            except: pass
+        raw = repo.get_setting("settings.watcher_exclude_patterns")
+        if raw:
+            try:
+                v = json.loads(raw)
+                if v: cfg["exclude_patterns"] = [x.strip() for x in v.split(",") if x.strip()]
+            except: pass
+        return cfg
+
+    def _matches_exclude_pattern(self, name: str) -> bool:
+        """检查文件名是否命中模糊排除规则"""
+        import fnmatch
+        for pat in self.config.get("exclude_patterns", []):
+            if fnmatch.fnmatch(name, pat):
+                return True
+        return False
+
     def _scan_and_ingest(self) -> None:
         """
         扫描目录 → 发现新文件 → 调用 WikiCompiler.ingest()
 
         依赖 SHA256 缓存判断是否为新内容，已处理的文件自动跳过。
         """
+        self.config = self._load_config()
+        if not self.config.get("enabled", True):
+            return
         if not os.path.isdir(self.sources_dir):
             logger.debug("源目录不存在，跳过扫描 | path=%s", self.sources_dir)
             return
 
+        allowed_ext = self.config.get("allowed_ext", {".md"})
+        exclude_ext = self.config.get("exclude_ext", set())
+        exclude_folders = self.config.get("exclude_folders", set())
+        max_bytes = self.config.get("max_size_mb", 100) * 1024 * 1024
+
         files = []
-        for fname in os.listdir(self.sources_dir):
-            if not fname.endswith(".md"):
-                continue
-            if fname.startswith("."):
-                continue
-            full = os.path.join(self.sources_dir, fname)
-            if os.path.isfile(full):
-                files.append(fname)
+        for root, dirs, fnames in os.walk(self.sources_dir):
+            # 跳过排除目录
+            dirs[:] = [d for d in dirs if d.lower() not in exclude_folders]
+            for fname in fnames:
+                if fname.startswith("."):
+                    continue
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in allowed_ext:
+                    continue
+                bare_ext = ext.lstrip(".")
+                if bare_ext in exclude_ext:
+                    continue
+                if self._matches_exclude_pattern(fname):
+                    continue
+                full = os.path.join(root, fname)
+                if not os.path.isfile(full):
+                    continue
+                if os.path.getsize(full) > max_bytes:
+                    logger.debug("文件超限，跳过 | path=%s size=%d", full, os.path.getsize(full))
+                    continue
+                rel = os.path.relpath(full, self.sources_dir).replace("\\", "/")
+                files.append(rel)
 
         if not files:
             return
