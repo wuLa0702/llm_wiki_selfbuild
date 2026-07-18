@@ -71,11 +71,11 @@
         <div class="card-header">开关</div>
         <div class="card-body" style="display:grid; gap:0.75rem;">
           <label class="flex items-center gap-sm" style="cursor:pointer;">
-            <input type="checkbox" id="fw_enabled" onchange="saveWatcherSettings()">
+            <input type="checkbox" id="fw_enabled">
             <span>监控项目资料文件夹</span>
           </label>
           <label class="flex items-center gap-sm" style="cursor:pointer;">
-            <input type="checkbox" id="fw_auto_extract" onchange="saveWatcherSettings()">
+            <input type="checkbox" id="fw_auto_extract">
             <span>自动提取允许的原始资料文件</span>
           </label>
         </div>
@@ -84,7 +84,7 @@
       <div class="card">
         <div class="card-header">文件体积上限</div>
         <div class="card-body">
-          <input type="number" id="fw_max_file_size_mb" value="100" min="1" max="1024" onchange="saveWatcherSettings()" style="width:100px;">
+          <input type="number" id="fw_max_file_size_mb" value="100" min="1" max="1024" style="width:100px;">
           <span class="text-sm text-muted" style="margin-left:0.5rem;">MB</span>
         </div>
       </div>
@@ -92,7 +92,7 @@
       <div class="card">
         <div class="card-header">允许的文件类型白名单</div>
         <div class="card-body">
-          <textarea id="fw_allowed_extensions" rows="3" style="width:100%;font-family:monospace;font-size:0.82rem;" onchange="saveWatcherSettings()"></textarea>
+          <textarea id="fw_allowed_extensions" rows="3" style="width:100%;font-family:monospace;font-size:0.82rem;"></textarea>
           <p class="text-xs text-muted" style="margin-top:0.2rem;">逗号分隔，如 .md,.txt,.pdf</p>
         </div>
       </div>
@@ -100,7 +100,7 @@
       <div class="card">
         <div class="card-header">排除文件夹</div>
         <div class="card-body">
-          <input type="text" id="fw_exclude_folders" style="width:100%;font-family:monospace;font-size:0.82rem;" onchange="saveWatcherSettings()">
+          <input type="text" id="fw_exclude_folders" style="width:100%;font-family:monospace;font-size:0.82rem;">
           <p class="text-xs text-muted" style="margin-top:0.2rem;">逗号分隔，命中即跳过</p>
         </div>
       </div>
@@ -108,7 +108,7 @@
       <div class="card">
         <div class="card-header">强制排除扩展名</div>
         <div class="card-body">
-          <input type="text" id="fw_exclude_extensions" style="width:100%;font-family:monospace;font-size:0.82rem;" onchange="saveWatcherSettings()">
+          <input type="text" id="fw_exclude_extensions" style="width:100%;font-family:monospace;font-size:0.82rem;">
           <p class="text-xs text-muted" style="margin-top:0.2rem;">不带点号，逗号分隔</p>
         </div>
       </div>
@@ -116,7 +116,7 @@
       <div class="card">
         <div class="card-header">文件名模糊排除</div>
         <div class="card-body">
-          <input type="text" id="fw_exclude_patterns" style="width:100%;font-family:monospace;font-size:0.82rem;" onchange="saveWatcherSettings()">
+          <input type="text" id="fw_exclude_patterns" style="width:100%;font-family:monospace;font-size:0.82rem;">
           <p class="text-xs text-muted" style="margin-top:0.2rem;">glob通配符，逗号分隔</p>
         </div>
       </div>
@@ -198,6 +198,11 @@
       </div>
     </div>
   </div>
+
+  <div style="margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--border);">
+    <button class="btn btn-primary" onclick="saveAllSettings()">💾 保存设置</button>
+    <span id="saveMsg" class="text-sm text-muted" style="margin-left:0.5rem;"></span>
+  </div>
 {% endblock %}
 
 {% block scripts %}
@@ -260,6 +265,9 @@ async function loadSettings() {
   } catch(e) {}
 }
 function saveAllSettings() {
+  var btn = document.querySelector('[onclick="saveAllSettings()"]');
+  if (btn) btn.disabled = true;
+  document.getElementById('saveMsg').textContent = '保存中…';
   fetch('/v1/settings', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       output_language: document.getElementById('s_output_language').value,
@@ -276,9 +284,20 @@ function saveAllSettings() {
       watcher_exclude_extensions: document.getElementById('fw_exclude_extensions').value,
       watcher_exclude_patterns: document.getElementById('fw_exclude_patterns').value,
     })
-  }).then(function(r) { showToast(r.ok ? '已保存' : '保存失败'); });
+  }).then(function(r) {
+    if (r.ok) {
+      document.getElementById('saveMsg').textContent = '✅ 已保存';
+      setTimeout(function() { document.getElementById('saveMsg').textContent = ''; }, 2000);
+    } else {
+      document.getElementById('saveMsg').textContent = '❌ 保存失败';
+    }
+  }).catch(function() {
+    document.getElementById('saveMsg').textContent = '❌ 保存失败';
+  }).finally(function() {
+    var btn2 = document.querySelector('[onclick="saveAllSettings()"]');
+    if (btn2) btn2.disabled = false;
+  });
 }
-document.getElementById('s_output_language').addEventListener('change', saveAllSettings);
 
 /* ===== 初始化 ===== */
 function confirmReset() {
