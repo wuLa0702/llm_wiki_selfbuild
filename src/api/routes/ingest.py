@@ -65,6 +65,66 @@ async def ingest_queue_cancel(job_id: str):
     return QueueActionResponse(status="ok" if ok else "not_found", job_id=job_id)
 
 
+@router.get("/v1/ingest/queue/failed")
+async def ingest_queue_failed():
+    """列出所有失败的任务"""
+    queue = get_ingest_queue()
+    if queue is None:
+        return {"jobs": [], "total": 0}
+    jobs = queue.list_failed()
+    return {"jobs": jobs, "total": len(jobs)}
+
+
+@router.get("/v1/ingest/queue/recent")
+async def ingest_queue_recent(limit: int = 20):
+    """列出最近的任务（含所有状态）"""
+    queue = get_ingest_queue()
+    if queue is None:
+        return {"jobs": [], "total": 0}
+    jobs = queue.list_recent(limit=limit)
+    return {"jobs": jobs, "total": len(jobs)}
+
+
+@router.get("/v1/ingest/queue/active")
+async def ingest_queue_active():
+    """列出活跃任务（pending + processing）"""
+    queue = get_ingest_queue()
+    if queue is None:
+        return {"jobs": [], "total": 0}
+    jobs = queue.list_active()
+    return {"jobs": jobs, "total": len(jobs)}
+
+
+@router.delete("/v1/ingest/queue/failed")
+async def ingest_queue_clear_failed():
+    """清空所有失败任务"""
+    queue = get_ingest_queue()
+    if queue is None:
+        return {"status": "error", "deleted": 0}
+    deleted = queue.clear_failed()
+    return {"status": "ok", "deleted": deleted}
+
+
+@router.delete("/v1/ingest/queue/all")
+async def ingest_queue_clear_all():
+    """清空所有任务记录"""
+    queue = get_ingest_queue()
+    if queue is None:
+        return {"status": "error", "deleted": 0}
+    deleted = queue.clear_all()
+    return {"status": "ok", "deleted": deleted}
+
+
+@router.delete("/v1/ingest/queue/{job_id}")
+async def ingest_queue_delete(job_id: str):
+    """删除任意状态的任务记录"""
+    queue = get_ingest_queue()
+    if queue is None:
+        return {"status": "error", "message": "队列未初始化"}
+    ok = queue.delete_job(job_id)
+    return {"status": "ok" if ok else "not_found", "job_id": job_id}
+
+
 @router.post("/v1/ingest/queue/retry/{job_id}", response_model=QueueActionResponse)
 async def ingest_queue_retry(job_id: str):
     """重试失败的任务"""

@@ -142,20 +142,26 @@ class FileTreeItem(BaseModel):
 FileTreeResponse = dict[str, "FileTreeItem | dict"]
 
 def _build_tree(base_dir: str) -> dict:
-    """递归构建目录树"""
+    """递归构建目录树，按修改时间排序（目录优先，然后文件按 mtime 升序）"""
     result = {}
     if not os.path.isdir(base_dir):
         return result
     try:
-        for name in sorted(os.listdir(base_dir)):
+        items = []
+        for name in os.listdir(base_dir):
             full = os.path.join(base_dir, name)
             if name.startswith("."):
                 continue
             if os.path.isdir(full):
                 children = _build_tree(full)
-                result[name] = {"type": "directory", "children": children}
+                items.append((name, {"type": "directory", "children": children}))
             elif name.endswith(".md") or name.endswith(".txt"):
-                result[name] = {"type": "file", "size": os.path.getsize(full)}
+                stat = os.stat(full)
+                items.append((name, {"type": "file", "size": stat.st_size, "mtime": int(stat.st_mtime)}))
+        # 排序：目录在前，文件在后，各自按 mtime 升序（先添加的先显示）
+        items.sort(key=lambda x: (0 if x[1]["type"] == "directory" else 1, x[1].get("mtime", 0)))
+        for name, data in items:
+            result[name] = data
     except PermissionError:
         pass
     return result
@@ -170,9 +176,9 @@ async def get_file_tree():
     if os.path.isdir("wiki"):
         tree["wiki"] = {"type": "directory", "children": _build_tree("wiki")}
 
-    # raw/sources/ 目录
-    if os.path.isdir("raw/sources"):
-        tree["raw/sources"] = {"type": "directory", "children": _build_tree("raw/sources")}
+    # raw/ 目录 — 一级级展开，不折叠
+    if os.path.isdir("raw"):
+        tree["raw"] = {"type": "directory", "children": _build_tree("raw")}
 
     # purpose.md
     if os.path.exists("purpose.md"):

@@ -128,6 +128,70 @@ class IngestQueue:
         conn.close()
         return updated > 0
 
+    def list_failed(self) -> list[dict]:
+        """列出所有失败的任务详情"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT job_id, source_path, error, created_at, updated_at "
+            "FROM ingest_queue WHERE status='failed' ORDER BY updated_at DESC"
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def delete_job(self, job_id: str) -> bool:
+        """删除任意状态的任务记录"""
+        conn = sqlite3.connect(self.db_path)
+        updated = conn.execute(
+            "DELETE FROM ingest_queue WHERE job_id = ?", (job_id,)
+        ).rowcount
+        conn.commit()
+        conn.close()
+        return updated > 0
+
+    def list_active(self) -> list[dict]:
+        """列出所有活跃任务（pending + processing）"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT job_id, source_path, status, created_at, updated_at "
+            "FROM ingest_queue WHERE status IN ('pending','processing') ORDER BY created_at ASC"
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def list_recent(self, limit: int = 20) -> list[dict]:
+        """列出最近的任务（含所有状态），用于前端展示"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT job_id, source_path, status, error, result_summary, created_at, updated_at "
+            "FROM ingest_queue ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def clear_failed(self) -> int:
+        """清空所有失败任务，返回删除数"""
+        conn = sqlite3.connect(self.db_path)
+        deleted = conn.execute(
+            "DELETE FROM ingest_queue WHERE status='failed'"
+        ).rowcount
+        conn.commit()
+        conn.close()
+        return deleted
+
+    def clear_all(self) -> int:
+        """清空所有任务记录，返回删除数"""
+        conn = sqlite3.connect(self.db_path)
+        deleted = conn.execute(
+            "DELETE FROM ingest_queue"
+        ).rowcount
+        conn.commit()
+        conn.close()
+        return deleted
+
     def retry(self, job_id: str) -> bool:
         """重试失败的任务"""
         conn = sqlite3.connect(self.db_path)
