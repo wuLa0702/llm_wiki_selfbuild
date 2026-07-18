@@ -1,5 +1,6 @@
 """路由: 摄入 — /v1/ingest, /v1/ingest/queue/*, /v1/ingest/folder"""
 import logging
+import os
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -103,3 +104,48 @@ async def ingest_folder(request: Request):
     else:
         compiler = WikiCompiler(task_queue=get_task_queue())
         return importer.import_folder(folder_path, recurse=recurse, compiler=compiler)
+
+
+@router.post("/v1/ingest/upload")
+async def ingest_upload(request: Request):
+    """上传文件到 raw/sources/ 并异步导入"""
+    import shutil, traceback
+
+    try:
+        form = await request.form()
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": f"Form parse: {type(e).__name__}: {e}"})
+
+    saved = 0
+    for val in form.values():
+        if not hasattr(val, "read"):
+            continue
+        filename = getattr(val, "filename", None) or getattr(val, "name", None) or f"upload_{saved}.md"
+        safe_path = os.path.normpath(filename)
+        if safe_path.startswith("..") or safe_path.startswith("/"):
+            continue
+        full_path = os.path.join("raw/sources", safe_path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        try:
+            content = await val.read()
+            with open(full_path, "wb") as fh:
+                fh.write(content)
+            saved += 1
+        except Exception as e:
+            logger.error("保存上传文件失败 | path=%s error=%s", safe_path, e)
+
+    if saved == 0:
+        return JSONResponse(content={"saved": 0, "message": "没有文件被保存"})
+
+    # 异步导入
+    queue = get_ingest_queue()
+    if queue is None:
+        return JSONResponse(status_code=503, content={"saved": saved, "error": "Queue not ready", "detail": "init_services() may not have completed"})
+    from src.core.ingest import FolderImporter
+    importer = FolderImporter()
+    result = importer.import_folder_async(".", queue, recurse=True)
+    return JSONResponse(content={
+        "saved": saved,
+        "total": result.get("total", 0),
+        "enqueued": result.get("enqueued", 0),
+    })
