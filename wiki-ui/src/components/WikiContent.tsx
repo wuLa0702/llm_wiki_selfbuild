@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { renderMarkdown } from '../utils/markdown';
+import MarkdownRenderer from './MarkdownRenderer';
 
 interface Props { path: string | null; onBack?: () => void; onNavigate?: (path: string) => void; }
 
@@ -14,13 +14,11 @@ export default function WikiContent({ path, onBack, onNavigate }: Props) {
   useEffect(() => {
     if (!path) return;
     setLoading(true); setError(''); setRaw(''); setEditing(false);
-    // Try pages API first, fall back to file-content
     const pagePath = path.startsWith('wiki/') || path.startsWith('raw/') ? path : `wiki/${path}`;
     fetch(`/v1/pages/${encodeURIComponent(pagePath)}`)
       .then(r => r.json())
       .then(d => { if (d.content !== undefined) { setRaw(d.content); return; } throw new Error(); })
       .catch(() => {
-        // Fallback to file-content (works for any wiki/ raw/ path)
         fetch(`/v1/file-content?path=${encodeURIComponent(pagePath)}`)
           .then(r => r.json())
           .then(d => { if (d.content !== undefined) setRaw(d.content); else setError('无法加载页面'); })
@@ -28,16 +26,6 @@ export default function WikiContent({ path, onBack, onNavigate }: Props) {
       })
       .finally(() => setLoading(false));
   }, [path]);
-
-  useEffect(() => {
-    const el = ref.current; if (!el || !onNavigate) return;
-    const h = (e: Event) => {
-      const t = (e.target as HTMLElement).closest('.wikilink');
-      if (t) { e.preventDefault(); const p = t.getAttribute('data-wiki-path'); if (p) onNavigate(p); }
-    };
-    el.addEventListener('click', h);
-    return () => el.removeEventListener('click', h);
-  }, [raw, onNavigate]);
 
   const startEdit = () => { setEditContent(raw); setEditing(true); };
   const cancelEdit = () => { setEditing(false); };
@@ -101,7 +89,7 @@ export default function WikiContent({ path, onBack, onNavigate }: Props) {
             onChange={e => setEditContent(e.target.value)}
           />
         ) : (
-          <div className="md-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(raw, onNavigate) }} />
+          <MarkdownRenderer content={raw} onNavigate={onNavigate} />
         )}
       </div>
     </div>

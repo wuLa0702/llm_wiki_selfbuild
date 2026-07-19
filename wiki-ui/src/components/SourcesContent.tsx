@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { renderMarkdown } from '../utils/markdown';
+import MarkdownRenderer from './MarkdownRenderer';
 
 interface SourceFile { name: string; path: string; type: 'file' | 'directory'; children?: SourceFile[]; }
 
@@ -80,8 +80,10 @@ export default function SourcesContent({ defaultPath, onNavigateToWiki }: { defa
           <div className="flex-1 overflow-y-auto p-6">
             {previewLoading ? (
               <div className="flex items-center justify-center h-full" style={{ color:'var(--muted)' }}>加载中...</div>
+            ) : selectedFile.endsWith('.md') ? (
+              <MarkdownRenderer content={fileContent} />
             ) : (
-              <div className="md-content" dangerouslySetInnerHTML={{ __html: selectedFile.endsWith('.md') ? renderMarkdown(fileContent) : `<pre style="white-space:pre-wrap;font-size:14px">${fileContent}</pre>` }} />
+              <pre className="text-sm whitespace-pre-wrap bg-default-50 p-4 rounded">{fileContent}</pre>
             )}
           </div>
         </div>
