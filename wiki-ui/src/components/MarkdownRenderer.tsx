@@ -1,7 +1,7 @@
 import { marked } from 'marked';
-import { Link, Tooltip } from '@heroui/react';
+import { Link } from '@heroui/react';
 
-interface Props { content: string; onNavigate?: (path: string) => void; }
+interface Props { content: string; onNavigate?: (path: string) => void; plainLinks?: boolean; }
 
 function parseWikilink(raw: string) {
   const idx = raw.indexOf('|');
@@ -10,7 +10,7 @@ function parseWikilink(raw: string) {
   return { path, label };
 }
 
-function InlineTokens({ tokens, onNav }: { tokens: marked.Token[]; onNav?: (path: string) => void }) {
+function InlineTokens({ tokens, onNav, plain }: { tokens: marked.Token[]; onNav?: (path: string) => void; plain?: boolean }) {
   return <>{tokens.map((t, i) => {
     if (t.type === 'text') {
       const text = (t as any).text || '';
@@ -18,14 +18,9 @@ function InlineTokens({ tokens, onNav }: { tokens: marked.Token[]; onNav?: (path
       return <span key={i}>{parts.map((part: string, j: number) => {
         const m = part.match(/^\[\[([^\]]+)\]\]$/);
         if (m) {
-          const { path, label } = parseWikilink(m[1]);
-          return (
-            <Tooltip key={j} content={path} delay={200} closeDelay={100}>
-              <Link className="wikilink text-sm cursor-pointer" onPress={() => onNav?.(path)}>
-                {label}
-              </Link>
-            </Tooltip>
-          );
+          const { label } = parseWikilink(m[1]);
+          if (plain) return <span key={j} className="text-default-500">{label}</span>;
+          return <Link key={j} size="sm" className="text-sm cursor-pointer" onPress={() => onNav?.(m[1].split('|')[0]?.trim() || m[1].trim())}>{label}</Link>;
         }
         return <span key={j}>{part}</span>;
       })}</span>;
@@ -50,7 +45,7 @@ const headingCls: Record<number, string> = {
   6: 'text-xs font-medium mt-2 mb-1',
 };
 
-export default function MarkdownRenderer({ content, onNavigate }: Props) {
+export default function MarkdownRenderer({ content, onNavigate, plainLinks }: Props) {
   const tokens = marked.lexer(content);
 
   return (
@@ -64,7 +59,7 @@ export default function MarkdownRenderer({ content, onNavigate }: Props) {
           }
           case 'paragraph': {
             const t = token as any;
-            return <p key={i} className="mb-2 text-sm leading-relaxed"><InlineTokens tokens={t.tokens} onNav={onNavigate} /></p>;
+            return <p key={i} className="mb-2 text-sm leading-relaxed"><InlineTokens tokens={t.tokens} onNav={onNavigate} plain={plainLinks} /></p>;
           }
           case 'code': {
             const t = token as any;
@@ -80,7 +75,7 @@ export default function MarkdownRenderer({ content, onNavigate }: Props) {
             return (
               <Tag key={i} className={`mb-2 pl-5 text-sm ${t.ordered ? 'list-decimal' : 'list-disc'}`}>
                 {t.items.map((item: any, j: number) => (
-                  <li key={j} className="mb-0.5"><InlineTokens tokens={item.tokens} onNav={onNavigate} /></li>
+                  <li key={j} className="mb-0.5"><InlineTokens tokens={item.tokens} onNav={onNavigate} plain={plainLinks} /></li>
                 ))}
               </Tag>
             );
@@ -110,7 +105,7 @@ export default function MarkdownRenderer({ content, onNavigate }: Props) {
             const t = token as any;
             return (
               <blockquote key={i} className="border-l-3 border-default-300 pl-4 mb-2 text-sm">
-                {t.tokens ? <InlineTokens tokens={t.tokens} onNav={onNavigate} /> : t.text}
+                {t.tokens ? <InlineTokens tokens={t.tokens} onNav={onNavigate} plain={plainLinks} /> : t.text}
               </blockquote>
             );
           }
