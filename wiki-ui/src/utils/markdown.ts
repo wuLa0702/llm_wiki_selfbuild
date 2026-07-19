@@ -23,8 +23,10 @@ export function renderMarkdown(md: string, onNavigate?: (path: string) => void):
     (_, raw: string) => {
       const idx = raw.indexOf('|');
       const path = idx >= 0 ? raw.slice(0, idx).trim() : raw.trim();
-      const label = idx >= 0 ? raw.slice(idx + 1).trim() : path;
-      return `<span class="wikilink" data-wiki-path="${path}">${label}</span>`;
+      const label = idx >= 0
+        ? raw.slice(idx + 1).trim()
+        : (path.split('/').pop() || path).replace(/\.md$/i, '');
+      return `<span class="wikilink" data-wiki-path="${path}" title="${path}">${label}</span>`;
     }
   );
 
