@@ -1,6 +1,4 @@
 import { useEffect, useState, useRef } from 'react';
-import { createRoot } from 'react-dom/client';
-import { Tooltip } from '@heroui/react';
 import { renderMarkdown } from '../utils/markdown';
 
 interface Props { path: string | null; onBack?: () => void; onNavigate?: (path: string) => void; }
@@ -12,7 +10,6 @@ export default function WikiContent({ path, onBack, onNavigate }: Props) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
   const ref = useRef<HTMLDivElement>(null);
-  const tooltipsRef = useRef<(() => void)[]>([]);
 
   useEffect(() => {
     if (!path) return;
@@ -41,35 +38,6 @@ export default function WikiContent({ path, onBack, onNavigate }: Props) {
     el.addEventListener('click', h);
     return () => el.removeEventListener('click', h);
   }, [raw, onNavigate]);
-
-  // Wrap wikilinks with HeroUI Tooltip (portal-based)
-  useEffect(() => {
-    // Cleanup previous tooltips
-    tooltipsRef.current.forEach(fn => fn());
-    tooltipsRef.current = [];
-
-    const el = ref.current;
-    if (!el) return;
-
-    // Wait for DOM to settle
-    const timer = setTimeout(() => {
-      el.querySelectorAll('.wikilink').forEach(link => {
-        const path = link.getAttribute('data-wiki-path') || '';
-        link.removeAttribute('title'); // suppress native tooltip
-
-        const wrapper = document.createElement('span');
-        wrapper.style.display = 'inline';
-        link.parentNode?.insertBefore(wrapper, link);
-        wrapper.appendChild(link);
-
-        const root = createRoot(wrapper);
-        root.render(<Tooltip content={path} delay={200} closeDelay={100}><span /></Tooltip>);
-        tooltipsRef.current.push(() => root.unmount());
-      });
-    }, 0);
-
-    return () => clearTimeout(timer);
-  }, [raw]);
 
   const startEdit = () => { setEditContent(raw); setEditing(true); };
   const cancelEdit = () => { setEditing(false); };
