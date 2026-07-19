@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom';
 
 const navItems = [
   { path: '/chat', label: '对话', icon: '💬' },
+  { path: '/wiki', label: 'Wiki', icon: '📚' },
   { path: '/wiki/home', label: '原始资料', icon: '📖' },
   { path: '/search', label: '检索', icon: '🔍' },
   { path: '/graph', label: '图谱', icon: '🕸️' },
@@ -26,7 +27,7 @@ export default function Sidebar() {
           <NavLink
             key={item.path}
             to={item.path}
-            end={item.path === '/chat'}
+            end
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 rounded transition-colors no-underline whitespace-nowrap ${
                 isActive ? 'menu-item-active' : ''
@@ -37,7 +38,7 @@ export default function Sidebar() {
               fontSize: "var(--fs-md)",
               color: isActive ? 'var(--foreground)' : 'var(--muted)',
               background: isActive ? 'var(--surface-tertiary)' : 'transparent',
-              borderLeft: isActive ? '3px solid #3684FF' : '3px solid transparent',
+              borderLeft: isActive ? '3px solid var(--accent)' : '3px solid transparent',
             })}
           >
             <span className="text-lg flex-shrink-0">{item.icon}</span>
@@ -61,7 +62,7 @@ export default function Sidebar() {
             fontSize: "var(--fs-md)",
             color: isActive ? 'var(--foreground)' : 'var(--muted)',
             background: isActive ? 'var(--surface-tertiary)' : 'transparent',
-            borderLeft: isActive ? '3px solid #3684FF' : '3px solid transparent',
+            borderLeft: isActive ? '3px solid var(--accent)' : '3px solid transparent',
           })}
         >
           <span className="text-lg flex-shrink-0">⚙️</span>

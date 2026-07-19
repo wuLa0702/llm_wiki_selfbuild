@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useTheme } from '@heroui/react';
 import Sidebar from './components/Sidebar';
 import ChatPage from './pages/ChatPage';
+import WikiPage from './pages/WikiPage';
 import HomePage from './pages/HomePage';
 import SearchPage from './pages/SearchPage';
 import GraphPage from './pages/GraphPage';
@@ -33,6 +34,7 @@ export default function App() {
         <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <Routes>
             <Route path="/chat" element={<ChatPage />} />
+            <Route path="/wiki" element={<WikiPage />} />
             <Route path="/wiki/home" element={<HomePage />} />
             <Route path="/search" element={<SearchPage />} />
             <Route path="/graph" element={<GraphPage />} />
