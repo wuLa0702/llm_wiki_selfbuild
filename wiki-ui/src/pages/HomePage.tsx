@@ -1,11 +1,10 @@
-import { useState, useRef } from 'react';
+import { useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import MidPanel from '../components/MidPanel';
 import SourcesContent from '../components/SourcesContent';
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const [selectedPage, setSelectedPage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -24,7 +23,7 @@ export default function HomePage() {
 
   return (
     <div className="flex flex-1 min-h-0">
-      <MidPanel onSelectPage={handleSelectPage} onTabChange={() => setSelectedPage(null)} />
+      <MidPanel onSelectPage={handleSelectPage} />
       <div className="flex-1 flex flex-col min-h-0">
         {/* Persistent top toolbar */}
         <div
@@ -57,7 +56,7 @@ export default function HomePage() {
 
         {/* Content area — unified SourcesContent for both tabs */}
         <div className="flex-1 flex min-h-0">
-          <SourcesContent defaultPath={selectedPage} />
+          <SourcesContent onNavigateToWiki={handleSelectPage} />
         </div>
       </div>
 

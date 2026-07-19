@@ -3,7 +3,7 @@ import { renderMarkdown } from '../utils/markdown';
 
 interface SourceFile { name: string; path: string; type: 'file' | 'directory'; children?: SourceFile[]; }
 
-export default function SourcesContent({ defaultPath }: { defaultPath?: string | null }) {
+export default function SourcesContent({ defaultPath, onNavigateToWiki }: { defaultPath?: string | null; onNavigateToWiki?: (path: string) => void }) {
   const [files, setFiles] = useState<SourceFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState('');
@@ -26,6 +26,10 @@ export default function SourcesContent({ defaultPath }: { defaultPath?: string |
   }, [defaultPath]);
 
   const selectFile = async (path: string) => {
+    if (onNavigateToWiki) {
+      onNavigateToWiki(path);
+      return;
+    }
     setSelectedFile(path);
     setPreviewLoading(true);
     setFileContent('');

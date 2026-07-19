@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 interface FileNode { type: 'file' | 'directory'; size?: number; children?: Record<string, FileNode>; }
 interface QueueJob { job_id: string; source_path: string; status: string; error?: string; result_summary?: string; }
 
-export default function MidPanel({ onSelectPage, onTabChange }: { onSelectPage: (path: string) => void; onTabChange?: (tab: 'wiki' | 'raw') => void }) {
+export default function MidPanel({ onSelectPage, onTabChange, activePath }: { onSelectPage: (path: string) => void; onTabChange?: (tab: 'wiki' | 'raw') => void; activePath?: string | null }) {
   const [tab, setTab] = useState<'wiki' | 'raw'>('wiki');
   const [wikiTree, setWikiTree] = useState<Record<string, FileNode>>({});
   const [rawTree, setRawTree] = useState<Record<string, FileNode>>({});
@@ -54,6 +54,19 @@ export default function MidPanel({ onSelectPage, onTabChange }: { onSelectPage: 
       .catch(() => {});
   };
 
+  // Auto-expand tree to show activePath
+  useEffect(() => {
+    if (!activePath) return;
+    const segments = activePath.split('/').slice(0, -1); // exclude filename
+    const toExpand: Record<string, boolean> = {};
+    let prefix = '';
+    for (const seg of segments) {
+      prefix = prefix ? `${prefix}/${seg}` : seg;
+      toExpand[prefix] = true;
+    }
+    setExpanded(prev => ({ ...prev, ...toExpand }));
+  }, [activePath]);
+
   const toggleExpand = (path: string) => setExpanded(prev => ({ ...prev, [path]: !prev[path] }));
 
   const countFiles = (children: Record<string, FileNode>): number =>
@@ -84,12 +97,19 @@ export default function MidPanel({ onSelectPage, onTabChange }: { onSelectPage: 
               </li>
             );
           }
+          const isActive = activePath && (fullPath === activePath || fullPath === `wiki/${activePath}` || fullPath === `raw/${activePath}`);
           return (
             <li key={fullPath}>
-              <div className="flex items-center gap-1.5 px-3 py-1.5 cursor-pointer" style={{ color: 'var(--default-foreground)', fontSize: "var(--fs-md)", paddingLeft: prefix ? 40 : 8 }}
+              <div className="flex items-center gap-1.5 px-3 py-1.5 cursor-pointer rounded"
+                style={{
+                  color: isActive ? 'var(--foreground)' : 'var(--default-foreground)',
+                  fontSize: "var(--fs-md)",
+                  paddingLeft: prefix ? 40 : 8,
+                  background: isActive ? 'var(--surface-tertiary)' : 'transparent',
+                }}
                 onClick={() => onSelectPage(fullPath)}
-                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-tertiary)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--surface-tertiary)'; }}
+                onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
               >
                 <span>📄</span>
                 <span className="truncate">{name}</span>

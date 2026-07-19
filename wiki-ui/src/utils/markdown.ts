@@ -17,10 +17,15 @@ export function stripFrontmatter(content: string): string {
 export function renderMarkdown(md: string, onNavigate?: (path: string) => void): string {
   const body = stripFrontmatter(md);
 
-  // Convert [[wikilinks]] to clickable spans before marked runs
+  // Convert [[path]] and [[path|text]] to clickable spans before marked runs
   const withLinks = body.replace(
     /\[\[([^\]]+)\]\]/g,
-    (_, path) => `<span class="wikilink" data-wiki-path="${path}">${path}</span>`
+    (_, raw: string) => {
+      const idx = raw.indexOf('|');
+      const path = idx >= 0 ? raw.slice(0, idx).trim() : raw.trim();
+      const label = idx >= 0 ? raw.slice(idx + 1).trim() : path;
+      return `<span class="wikilink" data-wiki-path="${path}">${label}</span>`;
+    }
   );
 
   const html = marked.parse(withLinks, { breaks: true }) as string;
