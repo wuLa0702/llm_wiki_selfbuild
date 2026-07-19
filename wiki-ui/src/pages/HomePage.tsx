@@ -41,13 +41,13 @@ export default function HomePage() {
             </button>
             <button
               onClick={() => fileInputRef.current?.click()}
-              style={{ height: "2.25rem", background: 'var(--surface-secondary)', color: '#FFF', border: 'none', borderRadius: "0.375rem", padding: '0 14px', fontSize: "var(--fs-md)", cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: "0.25rem" }}
+              style={{ height: "2.25rem", background: 'var(--accent)', color: 'var(--accent-foreground)', border: 'none', borderRadius: "0.375rem", padding: '0 14px', fontSize: "var(--fs-md)", cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: "0.25rem" }}
             >
               <span style={{ fontSize: "var(--fs-lg)", fontWeight: 700 }}>+</span> 导入
             </button>
             <button
               onClick={() => folderInputRef.current?.click()}
-              style={{ height: "2.25rem", background: 'var(--surface-secondary)', color: '#FFF', border: 'none', borderRadius: "0.375rem", padding: '0 14px', fontSize: "var(--fs-md)", cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: "0.25rem" }}
+              style={{ height: "2.25rem", background: 'var(--accent)', color: 'var(--accent-foreground)', border: 'none', borderRadius: "0.375rem", padding: '0 14px', fontSize: "var(--fs-md)", cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: "0.25rem" }}
             >
               <span style={{ fontSize: "var(--fs-lg)", fontWeight: 700 }}>+</span> 文件夹
             </button>

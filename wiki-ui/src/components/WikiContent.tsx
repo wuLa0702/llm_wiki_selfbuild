@@ -79,13 +79,6 @@ export default function WikiContent({ path, onBack, onNavigate }: Props) {
       <div className="flex items-center justify-between px-4 border-b flex-shrink-0" style={{ borderColor: 'var(--border)', background: 'var(--surface)', height: "2.625rem" }}>
         <span style={{ color: 'var(--foreground)', fontSize: "var(--fs-md)", fontWeight: 500 }}>📄 {fileName}</span>
         <div className="flex gap-2 items-center">
-          {path?.startsWith('entities/') || path?.startsWith('concepts/') || path?.startsWith('sources/') ? (
-            <>
-              <button style={{ height: "2rem", background:'var(--surface-secondary)', color:'var(--muted)', border:'1px solid #333', borderRadius: "0.25rem", padding:'0 10px', fontSize: "var(--fs-sm)", cursor:'pointer', display:'inline-flex', alignItems:'center' }} title="刷新">🔄</button>
-              <button style={{ height: "2rem", background:'var(--accent)', color:'var(--accent-foreground)', border:'none', borderRadius: "0.25rem", padding:'0 12px', fontSize: "var(--fs-sm)", cursor:'pointer', display:'inline-flex', alignItems:'center' }} title="导入文件">+ 导入</button>
-              <button style={{ height: "2rem", background:'var(--surface-secondary)', color:'var(--muted)', border:'1px solid #333', borderRadius: "0.25rem", padding:'0 10px', fontSize: "var(--fs-sm)", cursor:'pointer', display:'inline-flex', alignItems:'center' }} title="导入文件夹">+ 文件夹</button>
-            </>
-          ) : null}
           {editing ? (
             <>
               <button onClick={saveEdit} style={{ height: "2rem", background:'var(--accent)', color:'var(--accent-foreground)', border:'none', borderRadius: "0.25rem", padding:'0 14px', fontSize: "var(--fs-sm)", cursor:'pointer', display:'inline-flex', alignItems:'center' }}>保存</button>
