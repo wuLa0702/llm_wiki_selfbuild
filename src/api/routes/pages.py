@@ -70,6 +70,15 @@ async def list_pages(page_type: str | None = None, limit: int = 50, offset: int 
     return PagesListResponse(total=total, pages=pages_out)
 
 
+@router.get("/v1/pages/{page_path:path}/references")
+async def get_page_references(page_path: str):
+    """查询所有引用了该页面的文档路径列表"""
+    logger.info("GET /v1/pages/%s/references", page_path)
+    repo = WikiRepository()
+    refs = repo.get_referencing_pages(page_path)
+    return {"path": page_path, "references": refs, "count": len(refs)}
+
+
 @router.get("/v1/pages/{page_path:path}", response_model=PageDetailResponse)
 async def get_page_detail(page_path: str, request: Request):
     """获取单个 Wiki 页面的完整内容 + 元数据（JSON）"""
@@ -110,6 +119,21 @@ async def get_page_detail(page_path: str, request: Request):
 
     visibility = meta.get("visibility", "public")
 
+    # 查找关联的导入队列任务
+    ingest_job_id: str | None = None
+    try:
+        file_name = os.path.basename(page_path)
+        conn = repo._get_connection()
+        row = conn.execute(
+            "SELECT job_id FROM ingest_queue WHERE source_path LIKE ? ORDER BY updated_at DESC LIMIT 1",
+            (f"%{file_name}%",),
+        ).fetchone()
+        conn.close()
+        if row:
+            ingest_job_id = row["job_id"]
+    except Exception:
+        pass
+
     return PageDetailResponse(
         path=page_path,
         title=meta.get("title", ""),
@@ -121,6 +145,8 @@ async def get_page_detail(page_path: str, request: Request):
         visibility=visibility,
         created_at=meta.get("created_at", ""),
         updated_at=meta.get("updated_at", ""),
+        word_count=meta.get("word_count", 0),
+        ingest_job_id=ingest_job_id,
     )
 
 

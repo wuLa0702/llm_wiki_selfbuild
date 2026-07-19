@@ -267,6 +267,24 @@ class WikiRepository:
         conn.close()
         return [dict(r) for r in rows]
 
+    def get_referencing_pages(self, path: str) -> list[str]:
+        """
+        返回所有引用了指定页面的文档路径列表
+
+        Args:
+            path: 目标页面路径
+
+        Returns:
+            引用该页面的源页面路径列表
+        """
+        conn = self._get_connection()
+        rows = conn.execute(
+            "SELECT source_path FROM page_links WHERE target_path = ?",
+            (path,),
+        ).fetchall()
+        conn.close()
+        return [r["source_path"] for r in rows]
+
     def get_orphan_pages(self) -> list[str]:
         """获取孤儿页（Phase 2 实现）"""
         raise NotImplementedError("Phase 2 实现")

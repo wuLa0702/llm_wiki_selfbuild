@@ -60,3 +60,5 @@ class PageDetailResponse(BaseModel):
     visibility: str = "public"
     created_at: str = ""
     updated_at: str = ""
+    word_count: int = 0
+    ingest_job_id: str | None = None
