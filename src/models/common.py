@@ -11,6 +11,12 @@ class RootResponse(BaseModel):
 class HealthResponse(BaseModel):
     """健康检查"""
     status: str = "ok"
+    version: str = "0.1.0"
+    uptime_seconds: float = 0.0
+    total_pages: int = 0
+    graph_nodes: int = 0
+    graph_edges: int = 0
+    ingest_queue_pending: int = 0
 
 
 class WatcherStatusResponse(BaseModel):

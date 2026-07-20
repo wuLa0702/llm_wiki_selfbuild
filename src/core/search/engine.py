@@ -90,11 +90,30 @@ class SearchEngine:
             logger.warning("未知搜索模式 | method=%s", method)
             return []
 
+    def _rebuild_bm25_if_dirty(self) -> bool:
+        """如果 BM25 索引脏，扫描 wiki/ 目录重建
+
+        Returns:
+            True 重建成功或无需重建，False 重建失败
+        """
+        if self.bm25.is_built:
+            return True
+        logger.info("BM25 索引脏，自动重建...")
+        try:
+            pages = self._collect_pages("wiki")
+            if pages:
+                self.bm25.build_index(pages)
+                logger.info("BM25 索引重建完成 | pages=%d", len(pages))
+            else:
+                self.bm25._dirty = False  # 无页面也清除脏标记，避免每次空跑
+            return True
+        except Exception:
+            logger.exception("BM25 索引重建失败")
+            return False
+
     def _search_bm25(self, query: str, k: int = 10) -> list[dict]:
-        """纯 BM25 搜索"""
-        # 如果索引脏，懒重建
-        if not self.bm25.is_built:
-            logger.debug("BM25 索引脏，跳过 BM25 搜索")
+        """纯 BM25 搜索（自动重建脏索引）"""
+        if not self._rebuild_bm25_if_dirty():
             return []
         return self.bm25.search(query, k=k)
 

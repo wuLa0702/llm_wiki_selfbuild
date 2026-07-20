@@ -119,18 +119,20 @@ async def get_page_detail(page_path: str, request: Request):
 
     visibility = meta.get("visibility", "public")
 
-    # 查找关联的导入队列任务
+    # 查找关联的导入队列任务（含原始来源文件路径）
     ingest_job_id: str | None = None
+    source_file: str | None = None
     try:
         file_name = os.path.basename(page_path)
         conn = repo._get_connection()
         row = conn.execute(
-            "SELECT job_id FROM ingest_queue WHERE source_path LIKE ? ORDER BY updated_at DESC LIMIT 1",
+            "SELECT job_id, source_path FROM ingest_queue WHERE source_path LIKE ? ORDER BY updated_at DESC LIMIT 1",
             (f"%{file_name}%",),
         ).fetchone()
         conn.close()
         if row:
             ingest_job_id = row["job_id"]
+            source_file = row["source_path"]
     except Exception:
         pass
 
@@ -147,6 +149,7 @@ async def get_page_detail(page_path: str, request: Request):
         updated_at=meta.get("updated_at", ""),
         word_count=meta.get("word_count", 0),
         ingest_job_id=ingest_job_id,
+        source_file=source_file,
     )
 
 

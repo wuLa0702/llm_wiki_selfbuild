@@ -62,3 +62,4 @@ class PageDetailResponse(BaseModel):
     updated_at: str = ""
     word_count: int = 0
     ingest_job_id: str | None = None
+    source_file: str | None = None

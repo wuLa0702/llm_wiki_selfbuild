@@ -1,5 +1,6 @@
 """路由: 杂项 — /, /health, /v1/query, /v1/usage, /v1/watcher/*, /v1/privacy/*"""
 import logging
+import sqlite3
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -32,7 +33,59 @@ async def root():
 @router.get("/health", response_model=HealthResponse)
 async def health():
     logger.debug("health endpoint 被调用")
-    return HealthResponse()
+
+    import time
+
+    # 近似运行时间
+    startup_time = getattr(health, "_startup_ts", None)
+    if startup_time is None:
+        health._startup_ts = time.time()
+        startup_time = time.time()
+    uptime = time.time() - startup_time
+
+    # 页面数
+    total_pages = 0
+    graph_nodes = 0
+    graph_edges = 0
+    ingest_pending = 0
+
+    try:
+        from src.db.repository import WikiRepository
+        repo = WikiRepository()
+        all_pages = repo.get_all_pages()
+        total_pages = len(all_pages) if all_pages else 0
+    except Exception:
+        pass
+
+    try:
+        from src.core.compiler import WikiCompiler
+        compiler = WikiCompiler()
+        g = compiler.graph.to_dict(repo=compiler.repo)
+        graph_nodes = len(g.get("nodes", []))
+        graph_edges = len(g.get("edges", []))
+    except Exception:
+        pass
+
+    try:
+        from src.app_state import get_ingest_queue
+        q = get_ingest_queue()
+        if q and hasattr(q, "db_path"):
+            conn = sqlite3.connect(q.db_path)
+            row = conn.execute("SELECT COUNT(*) FROM ingest_queue WHERE status='pending'").fetchone()
+            ingest_pending = row[0] if row else 0
+            conn.close()
+    except Exception:
+        pass
+
+    return HealthResponse(
+        status="ok",
+        version="0.1.0",
+        uptime_seconds=round(uptime, 1),
+        total_pages=total_pages,
+        graph_nodes=graph_nodes,
+        graph_edges=graph_edges,
+        ingest_queue_pending=ingest_pending,
+    )
 
 
 # ------------------------------------------------------------------

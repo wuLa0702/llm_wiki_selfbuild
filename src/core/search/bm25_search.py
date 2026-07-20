@@ -66,11 +66,6 @@ class BM25Search:
             len(self._paths), sum(len(t) for t in tokenized_corpus),
         )
 
-    def _ensure_built(self) -> None:
-        """确保索引已构建（如果脏则跳过，由调用方触发重建）"""
-        if self._dirty:
-            logger.debug("BM25 索引为脏状态，需调用 build_index() 重建")
-
     # ------------------------------------------------------------------
     # 搜索
     # ------------------------------------------------------------------
