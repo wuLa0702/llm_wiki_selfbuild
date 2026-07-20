@@ -1,0 +1,153 @@
+# HeroUI → shadcn/ui + agent-elements 迁移审计
+
+> 生成时间：2026-07-19
+> 用途：确认 scope，指导分步实施
+
+---
+
+## 一、HeroUI 使用全景
+
+### 文件清单（7 个）
+
+| 文件 | 引入的 HeroUI 组件 | 用途 |
+|------|-------------------|------|
+| `wiki-ui/src/index.css` | `@import "@heroui/styles"` | 全局 CSS 变量体系（theme tokens） |
+| `wiki-ui/src/App.tsx` | `useTheme` | 初始化主题（从 localStorage 读，调用 `setTheme()`） |
+| `wiki-ui/src/pages/SettingsPage.tsx` | `useTheme` | InterfaceSettings 中切换 light/dark |
+| `wiki-ui/src/components/WikiContent.tsx` | `Card, CardHeader, CardContent, Chip, Link, Button, Tooltip` | Wiki 文档详情页 |
+| `wiki-ui/src/pages/TestCardPage.tsx` | `Card, CardHeader, CardContent, Chip, Link, Button, Tooltip` | 孤立测试页（迁移后可删除） |
+| `wiki-ui/src/pages/ChatPage.tsx` | `Button, Card, CardContent, Avatar, AvatarFallback, Chip, TextArea, ToggleButtonGroup, ToggleButton, ScrollShadow, EmptyState` | 对话页面 |
+| `wiki-ui/src/components/MarkdownRenderer.tsx` | `Link` | Markdown 中的 `[[wikilinks]]` 渲染 |
+
+### 使用的 HeroUI 组件汇总
+
+| 组件 | 使用文件数 | shadcn/ui 替代品 |
+|------|:---------:|-----------------|
+| `Card` | 3 | `card.tsx`（shadcn） |
+| `CardHeader` | 3 | 同上（shadcn card header） |
+| `CardContent` | 3 | 同上（shadcn card content） |
+| `Button` | 3 | `button.tsx`（shadcn） |
+| `Chip` | 3 | `badge.tsx`（shadcn） |
+| `Link` | 3 | `<a>` + `button variant="link"` 或自定义 |
+| `Tooltip` | 2 | `tooltip.tsx`（shadcn） |
+| `useTheme` | 2 | Tailwind `class` 策略 + localStorage 手写 |
+| `Avatar` | 1 | `avatar.tsx`（shadcn） |
+| `AvatarFallback` | 1 | 同上 |
+| `TextArea` | 1 | `textarea.tsx`（shadcn） |
+| `ScrollShadow` | 1 | 原生 `overflow-y-auto` |
+| `EmptyState` | 1 | 手写空态组件 |
+| `ToggleButtonGroup` | 1 | `toggle-group.tsx`（shadcn） |
+| `ToggleButton` | 1 | 同上 |
+
+### HeroUI CSS 变量依赖
+
+当前代码中大量使用 HeroUI 提供的 CSS 变量：
+
+```
+var(--background)         → 背景色
+var(--surface)            → 面板/卡片背景
+var(--surface-secondary)  → 次级面板
+var(--surface-tertiary)   → 高亮面板
+var(--foreground)         → 文字主色
+var(--default-foreground) → 默认文字
+var(--muted)              → 次要文字
+var(--accent)             → 强调色
+var(--accent-foreground)  → 强调色上的文字
+var(--border)             → 边框色
+var(--default-100/200/300/400/500) → HeroUI 语义色阶
+```
+
+这些需要在 `design-system.md` 中重新定义，并用 Tailwind CSS v4 的 `@theme` 指令映射为 Tailwind tokens。
+
+---
+
+## 二、agent-elements 兼容性检查
+
+| 条件 | 状态 | 说明 |
+|------|:----:|------|
+| React 19 | ✅ | 项目已用 React 19 |
+| Tailwind v4 | ✅ | 已用 `@tailwindcss/vite` |
+| shadcn/ui 初始化 | ❌ **未初始化** | 需要先 `npx shadcn@latest init` |
+| 安装方式 | 📦 | `npx shadcn@latest add https://agent-elements.21st.dev/r/agent-chat.json` |
+| 备选方案 | 📦 | `npm install @21st-sdk/react ai @ai-sdk/react`（npm 包，预编译 CSS） |
+
+**建议走 shadcn registry 路线**，因为项目已确定 shadcn/ui 为基准，且 agent-elements 原生就是 shadcn registry 组件。
+
+---
+
+## 三、shadcn/ui 模板兼容性
+
+| 模板 | 链接 | 兼容性 |
+|------|------|:------:|
+| Sidebar collapsible items | `shadcn.io/blocks/sidebar-collapsible-items` | ✅ shadcn 官方块 |
+| Content1 | `shadcnblocks.com/block/content1` | ✅ 纯 Tailwind，依赖 shadcn button |
+| agent-elements | `agent-elements.21st.dev` | ✅ 要求 shadcn init + Tailwind v4 |
+
+---
+
+## 四、迁移文件清单（最终）
+
+### 需要修改的文件
+
+| 文件 | 操作 | 原因 |
+|------|------|------|
+| `wiki-ui/package.json` | 修改 | 移除 `@heroui/react`, `@heroui/styles`, `framer-motion`；新增 shadcn/ui 组件依赖 |
+| `wiki-ui/src/index.css` | 重写 | 移除 `@import "@heroui/styles"`，替换为 Tailwind v4 `@theme` + CSS 变量 |
+| `wiki-ui/src/App.tsx` | 修改 | `useTheme()` → Tailwind class 策略 |
+| `wiki-ui/src/pages/SettingsPage.tsx` | 修改 | `useTheme()` → Tailwind 主题切换 |
+| `wiki-ui/src/components/WikiContent.tsx` | 重写 | HeroUI Card/Chip/Link/Button/Tooltip → shadcn |
+| `wiki-ui/src/pages/TestCardPage.tsx` | **删除** | 迁移完成后清理 |
+| `wiki-ui/src/pages/ChatPage.tsx` | **全面重写** | HeroUI 依赖最重，按 agent-elements + shadcn 重新实现 |
+| `wiki-ui/src/components/MarkdownRenderer.tsx` | 修改 | `@heroui/react` Link → 普通 `<a>` 或 shadcn button variant |
+
+### 需要新建的文件
+
+| 文件 | 说明 |
+|------|------|
+| `design-system.md` | 全局视觉规范（本项目） |
+| `wiki-ui/src/lib/utils.ts` | shadcn `cn()` 工具函数 |
+| `wiki-ui/components/ui/*.tsx` | shadcn 组件（button, card, badge, tooltip, avatar, textarea, toggle 等） |
+| `wiki-ui/src/components/agent-elements/agent-chat.tsx` | agent-elements 聊天组件 |
+| `wiki-ui/src/components/agent-elements/tools/*.tsx` | agent-elements 工具卡片 |
+| `wiki-ui/src/hooks/useTheme.ts` | 替代 HeroUI `useTheme` 的自定义 hook |
+
+### 合计
+
+- **修改：** 7 个文件
+- **删除：** 1 个文件（TestCardPage.tsx）
+- **新建：** ~12 个文件（shadcn 组件 + agent-elements + hooks + 设计规范）
+
+---
+
+## 五、实施顺序建议
+
+```
+第一步：shadcn 基础设施
+  ├── npx shadcn@latest init
+  ├── 安装必需组件（button, card, badge, tooltip, avatar, textarea, toggle-group）
+  └── 建 src/lib/utils.ts
+
+第二步：设计系统
+  └── 写 design-system.md → 配 index.css 的 @theme 变量
+
+第三步：侧边栏（独立模块，引用模板）
+  └── 用 shadcn sidebar-collapsible-items 重写 Sidebar.tsx
+
+第四步：Wiki 详情页（独立模块）
+  ├── 重写 WikiContent.tsx（shadcn card + badge + tooltip）
+  └── 改造 MarkdownRenderer.tsx（移除 @heroui Link）
+
+第五步：Agent 对话页（独立模块）
+  ├── npx shadcn add agent-chat
+  └── 重写 ChatPage.tsx → 使用 agent-elements
+
+第六步：主题系统（跨页面）
+  ├── 写 useTheme.ts hook
+  ├── 改造 App.tsx
+  └── 改造 SettingsPage.tsx
+
+第七步：清理
+  ├── 删除 TestCardPage.tsx
+  ├── 从 package.json 移除 @heroui/react, @heroui/styles, framer-motion
+  └── npm uninstall
+```

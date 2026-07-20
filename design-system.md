@@ -1,0 +1,340 @@
+# LLM Wiki 设计系统
+
+> 本文件定义 LLM Wiki 前端的全局视觉规范。
+> 所有页面**必须**严格遵循此规范。
+> 技术实现：Tailwind CSS v4 `@theme` 指令 + `index.css` CSS 变量
+
+---
+
+## 一、色彩体系
+
+### 语义色板
+
+| Token | Light | Dark | 用途 |
+|-------|-------|------|------|
+| `--background` | `#ffffff` | `#0a0a0b` | 页面主背景 |
+| `--foreground` | `#09090b` | `#fafafa` | 主要文字 |
+| `--card` | `#ffffff` | `#141416` | 卡片/面板背景 |
+| `--card-foreground` | `#09090b` | `#fafafa` | 卡片内文字 |
+| `--popover` | `#ffffff` | `#141416` | 弹出层背景 |
+| `--popover-foreground` | `#09090b` | `#fafafa` | 弹出层文字 |
+| `--primary` | `#18181b` | `#fafafa` | 主要品牌色（按钮等） |
+| `--primary-foreground` | `#fafafa` | `#18181b` | 主要色上文字 |
+| `--secondary` | `#f4f4f5` | `#27272a` | 次要面 |
+| `--secondary-foreground` | `#18181b` | `#fafafa` | 次要面文字 |
+| `--muted` | `#f4f4f5` | `#27272a` | 弱化面 |
+| `--muted-foreground` | `#71717a` | `#a1a1aa` | 弱化文字 |
+| `--accent` | `#f4f4f5` | `#27272a` | 强调色（hover/highlight） |
+| `--accent-foreground` | `#18181b` | `#fafafa` | 强调色上文字 |
+| `--destructive` | `#ef4444` | `#ef4444` | 危险/删除操作 |
+| `--destructive-foreground` | `#fafafa` | `#fafafa` | 危险色上文字 |
+| `--border` | `#e4e4e7` | `#27272a` | 边框/分割线 |
+| `--input` | `#e4e4e7` | `#27272a` | 输入框边框 |
+| `--ring` | `#18181b` | `#fafafa` | 焦点环 |
+
+### 知识类型色（wiki page_type）
+
+| 类型 | 色值 |
+|------|------|
+| `entity`（实体） | `--color-type-entity` → `#3b82f6`（蓝） |
+| `concept`（概念） | `--color-type-concept` → `#8b5cf6`（紫） |
+| `source`（引用源） | `--color-type-source` → `#10b981`（绿） |
+| `query`（检索问句） | `--color-type-query` → `#f59e0b`（橙） |
+| `comparison`（整合摘要） | `--color-type-comparison` → `#ec4899`（粉） |
+
+### 语义映射
+
+```
+bg-background          — 页面背景
+bg-card                — 卡片背景
+bg-muted               — 弱化区块
+bg-secondary           — 次要面
+bg-destructive         — 危险背景
+text-foreground        — 正文
+text-muted-foreground  — 次要说明文字
+text-primary           — 强调文字
+text-destructive       — 危险文字
+border                 — 边框
+ring                   — 焦点环
+```
+
+---
+
+## 二、圆角（Border Radius）
+
+| Token | 值 | 用途 |
+|-------|----|------|
+| `--radius-xs` | `0.25rem` (4px) | 小型标签、微元素 |
+| `--radius-sm` | `0.375rem` (6px) | 输入框、小按钮 |
+| `--radius-md` | `0.5rem` (8px) | **默认值** — 卡片、面板、中等按钮 |
+| `--radius-lg` | `0.75rem` (12px) | 大卡片、对话框 |
+| `--radius-xl` | `1rem` (16px) | 弹窗、大面板 |
+| `--radius-2xl` | `1.5rem` (24px) | 特殊装饰元素 |
+| `--radius-full` | `9999px` | 圆形（头像、胶囊标签） |
+
+**规则：** 
+- 所有交互元素（按钮、输入框、标签）使用 `--radius-sm` 或 `--radius-md`
+- 容器元素（卡片、面板、边栏）使用 `--radius-md` 或 `--radius-lg`
+- 模态/弹窗使用 `--radius-xl`
+- **禁止混用不同圆角层级**
+
+---
+
+## 三、间距（Spacing）
+
+基于 `0.25rem` (4px) 的 4 点网格：
+
+| Token | rem | px | 典型用途 |
+|-------|-----|----|---------|
+| `--space-1` | `0.25rem` | 4px | 微间距 |
+| `--space-2` | `0.5rem` | 8px | 紧凑间距 |
+| `--space-3` | `0.75rem` | 12px | 标签内 padding |
+| `--space-4` | `1rem` | 16px | **卡片 padding**，元素间距 |
+| `--space-5` | `1.25rem` | 20px | 段落间距 |
+| `--space-6` | `1.5rem` | 24px | 区块间距 |
+| `--space-8` | `2rem` | 32px | 大区块间距 |
+| `--space-10` | `2.5rem` | 40px | 页面边距 |
+| `--space-12` | `3rem` | 48px | 大幅分隔 |
+
+**规则：** 
+- 卡片内 padding：`--space-4`（16px）
+- 元素间 gap：`--space-3` 或 `--space-4`
+- 页面边距：`--space-6`（桌面）/ `--space-4`（移动端）
+- **尽量使用 gap 而非 margin**
+
+---
+
+## 四、字号（Typography）
+
+| Token | rem | px | 行高 | 字重 | 用途 |
+|-------|-----|----|------|------|------|
+| `--fs-xs` | `0.75rem` | 12px | 1.5 | 400 | 辅助信息、元数据 |
+| `--fs-sm` | `0.875rem` | 14px | 1.5 | 400 | 正文、说明文字 |
+| `--fs-md` | `0.9375rem` | 15px | 1.5 | 400 | **默认字号** |
+| `--fs-base` | `1rem` | 16px | 1.5 | 400 | 长文阅读 |
+| `--fs-lg` | `1.125rem` | 18px | 1.4 | 600 | 小标题 |
+| `--fs-xl` | `1.25rem` | 20px | 1.4 | 600 | 中标题 |
+| `--fs-2xl` | `1.5rem` | 24px | 1.3 | 700 | 大标题 |
+| `--fs-3xl` | `1.875rem` | 30px | 1.2 | 700 | 页面标题 |
+
+**字体栈：**
+```css
+font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+             "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+```
+
+**规则：**
+- 页面大标题用 `--fs-3xl`
+- 区块标题用 `--fs-xl` 或 `--fs-2xl`
+- 正文用 `--fs-sm` 或 `--fs-md`
+- 辅助信息（时间戳、元数据）用 `--fs-xs`
+- Markdown 正文行高 `1.7`，代码块用 `font-mono`
+
+---
+
+## 五、阴影（Shadow）
+
+| Token | 值 | 用途 |
+|-------|----|------|
+| `--shadow-sm` | `0 1px 2px 0 rgb(0 0 0 / 0.05)` | 小元素、hover 态 |
+| `--shadow-md` | `0 4px 6px -1px rgb(0 0 0 / 0.1)` | 卡片、下拉菜单 |
+| `--shadow-lg` | `0 10px 15px -3px rgb(0 0 0 / 0.1)` | 弹窗、边栏浮层 |
+| `--shadow-xl` | `0 20px 25px -5px rgb(0 0 0 / 0.1)` | 模态框 |
+| `--shadow-ring` | `0 0 0 2px var(--ring)` | 焦点环 |
+
+**暗色模式阴影调整：**
+- 暗色下阴影透明度减半（`rgb(0 0 0 / 0.05)` → 视觉上更柔和）
+- 用 `box-shadow` 的颜色通道控制，不改变 spread
+
+---
+
+## 六、过渡（Transition）
+
+| Token | 值 | 用途 |
+|-------|----|------|
+| `--transition-fast` | `150ms ease` | hover、active 态 |
+| `--transition-normal` | `200ms ease` | 默认 |
+| `--transition-slow` | `300ms ease` | 面板展开/收起 |
+
+---
+
+## 七、布局规范
+
+### 整体结构
+
+```
+┌──────────────────────────────────────┐
+│ 顶部导航（可选）                      │
+├──────────┬───────────────────────────┤
+│ 左侧边栏  │  主内容区                  │
+│ 260px    │  (flex-1)                 │
+│ (可折叠)  │                           │
+│          │  置顶头部（sticky）         │
+│          │  ┌─────────────────────┐  │
+│          │  │ 元信息 + 双向引用     │  │
+│          │  └─────────────────────┘  │
+│          │  滚动正文                  │
+│          │  ┌─────────────────────┐  │
+│          │  │ Markdown 内容        │  │
+│          │  └─────────────────────┘  │
+├──────────┴───────────────────────────┤
+│ 底部活动面板（可选）                   │
+└──────────────────────────────────────┘
+```
+
+### 左侧边栏规范
+
+- 宽度：260px（展开） / 0（折叠）
+- 折叠按钮：6px 窄条
+- 菜单项高度：42px
+- 菜单项圆角：`--radius-md`
+- 激活态：左 3px 强调条 + 背景色变化
+
+### Wiki 详情页置顶头部
+
+- `position: sticky; top: 0; z-index: 10`
+- 背景色 `--card`，底部 1px `--border` 分割
+- 高度自适应（content-driven）
+- 包含：页面类型标签、标题、创建时间、来源溯源、双向引用链接
+
+### Markdown 正文
+
+- 最大宽度：960px（mx-auto）
+- 内边距：`--space-6`
+- 行高：1.7
+- 代码块：圆角 `--radius-md`，背景 `--muted`，衬线字体 `font-mono`
+
+---
+
+## 八、组件规范
+
+### 按钮（Button）
+
+| 变体 | 背景 | 文字 | 边框 | 圆角 |
+|------|------|------|------|------|
+| `default` | `primary` | `primary-foreground` | 无 | `--radius-md` |
+| `secondary` | `secondary` | `secondary-foreground` | 无 | `--radius-md` |
+| `outline` | 透明 | `foreground` | `border` | `--radius-md` |
+| `ghost` | 透明（hover: accent） | `foreground` | 无 | `--radius-md` |
+| `destructive` | `destructive` | `destructive-foreground` | 无 | `--radius-md` |
+
+- 默认高度：`2.25rem` (36px) / `h-9`
+- 小号：`1.75rem` (28px) / `h-7`
+- 大号：`2.5rem` (40px) / `h-10`
+
+### 卡片（Card）
+
+- 背景：`--card`
+- 圆角：`--radius-lg`
+- 边框：1px solid `--border`
+- padding：`--space-4`（card content）
+- 阴影：无（border 足矣），hover 时可加 `--shadow-sm`
+
+### 标签/徽标（Badge）
+
+- 圆角：`--radius-sm`
+- 字号：`--fs-xs`
+- 内边距：`0.125rem 0.5rem`
+- 使用知识类型色区分语义
+
+### 输入框（Input / Textarea）
+
+- 背景：透明（父容器继承）
+- 边框：1px solid `--input`
+- 圆角：`--radius-md`
+- 聚焦态：`ring-2 ring-ring`
+- 占位文字颜色：`muted-foreground`
+
+---
+
+## 九、暗色模式
+
+采用 Tailwind `class` 策略：
+
+```css
+/* index.css */
+@custom-variant dark (&:where(.dark, .dark *));
+```
+
+切换方式：
+```typescript
+// 设置 dark class
+document.documentElement.classList.add('dark')
+document.documentElement.classList.remove('dark')
+```
+
+所有 CSS 变量在 `.dark` 选择器下覆盖为暗色值。
+
+---
+
+## 十、z-index 层级
+
+| 层 | 值 | 元素 |
+|----|-----|------|
+| base | `0` | 页面内容 |
+| sticky | `10` | 置顶头部 |
+| dropdown | `50` | 下拉菜单 |
+| sidebar | `40` | 移动端浮层边栏 |
+| modal | `50` | 模态框背景 |
+| modal-content | `60` | 模态框内容 |
+| tooltip | `70` | 工具提示 |
+| toast | `80` | 通知提示 |
+
+---
+
+## 附录：Tailwind v4 `@theme` 映射
+
+在 `index.css` 中使用：
+
+```css
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme inline {
+  /* 色彩 */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* 圆角 */
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1);
+
+  /* 字体 */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+}
+```
+
+---
+
+> **维护规则：**
+> 1. 所有前端代码**必须**使用此规范中的 token，禁止硬编码色值/圆角/字号
+> 2. 新增视觉 token 必须先更新此文档
+> 3. 此文档是唯一真相源，不重复定义到多个位置
