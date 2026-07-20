@@ -49,9 +49,9 @@ app.include_router(system.router)
 
 logger.info("LLM Wiki API 启动 | version=0.1.0")
 
-# ── SPA 前端（wiki-ui/dist/） ──
-# 构建后只需 python -m uvicorn src.main:app，不需要另开 npm run dev
-_ui_dist = Path(__file__).resolve().parents[1] / "wiki-ui" / "dist"
+# ── SPA 前端（wiki-ui-v2/dist/） ──
+# 迁移自 HeroUI → shadcn/ui，见 migration-audit.md
+_ui_dist = Path(__file__).resolve().parents[1] / "wiki-ui-v2" / "dist"
 if _ui_dist.is_dir():
     app.mount("/assets", StaticFiles(directory=str(_ui_dist / "assets")), name="ui_assets")
 

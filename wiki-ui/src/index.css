@@ -3,11 +3,8 @@
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 
-/* HeroUI styles — imported layer by layer (no monolithic import) */
-@import "@heroui/styles/base" layer(base);
-@import "@heroui/styles/themes/default" layer(theme);
-@import "@heroui/styles/utilities";
-@import "@heroui/styles/variants";
+/* HeroUI v3 — single import (replaces v2 layer-by-layer approach) */
+@import "@heroui/styles";
 
 /* ===== App-specific styles below ===== */
 
