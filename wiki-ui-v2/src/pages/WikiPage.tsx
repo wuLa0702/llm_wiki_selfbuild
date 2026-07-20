@@ -158,7 +158,7 @@ export default function WikiPage() {
     const pp = selectedPage.startsWith('wiki/') ? selectedPage.slice(5) : selectedPage;
     try {
       const r = await fetch(`/v1/pages/${encodeURIComponent(pp)}`, {
-        method: 'PUT',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: editContent }),
       });

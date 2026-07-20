@@ -44,6 +44,7 @@ export default function ChatPage() {
   const [streaming, setStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const active = sessions.find(s => s.id === activeId);
 
@@ -54,6 +55,50 @@ export default function ChatPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [sessions, activeId]);
+
+  const newSession = () => {
+    const s: Session = {
+      id: mid(),
+      title: '新对话',
+      date: new Date().toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
+      messages: [],
+    };
+    setSessions(prev => [s, ...prev]);
+    setActiveId(s.id);
+    setInput('');
+    // Auto-focus input after next render
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const streamReply = async (text: string, sid: string) => {
+    const userMsg: Message = { role: 'user', content: text, id: mid() };
+    const assistantMsg: Message = { role: 'assistant', content: '', id: mid() };
+
+    setSessions(prev => prev.map(s =>
+      s.id === sid
+        ? { ...s, title: s.messages.length === 0 ? text.slice(0, 30) : s.title, messages: [...s.messages, userMsg, assistantMsg] }
+        : s
+    ));
+    setStreaming(true);
+
+    const answer = mockReply(text);
+    const delay = 300 + Math.random() * 400;
+    await new Promise(r => setTimeout(r, delay));
+
+    let idx = 0;
+    const interval = setInterval(() => {
+      idx += 2;
+      const chunk = answer.slice(0, idx);
+      setSessions(prev => prev.map(s => {
+        if (s.id !== sid) return s;
+        const msgs = [...s.messages];
+        const last = msgs[msgs.length - 1];
+        if (last.role === 'assistant') msgs[msgs.length - 1] = { ...last, content: chunk };
+        return { ...s, messages: msgs };
+      }));
+      if (idx >= answer.length) { clearInterval(interval); setStreaming(false); }
+    }, 25);
+  };
 
   const send = async () => {
     const text = input.trim();
@@ -72,40 +117,23 @@ export default function ChatPage() {
       setActiveId(sid);
     }
 
-    const userMsg: Message = { role: 'user', content: text, id: mid() };
-    const assistantMsg: Message = { role: 'assistant', content: '', id: mid() };
-
-    setSessions(prev => prev.map(s =>
-      s.id === sid
-        ? { ...s, title: s.messages.length === 0 ? text.slice(0, 30) : s.title, messages: [...s.messages, userMsg, assistantMsg] }
-        : s
-    ));
     setInput('');
-    setStreaming(true);
+    streamReply(text, sid);
+  };
 
-    // Simulate network latency then stream reply
-    const answer = mockReply(text);
-    const delay = 300 + Math.random() * 400; // 300-700ms simulated latency
-    await new Promise(r => setTimeout(r, delay));
-
-    let idx = 0;
-    const interval = setInterval(() => {
-      idx += 2;
-      const chunk = answer.slice(0, idx);
-      setSessions(prev => prev.map(s => {
-        if (s.id !== sid) return s;
-        const msgs = [...s.messages];
-        const last = msgs[msgs.length - 1];
-        if (last.role === 'assistant') {
-          msgs[msgs.length - 1] = { ...last, content: chunk };
-        }
-        return { ...s, messages: msgs };
-      }));
-      if (idx >= answer.length) {
-        clearInterval(interval);
-        setStreaming(false);
-      }
-    }, 25);
+  /* Called by suggestion buttons — creates session + sends immediately */
+  const sendSuggestion = (text: string) => {
+    if (streaming) return;
+    const s: Session = {
+      id: mid(),
+      title: text.slice(0, 30),
+      date: new Date().toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
+      messages: [],
+    };
+    setSessions(prev => [s, ...prev]);
+    setActiveId(s.id);
+    setInput('');
+    streamReply(text, s.id);
   };
 
   const copyMsg = (c: string) => {
@@ -126,7 +154,7 @@ export default function ChatPage() {
           <Button
             variant="outline"
             className="w-full justify-start gap-2"
-            onClick={() => { setActiveId(''); setInput(''); }}
+            onClick={newSession}
           >
             <Plus className="h-4 w-4" /> 新建对话
           </Button>
@@ -228,6 +256,7 @@ export default function ChatPage() {
               <div className="max-w-3xl mx-auto">
                 <div className="flex gap-2 items-end">
                   <Textarea
+                    ref={inputRef}
                     placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
                     value={input}
                     onChange={e => setInput(e.target.value)}
@@ -275,9 +304,7 @@ export default function ChatPage() {
                   <button
                     key={suggestion}
                     className="px-3 py-1.5 text-xs rounded-full border border-border bg-secondary text-secondary-foreground hover:bg-accent"
-                    onClick={() => {
-                      setInput(suggestion);
-                    }}
+                    onClick={() => sendSuggestion(suggestion)}
                   >
                     {suggestion}
                   </button>

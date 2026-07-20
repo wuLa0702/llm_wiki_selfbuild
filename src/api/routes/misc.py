@@ -339,6 +339,7 @@ class SettingsResponse(BaseModel):
     # 资料监控
     watcher_enabled: bool = False
     watcher_auto_extract: bool = True
+    watcher_poll_interval: int = 10
     watcher_max_file_size_mb: int = 100
     watcher_allowed_extensions: str = ".md,.mdx,.txt,.pdf,.doc,.docx,.odt,.rtf,.pptx,.odp,.xls,.xlsx,.ods,.csv,.html,.htm"
     watcher_exclude_folders: str = ".git,.svn,.hg,.obsidian,.idea,.vscode,node_modules,.cache,__pycache__"
@@ -380,6 +381,14 @@ async def get_settings():
 
 @router.post("/v1/settings", response_model=SettingsResponse)
 async def save_settings(body: SettingsResponse):
-    """保存系统设置"""
+    """保存系统设置，watcher 配置热生效"""
     _save_settings_to_db(body.model_dump())
+
+    # Watcher 热生效：更新轮询间隔（不需重启 watcher）
+    from src.app_state import get_watcher
+    watcher = get_watcher()
+    if watcher is not None:
+        watcher.poll_interval = body.watcher_poll_interval
+        logger.info("Watcher 配置已热生效 | interval=%ds", watcher.poll_interval)
+
     return body

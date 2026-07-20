@@ -230,3 +230,70 @@ async def extract_to_wiki(body: ExtractRequest):
     except Exception as e:
         logger.error("提取失败: %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# =====================================================================
+# 编辑原始文件
+# =====================================================================
+
+class SourceEditRequest(BaseModel):
+    """编辑原始资料文件请求"""
+    path: str
+    content: str
+
+
+@router.post("/v1/sources/edit")
+async def edit_source(body: SourceEditRequest):
+    """编辑原始资料文件，保存后自动触发 ingest 更新 Wiki
+
+    流程：写文件 → 调用 WikiCompiler.ingest() → SHA256 缓存自动更新 → 返回结果
+    """
+    path = body.path.strip()
+    logger.info("POST /v1/sources/edit | %s", path)
+
+    # 安全校验：路径必须在 raw/sources/ 下
+    safe_prefix = "raw/sources/"
+    if not path.startswith(safe_prefix):
+        return JSONResponse(status_code=403, content={"error": "Access denied: path must be under raw/sources/"})
+
+    full = os.path.normpath(path)
+    safe_base = os.path.normpath(safe_prefix)
+    if not full.startswith(safe_base):
+        return JSONResponse(status_code=403, content={"error": "Path traversal detected"})
+
+    if not os.path.isfile(full):
+        return JSONResponse(status_code=404, content={"error": "File not found", "path": path})
+
+    # 写文件
+    try:
+        with open(full, "w", encoding="utf-8") as f:
+            f.write(body.content)
+        logger.info("文件已写入 | path=%s size=%d", path, len(body.content))
+    except OSError as e:
+        logger.error("文件写入失败 | path=%s error=%s", path, e)
+        return JSONResponse(status_code=500, content={"error": f"Write failed: {e}"})
+
+    # 触发 ingest
+    from src.core.compiler import WikiCompiler
+    from src.app_state import get_task_queue
+
+    rel_path = path[len(safe_prefix):]  # raw/sources/ 之后的相对路径
+    compiler = WikiCompiler(task_queue=get_task_queue())
+
+    try:
+        result = compiler.ingest(rel_path)
+        logger.info(
+            "编辑后 ingest 完成 | source=%s created=%d updated=%d",
+            path,
+            len(result.get("pages_created", [])),
+            len(result.get("pages_updated", [])),
+        )
+        return {
+            "status": "ok",
+            "pages_created": result.get("pages_created", []),
+            "pages_updated": result.get("pages_updated", []),
+            "message": f"已更新: {len(result.get('pages_created', []))} 创建, {len(result.get('pages_updated', []))} 更新",
+        }
+    except Exception as e:
+        logger.error("编辑后 ingest 失败 | source=%s error=%s", path, e)
+        return JSONResponse(status_code=500, content={"error": f"Ingest failed: {e}"})

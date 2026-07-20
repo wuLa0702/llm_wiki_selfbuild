@@ -1,7 +1,9 @@
 import { useEffect, useState, useRef } from 'react';
-import { FileText, FolderClosed, Upload, Trash2, RefreshCw, Sparkles } from 'lucide-react';
+import { FileText, FolderClosed, Upload, Trash2, RefreshCw, Sparkles, Edit3, Save, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
+import { Sheet, SheetContent, SheetClose } from '@/components/ui/sheet';
 import { showToast } from '@/components/shared/Toast';
 import MarkdownRenderer from '@/components/shared/MarkdownRenderer';
 
@@ -33,6 +35,9 @@ export default function SourcesPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [jobs, setJobs] = useState<QueueJob[]>([]);
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState('');
+  const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -112,6 +117,35 @@ export default function SourcesPage() {
     setPreviewLoading(false);
   };
 
+  const startEdit = () => {
+    setEditContent(fileContent);
+    setEditing(true);
+  };
+
+  const saveEdit = async () => {
+    if (!selectedFile) return;
+    setSaving(true);
+    try {
+      const r = await fetch('/v1/sources/edit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: selectedFile, content: editContent }),
+      });
+      const d = await r.json();
+      if (d.status === 'ok') {
+        setFileContent(editContent);
+        showToast(d.message || '保存成功', 'success');
+        setEditing(false);
+        loadTree();
+      } else {
+        showToast(d.error || '保存失败', 'error');
+      }
+    } catch {
+      showToast('保存请求失败', 'error');
+    }
+    setSaving(false);
+  };
+
   const uploadFiles = (files: FileList | null, useRelativePath: boolean) => {
     if (!files?.length) return;
     const fd = new FormData();
@@ -187,6 +221,7 @@ export default function SourcesPage() {
   const totalFiles = tree.reduce((acc, i) => acc + countFiles(i), 0);
 
   return (
+    <>
     <div className="flex flex-1 min-h-0">
       {/* File tree sidebar */}
       <div className="w-64 flex-shrink-0 border-r border-border bg-card flex flex-col min-h-0">
@@ -258,6 +293,9 @@ export default function SourcesPage() {
               <h2 className="text-lg font-bold">{selectedFile.split('/').pop()}</h2>
               <div className="flex gap-2 items-center">
                 <span className="text-xs text-muted-foreground">{fileSize}</span>
+                <Button size="sm" variant="outline" onClick={startEdit}>
+                  <Edit3 className="h-3.5 w-3.5 mr-1" /> 编辑
+                </Button>
                 <Button size="sm" variant="default" onClick={() => extractFile(selectedFile!)}>
                   <Sparkles className="h-3.5 w-3.5 mr-1" /> 提取到 Wiki
                 </Button>
@@ -277,5 +315,33 @@ export default function SourcesPage() {
         )}
       </div>
     </div>
+
+    {/* ── Edit Sheet ── */}
+    <Sheet open={editing} onOpenChange={(v: boolean) => { if (!v) setEditing(false); }}>
+      <SheetContent className="flex flex-col w-full max-w-2xl">
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <h2 className="text-sm font-semibold">编辑原始文件</h2>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{selectedFile?.split('/').pop()}</span>
+            <SheetClose render={<X className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-foreground" />} />
+          </div>
+        </div>
+        <div className="flex-1 p-4 min-h-0">
+          <Textarea
+            className="w-full h-full min-h-[300px] font-mono text-sm resize-none"
+            value={editContent}
+            onChange={e => setEditContent(e.target.value)}
+          />
+        </div>
+        <div className="flex items-center justify-end gap-2 p-4 border-t border-border">
+          <Button variant="outline" size="sm" onClick={() => setEditing(false)}>取消</Button>
+          <Button size="sm" onClick={saveEdit} disabled={saving}>
+            <Save className="h-3.5 w-3.5 mr-1" />
+            {saving ? '保存中...' : '保存'}
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
+    </>
   );
 }

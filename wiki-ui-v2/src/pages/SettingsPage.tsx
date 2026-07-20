@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Sun, Moon, Monitor, Minus, Plus, Save, Palette, SlidersHorizontal, Brain, Cpu, Wifi, Activity } from 'lucide-react';
+import { Sun, Moon, Monitor, Minus, Plus, Save, Palette, SlidersHorizontal, Brain, Cpu, Wifi, Activity, Eye, Play, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { showToast } from '@/components/shared/Toast';
 import { useTheme } from '@/hooks/useTheme';
@@ -14,6 +14,7 @@ const settingsTabs = [
   { key: 'llm', label: 'LLM 模型', icon: Brain },
   { key: 'embedding', label: '向量嵌入', icon: Cpu },
   { key: 'network', label: '网络', icon: Wifi },
+  { key: 'watcher', label: '资料监控', icon: Eye },
   { key: 'health', label: '健康检查', icon: Activity },
 ];
 
@@ -54,6 +55,7 @@ export default function SettingsPage() {
         {tab === 'llm' && <LLMSettings />}
         {tab === 'embedding' && <Placeholder title="向量嵌入" desc="向量嵌入配置（待实现）" />}
         {tab === 'network' && <Placeholder title="网络" desc="网络配置（待实现）" />}
+        {tab === 'watcher' && <WatcherSettings />}
         {tab === 'health' && <HealthSettings />}
       </div>
     </div>
@@ -197,6 +199,176 @@ function Placeholder({ title, desc }: { title: string; desc: string }) {
     <div className="p-6 max-w-2xl">
       <h2 className="text-lg font-semibold mb-1">{title}</h2>
       <p className="text-sm text-muted-foreground mb-6">{desc}</p>
+    </div>
+  );
+}
+
+/* ── Watcher Settings Tab ── */
+
+function WatcherSettings() {
+  const [settings, setSettings] = useState<Record<string, any>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [watcherRunning, setWatcherRunning] = useState(false);
+  const [watcherDetail, setWatcherDetail] = useState('');
+  const [statusLoading, setStatusLoading] = useState(false);
+
+  useEffect(() => {
+    fetch('/v1/settings')
+      .then(r => r.json())
+      .then(d => { setSettings(d); setLoading(false); })
+      .catch(() => { showToast('加载设置失败', 'error'); setLoading(false); });
+  }, []);
+
+  const loadStatus = () => {
+    fetch('/v1/watcher/status')
+      .then(r => r.json())
+      .then(d => {
+        setWatcherRunning(d.running);
+        setWatcherDetail(typeof d.detail === 'string' ? d.detail : '');
+      })
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    loadStatus();
+    const id = setInterval(loadStatus, 5000);
+    return () => clearInterval(id);
+  }, []);
+
+  const toggleWatcher = async (start: boolean) => {
+    setStatusLoading(true);
+    try {
+      const r = await fetch(`/v1/watcher/${start ? 'start' : 'stop'}`, { method: 'POST' });
+      const d = await r.json();
+      setWatcherRunning(d.running);
+      loadStatus();
+    } catch { showToast('操作失败', 'error'); }
+    setStatusLoading(false);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const r = await fetch('/v1/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings),
+      });
+      if (r.ok) showToast('设置已保存', 'success');
+      else showToast('保存失败', 'error');
+    } catch { showToast('保存请求失败', 'error'); }
+    setSaving(false);
+  };
+
+  const field = (key: string) => settings[key] ?? '';
+
+  if (loading) return (
+    <div className="p-6">
+      <Skeleton className="h-5 w-32 mb-2" />
+      <Skeleton className="h-4 w-64 mb-6" />
+      {[1,2,3,4].map(i => <Skeleton key={i} className="h-10 w-full mb-3" />)}
+    </div>
+  );
+
+  return (
+    <div className="p-6 flex flex-col min-h-0 max-w-2xl">
+      <h2 className="text-lg font-semibold mb-1">资料监控</h2>
+      <p className="text-sm text-muted-foreground mb-6">配置原始目录监听和自动导入</p>
+
+      {/* Status bar */}
+      <section className="mb-6">
+        <h3 className="text-sm font-medium mb-2">监听状态</h3>
+        <div className="flex items-center justify-between px-3 py-2.5 rounded-md bg-secondary">
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full ${watcherRunning ? 'bg-green-500' : 'bg-muted-foreground'}`} />
+            <span className="text-sm">{watcherRunning ? '运行中' : '已停止'}</span>
+            {watcherDetail && <span className="text-xs text-muted-foreground ml-1">· {watcherDetail}</span>}
+          </div>
+          <Button
+            size="sm"
+            variant={watcherRunning ? 'outline' : 'default'}
+            onClick={() => toggleWatcher(!watcherRunning)}
+            disabled={statusLoading}
+          >
+            {watcherRunning ? <Square className="h-3 w-3 mr-1" /> : <Play className="h-3 w-3 mr-1" />}
+            {watcherRunning ? '停止' : '启动'}
+          </Button>
+        </div>
+      </section>
+
+      {/* Toggle switches */}
+      <section className="mb-6 space-y-3">
+        <h3 className="text-sm font-medium mb-2">基本设置</h3>
+        {[
+          { key: 'watcher_enabled', label: '启用监听', desc: '定时扫描 raw/sources/ 目录文件变化' },
+          { key: 'watcher_auto_extract', label: '自动提取', desc: '发现新文件后自动触发 ingest 提取到 Wiki' },
+        ].map(({ key, label, desc }) => (
+          <div key={key} className="flex items-center justify-between px-3 py-2.5 rounded-md bg-secondary">
+            <div>
+              <span className="text-sm">{label}</span>
+              <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" className="sr-only peer" checked={!!field(key)}
+                onChange={e => setSettings(prev => ({ ...prev, [key]: e.target.checked }))} />
+              <div className="w-8 h-4 rounded-full bg-muted-foreground/30 peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-4" />
+            </label>
+          </div>
+        ))}
+      </section>
+
+      {/* Number inputs */}
+      <section className="mb-6 space-y-3">
+        <h3 className="text-sm font-medium mb-2">扫描参数</h3>
+        {[
+          { key: 'watcher_poll_interval', label: '轮询间隔（秒）', type: 'number', min: 1, max: 300 },
+          { key: 'watcher_max_file_size_mb', label: '文件大小上限（MB）', type: 'number', min: 1, max: 1024 },
+        ].map(({ key, label, type, min, max }) => (
+          <div key={key} className="flex items-center justify-between px-3 py-2.5 rounded-md bg-secondary">
+            <span className="text-sm">{label}</span>
+            <input
+              type={type}
+              className="w-20 text-right bg-transparent border border-border rounded px-2 py-1 text-sm"
+              value={field(key)}
+              min={min} max={max}
+              onChange={e => setSettings(prev => ({ ...prev, [key]: parseInt(e.target.value) || 0 }))}
+            />
+          </div>
+        ))}
+      </section>
+
+      {/* Text inputs */}
+      <section className="mb-6 space-y-3">
+        <h3 className="text-sm font-medium mb-2">过滤规则</h3>
+        {[
+          { key: 'watcher_allowed_extensions', label: '允许的后缀', desc: '逗号分隔，如 .md,.txt,.pdf' },
+          { key: 'watcher_exclude_folders', label: '排除目录', desc: '逗号分隔，如 .git,node_modules' },
+          { key: 'watcher_exclude_extensions', label: '排除后缀', desc: '逗号分隔，如 tmp,bak,exe' },
+          { key: 'watcher_exclude_patterns', label: '排除模式', desc: 'fnmatch 模式，逗号分隔' },
+        ].map(({ key, label, desc }) => (
+          <div key={key} className="px-3 py-2.5 rounded-md bg-secondary">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm">{label}</span>
+            </div>
+            {desc && <p className="text-xs text-muted-foreground mb-1.5">{desc}</p>}
+            <input
+              className="w-full bg-transparent border border-border rounded px-2 py-1 text-sm"
+              value={field(key)}
+              onChange={e => setSettings(prev => ({ ...prev, [key]: e.target.value }))}
+            />
+          </div>
+        ))}
+      </section>
+
+      <div className="flex-1" />
+      <div className="flex items-center justify-between pt-4 border-t border-border">
+        <span className="text-xs text-muted-foreground">改动需要保存后生效</span>
+        <Button onClick={save} size="sm" disabled={saving}>
+          <Save className="h-3.5 w-3.5 mr-1" />
+          {saving ? '保存中...' : '保存'}
+        </Button>
+      </div>
     </div>
   );
 }
