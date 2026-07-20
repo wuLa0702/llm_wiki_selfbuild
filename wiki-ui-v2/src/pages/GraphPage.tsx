@@ -261,22 +261,16 @@ export default function GraphPage() {
     network.on('selectNode', (params) => {
       if (!params.nodes?.length) return;
       const selectedId = params.nodes[0];
-
-      // Hide all labels first
-      nodes.forEach((n: any) => {
-        if (n.id === selectedId) {
-          nodes.update({ id: n.id, font: { size: 11, color: '#a1a1aa' } });
-        } else {
-          nodes.update({ id: n.id, font: { size: 0 } });
-        }
-      });
+      const updates = nodes.get().map((n: any) => ({
+        id: n.id,
+        font: n.id === selectedId ? { size: 11, color: '#a1a1aa' } : { size: 0 },
+      }));
+      nodes.update(updates);
     });
 
     network.on('deselectNode', () => {
-      // Restore all labels to hidden
-      nodes.forEach((n: any) => {
-        nodes.update({ id: n.id, font: { size: 0 } });
-      });
+      const updates = nodes.get().map((n: any) => ({ id: n.id, font: { size: 0 } }));
+      nodes.update(updates);
     });
 
     /* ── Click → navigate (after visual feedback) ── */
@@ -297,43 +291,44 @@ export default function GraphPage() {
       const connectedEdges = network.getConnectedEdges(nodeId) as (string | number)[];
       const highlightSet = new Set([nodeId, ...connectedNodes]);
 
-      nodes.forEach((n: any) => {
+      // Batch update: single DataSet.update(array) → single redraw
+      const nodeUpdates = nodes.get().map((n: any) => {
         const isHighlight = highlightSet.has(n.id);
         const baseColor = TYPE_COLORS[n._pageType || 'entity'] || '#3b82f6';
-        nodes.update({
+        return {
           id: n.id,
           color: {
             ...n.color,
             background: isHighlight ? baseColor : hexToRgba(baseColor, 0.12),
             border: isHighlight ? '#ffffff' : hexToRgba('#ffffff', 0.15),
           },
-        });
+        };
       });
+      nodes.update(nodeUpdates);
 
       const edgeSet = new Set(connectedEdges);
-      edges.forEach((e: any) => {
-        edges.update({
-          id: e.id,
-          color: { ...e.color, opacity: edgeSet.has(e.id) ? 0.5 : 0.02 },
-        });
-      });
+      const edgeUpdates = edges.get().map((e: any) => ({
+        id: e.id,
+        color: { ...e.color, opacity: edgeSet.has(e.id) ? 0.5 : 0.02 },
+      }));
+      edges.update(edgeUpdates);
     };
 
     const doRestore = () => {
-      nodes.forEach((n: any) => {
+      const nodeUpdates = nodes.get().map((n: any) => {
         const baseColor = TYPE_COLORS[n._pageType || 'entity'] || '#3b82f6';
-        nodes.update({
+        return {
           id: n.id,
-          color: {
-            ...n.color,
-            background: baseColor,
-            border: '#ffffff',
-          },
-        });
+          color: { ...n.color, background: baseColor, border: '#ffffff' },
+        };
       });
-      edges.forEach((e: any) => {
-        edges.update({ id: e.id, color: { ...e.color, opacity: 0.3 } });
-      });
+      nodes.update(nodeUpdates);
+
+      const edgeUpdates = edges.get().map((e: any) => ({
+        id: e.id,
+        color: { ...e.color, opacity: 0.3 },
+      }));
+      edges.update(edgeUpdates);
     };
 
     network.on('hoverNode', (params) => {

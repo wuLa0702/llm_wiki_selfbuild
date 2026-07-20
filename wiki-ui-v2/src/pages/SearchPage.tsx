@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, FileText, Brain } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -15,12 +16,25 @@ interface SearchResult {
 type SearchMethod = 'bm25' | 'hybrid';
 
 export default function SearchPage() {
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [method, setMethod] = useState<SearchMethod>('bm25');
 
   const methodLabel = method === 'hybrid' ? 'Hybrid' : 'BM25';
+
+  /* Escape special regex chars and build highlight segments */
+  const highlightSnippet = (text: string, keyword: string): React.ReactNode => {
+    if (!keyword.trim()) return text;
+    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+    return parts.map((part, i) =>
+      part.toLowerCase() === keyword.toLowerCase()
+        ? <mark key={i} className="bg-yellow-200/60 dark:bg-yellow-500/25 text-inherit rounded-sm px-0.5">{part}</mark>
+        : part
+    );
+  };
 
   const search = async () => {
     if (!query.trim()) return;
@@ -93,7 +107,8 @@ export default function SearchPage() {
           ) : results.length > 0 ? (
             <div className="space-y-2">
               {results.map((r, i) => (
-                <div key={i} className="p-3 rounded-lg border border-border hover:bg-accent/50 transition-colors">
+                <div key={i} className="p-3 rounded-lg border border-border hover:bg-accent/50 transition-colors cursor-pointer"
+                  onClick={() => navigate(`/wiki?path=${encodeURIComponent(r.path)}`)}>
                   <div className="flex items-center gap-2 mb-1">
                     <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                     <span className="text-sm font-medium">{r.title || r.path.split('/').pop()}</span>
@@ -101,7 +116,9 @@ export default function SearchPage() {
                   </div>
                   <div className="text-xs text-muted-foreground mb-1">{r.path}</div>
                   {r.snippet && (
-                    <div className="text-xs text-foreground/80 line-clamp-2">{r.snippet}</div>
+                    <div className="text-xs text-foreground/80 line-clamp-2">
+                      {highlightSnippet(r.snippet, query)}
+                    </div>
                   )}
                 </div>
               ))}

@@ -1,0 +1,170 @@
+# Wiki 检查界面分析文档
+
+> 创建: 2026-07-20 | 作者: 缅因猫-测试/砚砚-测试 | 状态: 初稿
+
+## 一、业务目标
+
+Wiki Lint 模块的目标是**自动化检测知识库质量**，包括：
+
+| 目标 | 说明 |
+|:-----|:------|
+| **断链检测** | 页面中的 `[[wikilink]]` 指向不存在的文件 |
+| **孤页检测** | 没有被任何页面引用的孤立页面 |
+| **Index 缺口** | 已存在但未在 `index.md` 中列出的页面 |
+| **语义检测** | LLM 驱动的矛盾检测、知识缺口、浅页面识别 |
+
+---
+
+## 二、后端现状（工作正常）
+
+### 2.1 静态 lint (`GET /v1/lint?semantic=false`)
+
+三层检测全部实现：
+
+| 检测 | 实现位置 | 实测结果 |
+|:-----|:---------|:---------|
+| 断链 | `linter.py:70` `check_broken_links()` | ✅ 返回 57 条 |
+| 孤页 | `linter.py:101` `check_orphan_pages()` | ✅ 返回 1 条 (`wiki-schema.md`) |
+| Index 缺口 | `linter.py:127` `check_index_gaps()` | ✅ 返回 1 条 (`wiki-schema.md`) |
+| 健康评分 | `linter.py:189` 加权扣分 | ✅ 返回 0/100（断链 57×5=285 → 扣到 0） |
+
+### 2.2 语义 lint (`GET /v1/lint?semantic=true`)
+
+- LLM 驱动，SQLite 缓存 1 小时
+- 检测 3 类：矛盾 / 知识缺口 / 浅页面
+- 超过 500 页面按社区分层抽样
+- **实测失败**：`issubclass() arg 1 must be a class` — LLM adapter 输出 schema 校验问题
+
+### 2.3 自动修复 (`POST /v1/lint/fix`)
+
+三层修复策略：
+1. **模糊匹配修正** — 断链目标相似度匹配现有页面
+2. **创建存根** — 为断链目标创建空页面
+3. **补充缺失** — 为孤页补充反向引用
+
+### 2.4 返回数据格式
+
+静态 lint 返回的实际 JSON（来自实测）：
+
+```json
+{
+  "summary": "Wiki 健康评分 0/100 · 需关注（断链 57 处，孤页 1 个，index 缺口 1 个）",
+  "broken_links": [
+    {"source_page": "index.md", "broken_target": "entities/Coupang.md"},
+    ...
+  ],
+  "orphan_pages": ["wiki-schema.md"],
+  "index_gaps": ["wiki-schema.md"],
+  "contradictions": [],
+  "knowledge_gaps": [],
+  "shallow_pages": [],
+  "health_score": 0,
+  "broken_links_count": 57,
+  "orphan_pages_count": 1,
+  "index_gaps_count": 1
+}
+```
+
+> **关键发现**：后端返回 `health_score`、`index_gaps` 等字段，但前端完全不消费。
+
+---
+
+## 三、前端现状与差距分析
+
+### 3.1 LintPage.tsx 当前实现（118 行）
+
+```tsx
+// 只展示了：
+- summary（摘要文本）
+- broken_links（断链列表：source → target）
+- orphan_pages（孤页列表：Badge）
+- "All clear"（无问题时）
+
+// 完全没有展示：
+✗ health_score — 后端返回了但前端丢弃
+✗ index_gaps — 后端返回了但前端丢弃
+✗ contradictions — 语义检测结果未渲染
+✗ knowledge_gaps — 语义检测结果未渲染
+✗ shallow_pages — 语义检测结果未渲染
+✗ broken_links_count / orphan_pages_count / index_gaps_count — 后端返回了但前端不用
+```
+
+### 3.2 逐项差距
+
+| 后端字段 | 前端展示 | 差距 |
+|:---------|:--------:|:-----|
+| `summary` | ✅ 文字卡片 | — |
+| `broken_links` | ✅ 列表展示 | 不能点击跳转，无 source→target 导航 |
+| `orphan_pages` | ✅ Badge 列表 | 不能点击跳转 |
+| `health_score` | ❌ **缺失** | 无评分圆环/进度条指示 |
+| `index_gaps` | ❌ **缺失** | 完全不展示 |
+| `broken_links_count` | ❌ 硬编码 | 前端用 `links.length`，但后端已提供 |
+| `contradictions` | ❌ 缺失 | 语义结果无 UI 渲染 |
+| `knowledge_gaps` | ❌ 缺失 | 语义结果无 UI 渲染 |
+| `shallow_pages` | ❌ 缺失 | 语义结果无 UI 渲染 |
+| 自动修复 | ❌ 无入口 | 后端有 `POST /v1/lint/fix` 但前端无按钮 |
+
+### 3.3 根本原因
+
+**后端能力远超前端展示**。后端实现了完整的 3（静态）+ 3（语义）六类检测 + 自动修复 API，但前端只渲染了其中 2 类（断链 + 孤页），且没有交互（不能点击跳转、不能触发修复）。
+
+语义 lint 的 LLM adapter 错误 `issubclass() arg 1 must be a class` 是独立的后端 bug，不影响静态 lint 功能。
+
+---
+
+## 四、修复方案（仅前端，不动后端）
+
+### 方案 A：补全展示（推荐，2-3 小时）
+
+不改后端一行代码，仅增强 LintPage.tsx：
+
+| 改动 | 实现方式 |
+|:-----|:---------|
+| 加 `health_score` 圆环 | 用 SVG 圆环 + 颜色（绿>80/黄>50/红<50） |
+| 加 `index_gaps` 展示 | 复用 orphan_pages 的 Badge 列表样式 |
+| 加语义结果展示 | `contradictions` 卡片、`knowledge_gaps` 列表、`shallow_pages` 列表 |
+| 断链可点击跳转 | `onClick → navigate(/wiki?path=...)` |
+| 孤页可点击跳转 | `onClick → navigate(/wiki?path=...)` |
+| 自动修复按钮 | 调用 `POST /v1/lint/fix`，展示修复结果 |
+| 语义 lint 加载态 | 按钮 loading + 进度提示（LLM 调用通常 3-10s） |
+| 语义 lint 错误提示 | 展示后端返回的 error 信息 |
+
+### 方案 B：最小修复（30 分钟）
+
+只补最核心的缺失项：
+- 加 `health_score` 展示
+- 加 `index_gaps` 展示
+- 断链/孤页可点击跳转
+
+### 方案 C：保留现状
+
+当前页面在知识库无问题时能显示"未发现问题"，有断链时能列出——**页面不是死的，只是展示不完整**。如果不急需可以搁置，等后续 UI 统一优化时再改。
+
+---
+
+## 五、后端语义 lint 失败原因
+
+`issubclass() arg 1 must be a class` 是 LLM adapter 的 `chat_structured` 方法中 schema 校验问题。可能原因：
+
+1. `LLMAdapter.chat_structured()` 内部调用了 `issubclass()` 检查输出 schema 类型
+2. schema 中某个类型不是一个类（可能是 `str` vs `"string"` 混用）
+3. 或 LLM 返回的 JSON 反序列化后类型匹配失败
+
+**修复建议**（后端方向）：
+- 检查 `src/llm/adapter.py` 中 `chat_structured()` 的 schema 校验逻辑
+- 确认 schema 中所有 `type` 字段使用 Python 原生类型（`str`/`int`/`list`/`dict`）而非 JSON Schema 字符串（`"string"`/`"array"`/`"object"`）
+
+---
+
+## 六、总结
+
+| 维度 | 结论 |
+|:-----|:------|
+| **后端** | 实现完整，静态 lint 工作正常，语义 lint 有 adapter bug |
+| **前端** | 只展示了后端 1/3 的能力，缺少 health_score / index_gaps / 语义结果 / 交互跳转 / 修复入口 |
+| **根因** | 前端实现时只覆盖了最基础的断链+孤页展示，未随后端功能同步迭代 |
+| **建议** | 选方案 A（推荐）或方案 B（最小），纯前端改动，零后端风险 |
+
+---
+
+*分析基于 `LintPage.tsx` (118行) + `linter.py` (605行) + `lint.py` (88行) 源码审查及 API 实测。*

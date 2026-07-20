@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { FileText, FolderClosed, BookOpen, ArrowRight, ArrowLeft } from 'lucide-react';
+import { FileText, FolderClosed, BookOpen, ArrowRight, ArrowLeft, Edit3, Save, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Sheet, SheetContent, SheetClose,
+} from '@/components/ui/sheet';
 import MarkdownRenderer from '@/components/shared/MarkdownRenderer';
 
 interface FileNode {
@@ -44,7 +49,9 @@ export default function WikiPage() {
 
   // File tree state
   const [wikiTree, setWikiTree] = useState<Record<string, FileNode>>({});
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem('wiki-sidebar-wiki') || '{}'); } catch { return {}; }
+  });
   const [treeLoading, setTreeLoading] = useState(true);
 
   // Page content state
@@ -52,6 +59,11 @@ export default function WikiPage() {
   const [meta, setMeta] = useState<PageMeta | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
   const [contentError, setContentError] = useState('');
+  // Edit state
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   // Load file tree
   useEffect(() => {
@@ -120,12 +132,44 @@ export default function WikiPage() {
     setExpanded(prev => ({ ...prev, ...toExpand }));
   }, [selectedPage]);
 
+  // Persist expand/collapse state to localStorage
+  useEffect(() => {
+    localStorage.setItem('wiki-sidebar-wiki', JSON.stringify(expanded));
+  }, [expanded]);
+
   const handleSelectPage = (path: string) => {
     setSearchParams({ path });
   };
 
   const toggleExpand = (path: string) => {
     setExpanded(prev => ({ ...prev, [path]: !prev[path] }));
+  };
+
+  const openEditor = () => {
+    setEditContent(raw);
+    setSaveError('');
+    setEditing(true);
+  };
+
+  const saveContent = async () => {
+    if (!selectedPage) return;
+    setSaving(true);
+    setSaveError('');
+    const pp = selectedPage.startsWith('wiki/') ? selectedPage.slice(5) : selectedPage;
+    try {
+      const r = await fetch(`/v1/pages/${encodeURIComponent(pp)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: editContent }),
+      });
+      if (!r.ok) throw new Error(`保存失败 (${r.status})`);
+      setRaw(editContent);
+      setEditing(false);
+    } catch (e: any) {
+      setSaveError(e.message || '保存出错');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const countFiles = (children: Record<string, FileNode>): number =>
@@ -182,6 +226,7 @@ export default function WikiPage() {
   };
 
   return (
+    <>
     <div className="flex flex-1 min-h-0">
       {/* File tree panel */}
       <div className="w-72 flex-shrink-0 border-r border-border bg-card flex flex-col min-h-0">
@@ -275,6 +320,9 @@ export default function WikiPage() {
 
                     {/* Right action area */}
                     <div className="flex items-center gap-2 shrink-0">
+                      <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={openEditor}>
+                        <Edit3 className="h-3 w-3" /> 编辑
+                      </Button>
                       {meta && (meta.links.length > 0 || meta.backlinks.length > 0) && (
                         <div className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg bg-muted/50">
                           <span className="text-blue-600 dark:text-blue-400 font-medium">{meta.links.length}</span>
@@ -350,5 +398,36 @@ export default function WikiPage() {
         )}
       </div>
     </div>
+
+      {/* ── Edit Sheet ── */}
+      <Sheet open={editing} onOpenChange={(v: boolean) => { if (!v) setEditing(false); }}>
+        <SheetContent className="flex flex-col w-full max-w-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h2 className="text-sm font-semibold">编辑文档</h2>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">{selectedPage?.split('/').pop()}</span>
+                <SheetClose render={<X className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-foreground" />} />
+              </div>
+            </div>
+            <div className="flex-1 p-4 min-h-0">
+              <Textarea
+                className="w-full h-full min-h-[300px] font-mono text-sm resize-none"
+                value={editContent}
+                onChange={e => setEditContent(e.target.value)}
+              />
+            </div>
+            {saveError && (
+              <div className="px-4 pb-2 text-xs text-destructive">{saveError}</div>
+            )}
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-border">
+              <Button variant="outline" size="sm" onClick={() => setEditing(false)}>取消</Button>
+              <Button size="sm" onClick={saveContent} disabled={saving}>
+                <Save className="h-3.5 w-3.5 mr-1" />
+                {saving ? '保存中...' : '保存'}
+              </Button>
+            </div>
+          </SheetContent>
+      </Sheet>
+    </>
   );
 }
