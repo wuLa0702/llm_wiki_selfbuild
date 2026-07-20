@@ -237,3 +237,7 @@ user_settings.json
 .playwright-mcp/
 wiki-ui/node_modules/
 wiki-ui/dist/
+
+# wiki-ui-v2 (shadcn/ui frontend)
+wiki-ui-v2/node_modules/
+wiki-ui-v2/dist/
