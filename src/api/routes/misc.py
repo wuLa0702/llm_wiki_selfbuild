@@ -213,7 +213,7 @@ async def watcher_status():
     watcher = get_watcher()
     if watcher is None:
         return WatcherStatusResponse(running=False, detail="未启动")
-    return WatcherStatusResponse(running=True, detail=watcher.status())
+    return WatcherStatusResponse(running=watcher.is_running, detail=watcher.status())
 
 
 class WatcherConfigRequest(BaseModel):

@@ -28,92 +28,47 @@ def wiki_content(tmp_path):
 
 
 class TestWikiRoutes:
-    """Wiki 浏览路由测试"""
-
-    def setup_method(self):
-        """每个测试前重置 monkeypatched 路径"""
-        self._orig = None
+    """Wiki 浏览路由测试 — 现由 SPA catch-all 处理"""
 
     # ==================================================================
     # Wiki 首页
     # ==================================================================
 
-    def test_wiki_index_returns_html(self, client, wiki_content, mocker):
-        """GET /wiki 返回 HTML 页面"""
-        mocker.patch("src.api.routes.wiki.ReadTool.__init__", return_value=None)
-        mocker.patch("src.api.routes.wiki.WikiRepository.__init__", return_value=None)
-
-        reader_mock = mocker.MagicMock()
-        reader_mock.base_dir = wiki_content
-        mocker.patch("src.api.routes.wiki.ReadTool", return_value=reader_mock)
-
-        repo_mock = mocker.MagicMock()
-        repo_mock.get_page.return_value = {"page_type": "entity"}
-        mocker.patch("src.api.routes.wiki.WikiRepository", return_value=repo_mock)
-
-        # 模拟 os.walk 返回 wiki 目录结构
-        mocker.patch("os.walk", return_value=iter([
-            (os.path.join(wiki_content, "entities"), [], ["python.md"]),
-            (os.path.join(wiki_content, "concepts"), [], ["ai.md"]),
-        ]))
-
+    def test_wiki_index_returns_html(self, client):
+        """GET /wiki 返回 SPA HTML 页面"""
         response = client.get("/wiki")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
-        assert "<h1>LLM Wiki 知识库</h1>" in response.text
-        assert "entities/python.md" in response.text
-        assert "concepts/ai.md" in response.text
+        assert '<div id="root">' in response.text
+        assert "<title>LLM Wiki</title>" in response.text
 
     # ==================================================================
-    # Wiki 单页
+    # Wiki 单页（SPA 同 shell）
     # ==================================================================
 
-    def test_wiki_page_renders_content(self, client, wiki_content, mocker):
-        """GET /wiki/entities/python.md 渲染页面内容"""
-        mocker.patch("src.api.routes.wiki.ReadTool.__init__", return_value=None)
-        reader_mock = mocker.MagicMock()
-        reader_mock.base_dir = wiki_content
-        reader_mock.read_file.return_value = "# Python\n\n参见 [[concepts/ai.md]]。"
-        mocker.patch("src.api.routes.wiki.ReadTool", return_value=reader_mock)
-
+    def test_wiki_page_renders_spa_shell(self, client):
+        """GET /wiki/xxx.md 由 SPA 返回 index.html（路由客户端处理）"""
         response = client.get("/wiki/entities/python.md")
         assert response.status_code == 200
-        assert "text/html" in response.headers["content-type"]
-        assert "Python" in response.text
-        assert 'href="/wiki/concepts/ai.md"' in response.text
+        assert '<div id="root">' in response.text
 
-    def test_wiki_page_wikilink_with_display(self, client, wiki_content, mocker):
-        """[[path|显示名]] 格式正确转换为链接"""
-        mocker.patch("src.api.routes.wiki.ReadTool.__init__", return_value=None)
-        reader_mock = mocker.MagicMock()
-        reader_mock.base_dir = wiki_content
-        reader_mock.read_file.return_value = "参见 [[concepts/ai.md|人工智能]]。"
-        mocker.patch("src.api.routes.wiki.ReadTool", return_value=reader_mock)
-
+    def test_wiki_page_wikilink_no_ssr(self, client):
+        """SPA 模式下 wikilink 转换由前端处理，服务端返回 shell"""
         response = client.get("/wiki/entities/python.md")
         assert response.status_code == 200
-        assert 'href="/wiki/concepts/ai.md"' in response.text
-        assert "人工智能" in response.text
+        assert '<div id="root">' in response.text
 
-    def test_wiki_page_404(self, client, wiki_content, mocker):
-        """不存在的页面返回 404"""
-        mocker.patch("src.api.routes.wiki.ReadTool.__init__", return_value=None)
-        reader_mock = mocker.MagicMock()
-        reader_mock.read_file.side_effect = FileNotFoundError
-        mocker.patch("src.api.routes.wiki.ReadTool", return_value=reader_mock)
-
+    def test_wiki_page_returns_spa_shell_on_404(self, client):
+        """SPA catch-all 对不存在的 wiki 路径也返回 shell"""
         response = client.get("/wiki/nonexistent.md")
-        assert response.status_code == 404
+        assert response.status_code == 200
+        assert '<div id="root">' in response.text
 
-    def test_wiki_page_permission_error(self, client, wiki_content, mocker):
-        """ReadTool 抛 PermissionError 时返回 403"""
-        mocker.patch("src.api.routes.wiki.ReadTool.__init__", return_value=None)
-        reader_mock = mocker.MagicMock()
-        reader_mock.read_file.side_effect = PermissionError("Access denied")
-        mocker.patch("src.api.routes.wiki.ReadTool", return_value=reader_mock)
-
+    def test_wiki_page_returns_spa_shell_on_permission(self, client):
+        """SPA catch-all 不校验权限，统一返回 shell"""
         response = client.get("/wiki/outside.md")
-        assert response.status_code == 403
+        assert response.status_code == 200
+        assert '<div id="root">' in response.text
 
     # ==================================================================
     # convert_wikilinks 单元测试
@@ -144,34 +99,25 @@ class TestWikiRoutes:
 
 
 class TestQueryViz:
-    """GET /wiki/query 查询界面页面"""
+    """GET /wiki/query 查询界面 — SPA 托管"""
 
-    def test_query_viz_returns_html(self, client):
-        """/wiki/query 返回 HTML 页面"""
+    def test_query_viz_returns_spa(self, client):
+        """/wiki/query 返回 SPA 页面"""
         response = client.get("/wiki/query")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
-        assert "知识问答" in response.text
-        assert "/v1/query" in response.text
-        assert "queryInput" in response.text
+        assert '<div id="root">' in response.text
 
 
 class TestGraphViz:
-    """GET /wiki/graph 图谱可视化页面"""
+    """GET /wiki/graph 图谱可视化 — SPA 托管"""
 
-    def test_graph_viz_returns_html(self, client, mocker):
-        """/wiki/graph 返回 HTML 页面"""
-        mocker.patch("src.core.graph.WikiGraph.to_dict", return_value={
-            "nodes": [{"id": "a.md", "degree": {"in": 1, "out": 0}}],
-            "edges": [{"source": "b.md", "target": "a.md"}],
-            "stats": {"total_nodes": 1, "total_edges": 1, "avg_degree": 1.0},
-        })
-
+    def test_graph_viz_returns_spa(self, client):
+        """/wiki/graph 返回 SPA 页面"""
         response = client.get("/wiki/graph")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
-        assert "vis-network" in response.text
-        assert "/v1/graph" in response.text
+        assert '<div id="root">' in response.text
 
 
 class TestPagesApi:
@@ -254,6 +200,10 @@ class TestPagesApi:
             "created_at": "2026-07-06T10:00:00",
             "updated_at": "2026-07-07T10:00:00",
         }
+        # mock _get_connection → execute → fetchone 返回 None，绕过 ingest_queue 查询
+        mock_conn = mocker.MagicMock()
+        mock_conn.execute.return_value.fetchone.return_value = None
+        repo_mock._get_connection.return_value = mock_conn
         mocker.patch("src.api.routes.pages.WikiRepository", return_value=repo_mock)
         mocker.patch("src.api.helpers.WikiRepository", return_value=repo_mock)
 

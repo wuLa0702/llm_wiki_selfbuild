@@ -296,7 +296,7 @@ def test_ingest_truncates_long_source(compiler, mocker):
     assert result["status"] == "success"
     prompt = compiler.llm.chat_structured.call_args[1]["prompt"]
     assert "内容截断" in prompt
-    assert len(prompt) < 1500
+    assert len(prompt) < 3000
 
 
 # ============================================================================

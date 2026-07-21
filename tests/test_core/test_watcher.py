@@ -110,8 +110,17 @@ class TestStatus:
 class TestScanAndIngest:
     """扫描与自动 ingest"""
 
+    def _mock_config(self, watcher, mocker):
+        """mock _load_config 返回启用状态，避免读真实 wiki.db"""
+        mocker.patch.object(watcher, "_load_config", return_value={
+            "enabled": True, "auto_extract": True, "max_size_mb": 100,
+            "allowed_ext": {".md"}, "exclude_folders": set(),
+            "exclude_ext": set(), "exclude_patterns": [],
+        })
+
     def test_scans_md_only(self, watcher, sources_dir, mocker):
         """只扫描 .md 文件，跳过其他"""
+        self._mock_config(watcher, mocker)
         from pathlib import Path
         sd = Path(sources_dir)
         (sd / "test.md").write_text("hello", encoding="utf-8")
@@ -119,7 +128,6 @@ class TestScanAndIngest:
         (sd / ".gitkeep").write_text("", encoding="utf-8")
         (sd / "image.png").write_bytes(b"\x89PNG\r\n")
 
-        called_with = []
         mock_compiler = mocker.patch("src.core.watcher.WikiCompiler")
         mock_instance = mock_compiler.return_value
         mock_instance.ingest.return_value = {
@@ -127,12 +135,12 @@ class TestScanAndIngest:
         }
 
         watcher._scan_and_ingest()
-        assert "test.md" in called_with or mock_instance.ingest.call_count >= 1
         # 验证只被调用了 1 次（只有 test.md）
         assert mock_instance.ingest.call_count == 1
 
     def test_skip_hidden_files(self, watcher, sources_dir, mocker):
         """跳过以 . 开头的隐藏文件"""
+        self._mock_config(watcher, mocker)
         from pathlib import Path
         sd = Path(sources_dir)
         (sd / ".hidden.md").write_text("secret", encoding="utf-8")
@@ -151,6 +159,7 @@ class TestScanAndIngest:
 
     def test_cache_hit_skipped(self, watcher, sources_dir, mocker):
         """已缓存的文件返回 skipped 状态，不计数"""
+        self._mock_config(watcher, mocker)
         from pathlib import Path
         (Path(sources_dir) / "cached.md").write_text("old", encoding="utf-8")
 

@@ -96,13 +96,17 @@ def test_record_preserves_fields(tracker, db_path):
 
 def test_today_summary_counts(tracker, db_path):
     """today_summary 正确汇总当日数据"""
+    from datetime import datetime
+    now = datetime.now()
+    ts1 = now.replace(hour=10, minute=0, second=0).isoformat()
+    ts2 = now.replace(hour=11, minute=0, second=0).isoformat()
     tracker.record("chat", {
         "input_tokens": 1000, "output_tokens": 500, "total_tokens": 1500,
-        "model": "deepseek-v4-flash", "timestamp": "2026-07-07T10:00:00",
+        "model": "deepseek-v4-flash", "timestamp": ts1,
     })
     tracker.record("chat", {
         "input_tokens": 2000, "output_tokens": 1000, "total_tokens": 3000,
-        "model": "deepseek-v4-flash", "timestamp": "2026-07-07T11:00:00",
+        "model": "deepseek-v4-flash", "timestamp": ts2,
     })
 
     summary = tracker.today_summary()
@@ -121,13 +125,17 @@ def test_today_summary_empty(tracker):
 
 def test_today_summary_by_operation(tracker, db_path):
     """不同操作类型分别汇总"""
+    from datetime import datetime
+    now = datetime.now()
+    ts1 = now.replace(hour=10, minute=0, second=0).isoformat()
+    ts2 = now.replace(hour=11, minute=0, second=0).isoformat()
     tracker.record("ingest_step1", {
         "input_tokens": 800, "output_tokens": 200, "total_tokens": 1000,
-        "model": "deepseek-v4-flash", "timestamp": "2026-07-07T10:00:00",
+        "model": "deepseek-v4-flash", "timestamp": ts1,
     })
     tracker.record("ingest_step2", {
         "input_tokens": 500, "output_tokens": 150, "total_tokens": 650,
-        "model": "deepseek-v4-flash", "timestamp": "2026-07-07T11:00:00",
+        "model": "deepseek-v4-flash", "timestamp": ts2,
     })
 
     summary = tracker.today_summary()

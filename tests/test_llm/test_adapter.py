@@ -200,8 +200,8 @@ def test_init_reads_model_from_env(mocker):
         model="deepseek-v4-flash",
         api_key="test-key",
         base_url="https://api.deepseek.com/v1",
-        timeout=15,
-        max_retries=1,
+        timeout=120,
+        max_retries=0,
     )
 
 
@@ -226,8 +226,8 @@ def test_init_reads_env_vars(mocker):
         model="custom-model",
         api_key="sk-custom",
         base_url="https://custom.api.com/v1",
-        timeout=15,
-        max_retries=1,
+        timeout=120,
+        max_retries=0,
     )
 
 
@@ -258,8 +258,8 @@ def test_init_doubao_provider(mocker):
         model="ep-custom",
         api_key="ark-test-key",
         base_url="https://custom.ark.com/v3",
-        timeout=15,
-        max_retries=1,
+        timeout=120,
+        max_retries=0,
     )
 
 
@@ -277,8 +277,8 @@ def test_init_doubao_defaults(mocker):
         model="ep-20260704205018-srlpk",
         api_key="ark-key",
         base_url="https://ark.cn-beijing.volces.com/api/v3",
-        timeout=15,
-        max_retries=1,
+        timeout=120,
+        max_retries=0,
     )
 
 
