@@ -1,12 +1,13 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
-import { Network, ZoomIn, ZoomOut, RotateCcw, Search, X } from 'lucide-react';
+import { Network, ZoomIn, ZoomOut, RotateCcw, Search, X, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Network as VisNetwork } from 'vis-network';
 import { DataSet } from 'vis-data';
 import { useNavigate } from 'react-router-dom';
+import EmptyState from '@/components/shared/EmptyState';
 
 /* ─── Types ─── */
 
@@ -58,7 +59,7 @@ const TYPE_LABELS: Record<string, string> = {
 /* ─── Helpers ─── */
 
 function isLargeGraph(nodeCount: number): boolean {
-  return nodeCount > 30;
+  return nodeCount > 40;
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -98,14 +99,15 @@ function buildNodeVisItem(n: GraphNode, deg: number) {
 
 function buildEdgeVisItem(e: GraphEdge, i: number, large: boolean) {
   const weight = e.weight || 1;
+  const w = large
+    ? Math.max(0.3, Math.min(2.0, weight * 0.25))
+    : Math.max(0.5, Math.min(3.0, weight * 0.35));
   return {
     id: e.id || `e${i}`,
     from: e.from,
     to: e.to,
-    width: large
-      ? Math.max(0.2, Math.min(1.5, weight * 0.2))
-      : Math.max(0.3, Math.min(2.5, weight * 0.3)),
-    color: { color: '#d4d4d8', opacity: 0.3 },
+    width: w,
+    color: { color: '#a1a1aa', opacity: 0.15 },
     smooth: large
       ? false
       : { enabled: true, type: 'continuous', roundness: 0.5 },
@@ -134,6 +136,7 @@ export default function GraphPage() {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [filterText, setFilterText] = useState('');
   const [showLegend, setShowLegend] = useState(true);
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
 
   const nodeCount = graphData?.nodes.length || 0;
   const edgeCount = graphData?.edges.length || 0;
@@ -215,13 +218,13 @@ export default function GraphPage() {
         solver: 'barnesHut',
         barnesHut: {
           gravitationalConstant: -3000,
-          centralGravity: 0.2,
-          springLength: 180,
-          springConstant: 0.02,
-          damping: 0.8,
+          centralGravity: 0.15,
+          springLength: 200,
+          springConstant: 0.015,
+          damping: 0.92,
         },
-        maxVelocity: 20,
-        minVelocity: 0.5,
+        maxVelocity: 12,
+        minVelocity: 1,
         stabilization: {
           iterations: 500,
           updateInterval: 25,
@@ -284,51 +287,63 @@ export default function GraphPage() {
       }
     });
 
-    /* ── Hover: 100ms debounce highlight ── */
+    /* ── Hover: 100ms debounce — focus on connected edges, subtle node dim ── */
     const doHighlight = (nodeId: string | number) => {
-      if (!networkRef.current) return;
-      const connectedNodes = network.getConnectedNodes(nodeId) as (string | number)[];
-      const connectedEdges = network.getConnectedEdges(nodeId) as (string | number)[];
-      const highlightSet = new Set([nodeId, ...connectedNodes]);
+      try {
+        if (!networkRef.current || !nodesRef.current || !edgesRef.current) return;
+        const nw = networkRef.current;
+        const nds = nodesRef.current;
+        const edgs = edgesRef.current;
 
-      // Batch update: single DataSet.update(array) → single redraw
-      const nodeUpdates = nodes.get().map((n: any) => {
-        const isHighlight = highlightSet.has(n.id);
-        const baseColor = TYPE_COLORS[n._pageType || 'entity'] || '#3b82f6';
-        return {
+        const connectedNodes = nw.getConnectedNodes(nodeId) as (string | number)[];
+        const connectedEdges = nw.getConnectedEdges(nodeId) as (string | number)[];
+        const highlightSet = new Set([nodeId, ...connectedNodes]);
+
+        // Only update affected nodes (not all) — prevents full redraw
+        const nodeUpdates = nds.get({ filter: (n: any) => highlightSet.has(n.id) }).map((n: any) => ({
           id: n.id,
-          color: {
-            ...n.color,
-            background: isHighlight ? baseColor : hexToRgba(baseColor, 0.12),
-            border: isHighlight ? '#ffffff' : hexToRgba('#ffffff', 0.15),
-          },
-        };
-      });
-      nodes.update(nodeUpdates);
+          color: { ...n.color, background: TYPE_COLORS[n._pageType || 'entity'] || '#3b82f6', border: '#ffffff' },
+        }));
+        // Dim non-connected nodes separately (smaller batch)
+        const dimUpdates = nds.get({ filter: (n: any) => !highlightSet.has(n.id) }).map((n: any) => {
+          const baseColor = TYPE_COLORS[n._pageType || 'entity'] || '#3b82f6';
+          return { id: n.id, color: { ...n.color, background: hexToRgba(baseColor, 0.2), border: hexToRgba('#ffffff', 0.2) } };
+        });
+        nds.update([...nodeUpdates, ...dimUpdates]);
 
-      const edgeSet = new Set(connectedEdges);
-      const edgeUpdates = edges.get().map((e: any) => ({
-        id: e.id,
-        color: { ...e.color, opacity: edgeSet.has(e.id) ? 0.5 : 0.02 },
-      }));
-      edges.update(edgeUpdates);
+        // Edges: two batches — highlighted and dimmed
+        const edgeSet = new Set(connectedEdges);
+        const hiEdges = edgs.get({ filter: (e: any) => edgeSet.has(e.id) }).map((e: any) => ({
+          id: e.id, color: { ...e.color, opacity: 0.55 },
+        }));
+        const loEdges = edgs.get({ filter: (e: any) => !edgeSet.has(e.id) }).map((e: any) => ({
+          id: e.id, color: { ...e.color, opacity: 0.02 },
+        }));
+        edgs.update([...hiEdges, ...loEdges]);
+      } catch (_) { /* silent — vis.js edge case, recoverable */ }
     };
 
     const doRestore = () => {
-      const nodeUpdates = nodes.get().map((n: any) => {
-        const baseColor = TYPE_COLORS[n._pageType || 'entity'] || '#3b82f6';
-        return {
-          id: n.id,
-          color: { ...n.color, background: baseColor, border: '#ffffff' },
-        };
-      });
-      nodes.update(nodeUpdates);
+      try {
+        if (!nodesRef.current || !edgesRef.current) return;
+        const nds = nodesRef.current;
+        const edgs = edgesRef.current;
+        const allNodes = nds.get();
 
-      const edgeUpdates = edges.get().map((e: any) => ({
-        id: e.id,
-        color: { ...e.color, opacity: 0.3 },
-      }));
-      edges.update(edgeUpdates);
+        nds.update(allNodes.map((n: any) => ({
+          id: n.id,
+          color: {
+            ...n.color,
+            background: TYPE_COLORS[n._pageType || 'entity'] || '#3b82f6',
+            border: '#ffffff',
+          },
+        })));
+
+        edgs.update(edgs.get().map((e: any) => ({
+          id: e.id,
+          color: { ...e.color, opacity: 0.15 },
+        })));
+      } catch (_) { /* silent */ }
     };
 
     network.on('hoverNode', (params) => {
@@ -406,6 +421,36 @@ export default function GraphPage() {
     };
   }, [graphData, navigate, large]);
 
+  /* ─── Type visibility filter: hide/show nodes+edges by page_type ─── */
+  useEffect(() => {
+    if (!nodesRef.current || !edgesRef.current || hiddenTypes.size === 0) return;
+    const nds = nodesRef.current;
+    const edgs = edgesRef.current;
+    const allNodes = nds.get();
+    const typeMap: Record<string, string> = {};
+    allNodes.forEach((n: any) => { typeMap[n.id] = n._pageType || 'entity'; });
+
+    nds.update(allNodes.map((n: any) => ({
+      id: n.id,
+      hidden: hiddenTypes.has(n._pageType || 'entity'),
+    })));
+
+    edgs.update(edgs.get().map((e: any) => ({
+      id: e.id,
+      hidden: hiddenTypes.has(typeMap[e.from] || 'entity') || hiddenTypes.has(typeMap[e.to] || 'entity'),
+    })));
+  }, [hiddenTypes]);
+
+  /* ─── Auto-center search on typing (300ms debounce, skip empty) ─── */
+  const filterInitRef = useRef(false);
+  useEffect(() => {
+    if (!filterText.trim()) { filterInitRef.current = true; return; }
+    filterInitRef.current = true;
+    const t = setTimeout(() => handleFilter(), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterText]);
+
   /* ─── Filter ─── */
 
   const handleFilter = useCallback(() => {
@@ -478,7 +523,7 @@ export default function GraphPage() {
       </div>
 
       {/* ── Network canvas area ── */}
-      <div className="flex-1 relative">
+      <div className="flex-1 relative overflow-hidden">
         {loading ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center">
@@ -497,12 +542,8 @@ export default function GraphPage() {
             </div>
           </div>
         ) : !graphData || nodeCount === 0 ? (
-          <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-            <div className="text-center">
-              <Network className="h-10 w-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">没有可见节点</p>
-              <p className="text-xs text-muted-foreground mt-1">导入文档后图谱将自动生成</p>
-            </div>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <EmptyState icon={Network} title="知识图谱为空" desc="导入文档后图谱将自动生成" />
           </div>
         ) : (
           <>
@@ -535,18 +576,36 @@ export default function GraphPage() {
 
             {/* ── Floating Legend (bottom-left) ── */}
             {showLegend && (
-              <Card className="absolute bottom-4 left-4 bg-card/85 backdrop-blur-md border border-border/60 rounded-xl shadow-lg z-10">
+              <Card className="absolute bottom-4 left-4 bg-card/85 backdrop-blur-md border border-border/60 rounded-xl shadow-lg z-10 max-h-[50vh] overflow-y-auto">
                 <CardContent className="p-3 text-xs space-y-1.5">
                   <p className="font-medium text-foreground mb-1.5">图例</p>
-                  {Object.entries(TYPE_LABELS).map(([key, label]) => (
-                    <div key={key} className="flex items-center gap-2">
-                      <span
-                        className="w-3 h-3 rounded-full inline-block ring-1 ring-white/50"
-                        style={{ backgroundColor: TYPE_COLORS[key] }}
-                      />
-                      <span className="text-muted-foreground">{label}</span>
-                    </div>
-                  ))}
+                  {Object.entries(TYPE_LABELS).map(([key, label]) => {
+                    const hidden = hiddenTypes.has(key);
+                    return (
+                      <div
+                        key={key}
+                        className="flex items-center gap-2 cursor-pointer hover:bg-accent/50 rounded px-1 py-0.5 transition-colors"
+                        onClick={() => {
+                          setHiddenTypes(prev => {
+                            const next = new Set(prev);
+                            if (next.has(key)) next.delete(key); else next.add(key);
+                            return next;
+                          });
+                        }}
+                      >
+                        <span
+                          className={`w-3 h-3 rounded-full inline-block ring-1 ring-white/50 shrink-0 transition-opacity ${hidden ? 'opacity-20' : ''}`}
+                          style={{ backgroundColor: TYPE_COLORS[key] }}
+                        />
+                        <span className={`text-muted-foreground transition-opacity ${hidden ? 'opacity-30' : ''}`}>
+                          {label}
+                        </span>
+                        <span className="ml-auto text-[10px] text-muted-foreground/40">
+                          {hidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </CardContent>
               </Card>
             )}

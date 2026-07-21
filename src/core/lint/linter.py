@@ -262,6 +262,7 @@ class LintTool:
                 "contradictions": [],
                 "knowledge_gaps": [],
                 "shallow_pages": [],
+                "health_score": 100,
                 "cached": False,
                 "summary": "Wiki 中没有页面可检测",
             }
@@ -337,12 +338,20 @@ class LintTool:
                 + len(result["shallow_pages"])
             )
 
+            # 语义健康评分：100 起扣
+            sem_score = 100
+            sem_score -= len(result.get("contradictions", [])) * 5
+            sem_score -= len(result.get("knowledge_gaps", [])) * 3
+            sem_score -= len(result.get("shallow_pages", [])) * 5
+            sem_score = max(0, sem_score)
+
             # 写入 SQLite 缓存 + 清除脏标记
             cache_entry = {
                 "contradictions": result.get("contradictions", []),
                 "knowledge_gaps": result.get("knowledge_gaps", []),
                 "shallow_pages": result.get("shallow_pages", []),
-                "summary": f"语义检测完成，发现 {total} 个问题",
+                "health_score": sem_score,
+                "summary": f"语义检测完成，发现 {total} 个问题 · 健康评分 {sem_score}/100",
             }
             repo.save_lint_cache(cache_entry)
             _LINT_CACHE_DIRTY = False
@@ -356,8 +365,9 @@ class LintTool:
                 "contradictions": result.get("contradictions", []),
                 "knowledge_gaps": result.get("knowledge_gaps", []),
                 "shallow_pages": result.get("shallow_pages", []),
+                "health_score": sem_score,
                 "cached": False,
-                "summary": f"语义检测完成，发现 {total} 个问题",
+                "summary": f"语义检测完成，发现 {total} 个问题 · 健康评分 {sem_score}/100",
             }
 
         except Exception as exc:
@@ -366,6 +376,7 @@ class LintTool:
                 "contradictions": [],
                 "knowledge_gaps": [],
                 "shallow_pages": [],
+                "health_score": 0,
                 "cached": False,
                 "summary": f"语义检测失败：{exc}",
                 "error": str(exc),

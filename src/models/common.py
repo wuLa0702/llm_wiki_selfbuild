@@ -84,10 +84,15 @@ class PrivacyRuleResponse(BaseModel):
 class LintResponse(BaseModel):
     """Lint 检查结果"""
     summary: str = ""
+    health_score: int | None = None
+    cached: bool = False
     # 以下字段由静态 lint 或语义 lint 动态填充
     broken_links: list = []
+    broken_links_count: int = 0
     orphan_pages: list = []
+    orphan_pages_count: int = 0
     index_gaps: list = []
+    index_gaps_count: int = 0
     contradictions: list = []
     knowledge_gaps: list = []
     shallow_pages: list = []

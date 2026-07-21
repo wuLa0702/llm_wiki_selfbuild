@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { FileText, FolderClosed, BookOpen, ArrowRight, ArrowLeft, Edit3, Save, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import EmptyState from '@/components/shared/EmptyState';
 import {
-  Sheet, SheetContent, SheetClose,
+  Sheet, SheetContent,
 } from '@/components/ui/sheet';
 import MarkdownRenderer from '@/components/shared/MarkdownRenderer';
 
@@ -34,6 +34,14 @@ function fmtDate(s: string) { return s?.slice(0, 10) || ''; }
 const typeLabel: Record<string, string> = {
   entity: '实体', concept: '概念', source: '引用源',
   query: '检索问句', comparison: '整合摘要',
+};
+
+const typeHexColor: Record<string, string> = {
+  entity: '#3b82f6',
+  concept: '#8b5cf6',
+  source: '#10b981',
+  query: '#f59e0b',
+  comparison: '#ec4899',
 };
 
 const typeColor: Record<string, string> = {
@@ -65,6 +73,8 @@ export default function WikiPage() {
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [isDirty, setIsDirty] = useState(false);
+  const bodyRef = useRef('');
 
   // Load file tree
   useEffect(() => {
@@ -147,7 +157,11 @@ export default function WikiPage() {
   };
 
   const openEditor = () => {
-    setEditContent(raw);
+    // Strip YAML frontmatter — only edit body, preserve metadata
+    const body = raw.replace(/^---[\s\S]*?---\n*/, '').trimStart();
+    setEditContent(body);
+    bodyRef.current = body;
+    setIsDirty(false);
     setSaveError('');
     setEditing(true);
   };
@@ -156,21 +170,30 @@ export default function WikiPage() {
     if (!selectedPage) return;
     setSaving(true);
     setSaveError('');
+    // Reconstruct: original frontmatter + edited body
+    const fmMatch = raw.match(/^---[\s\S]*?---/);
+    const reconstructed = fmMatch ? fmMatch[0] + '\n\n' + editContent.trimStart() : editContent;
     const pp = selectedPage.startsWith('wiki/') ? selectedPage.slice(5) : selectedPage;
     try {
       const r = await fetch(`/v1/pages/${encodeURIComponent(pp)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: editContent }),
+        body: JSON.stringify({ content: reconstructed }),
       });
       if (!r.ok) throw new Error(`保存失败 (${r.status})`);
-      setRaw(editContent);
+      setRaw(reconstructed);
+      setIsDirty(false);
       setEditing(false);
     } catch (e: any) {
       setSaveError(e.message || '保存出错');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleClose = () => {
+    if (isDirty && !window.confirm('内容已修改但未保存，确定关闭吗？')) return;
+    setEditing(false);
   };
 
   const countFiles = (children: Record<string, FileNode>): number =>
@@ -396,33 +419,81 @@ export default function WikiPage() {
     </div>
 
       {/* ── Edit Sheet ── */}
-      <Sheet open={editing} onOpenChange={(v: boolean) => { if (!v) setEditing(false); }}>
-        <SheetContent className="flex flex-col w-full max-w-2xl">
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <h2 className="text-sm font-semibold">编辑文档</h2>
+      <Sheet open={editing} onOpenChange={(v: boolean) => {
+        if (!v && isDirty && !window.confirm('内容已修改但未保存，确定关闭吗？')) {
+          setTimeout(() => setEditing(true), 50);
+          return;
+        }
+        setEditing(false);
+      }}>
+        <SheetContent
+          showCloseButton={false}
+          className="flex flex-col w-full min-w-[480px] max-w-[90vw] 2xl:max-w-[1400px]"
+        >
+          {/* Sticky header with type color bar */}
+          <div
+            className="flex items-center gap-3 px-5 py-3.5 border-b border-border shrink-0"
+            style={{
+              borderLeft: `3px solid ${typeHexColor[meta?.page_type || 'entity'] || '#3b82f6'}`,
+            }}
+          >
+            <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">{selectedPage?.split('/').pop()}</span>
-                <SheetClose render={<X className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-foreground" />} />
+                {meta?.page_type && (
+                  <span
+                    className="text-[10px] font-semibold uppercase tracking-wider"
+                    style={{ color: typeHexColor[meta.page_type] }}
+                  >
+                    {typeLabel[meta.page_type]}
+                  </span>
+                )}
+                <span className="text-xs text-muted-foreground truncate">
+                  {selectedPage?.split('/').pop()}
+                </span>
               </div>
+              <h2 className="text-sm font-semibold mt-0.5">编辑文档</h2>
             </div>
-            <div className="flex-1 p-4 min-h-0">
-              <Textarea
-                className="w-full h-full min-h-[300px] font-mono text-sm resize-none"
-                value={editContent}
-                onChange={e => setEditContent(e.target.value)}
-              />
+            <button
+              className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              onClick={handleClose}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Scrollable editing area */}
+          <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0">
+            <Textarea
+              className="w-full h-full min-h-[400px] font-mono text-sm resize-none border-0 p-0 focus-visible:ring-0"
+              value={editContent}
+              onChange={e => {
+                setEditContent(e.target.value);
+                setIsDirty(e.target.value !== bodyRef.current);
+              }}
+              placeholder="在此编辑文档正文..."
+            />
+          </div>
+
+          {saveError && (
+            <div className="shrink-0 px-5 py-2 text-xs text-destructive bg-destructive/5 border-t border-border">
+              {saveError}
             </div>
-            {saveError && (
-              <div className="px-4 pb-2 text-xs text-destructive">{saveError}</div>
+          )}
+
+          {/* Sticky footer */}
+          <div className="shrink-0 flex items-center justify-end gap-2 px-5 py-3 border-t border-border bg-popover">
+            {isDirty && (
+              <span className="text-[10px] text-muted-foreground mr-auto">⦿ 有未保存的修改</span>
             )}
-            <div className="flex items-center justify-end gap-2 p-4 border-t border-border">
-              <Button variant="outline" size="sm" onClick={() => setEditing(false)}>取消</Button>
-              <Button size="sm" onClick={saveContent} disabled={saving}>
-                <Save className="h-3.5 w-3.5 mr-1" />
-                {saving ? '保存中...' : '保存'}
-              </Button>
-            </div>
-          </SheetContent>
+            <Button variant="outline" size="sm" onClick={handleClose}>
+              取消
+            </Button>
+            <Button size="sm" onClick={saveContent} disabled={saving || !editContent.trim()}>
+              <Save className="h-3.5 w-3.5 mr-1" />
+              {saving ? '保存中...' : '保存'}
+            </Button>
+          </div>
+        </SheetContent>
       </Sheet>
     </>
   );
