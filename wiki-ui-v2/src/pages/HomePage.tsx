@@ -89,7 +89,7 @@ export default function HomePage() {
   ];
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="flex flex-1 flex-col min-h-0 overflow-y-auto">
       <div className="max-w-5xl mx-auto p-6 md:p-8 space-y-8">
         {/* ── Hero Section ── */}
         <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary/[0.03] via-primary/[0.06] to-primary/[0.01] border border-primary/5 p-8 md:p-10">

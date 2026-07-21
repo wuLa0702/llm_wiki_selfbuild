@@ -18,7 +18,7 @@ import {
   Settings, Network, Sparkles,
 } from 'lucide-react';
 import { useTheme } from '@/hooks/useTheme';
-import { useEffect } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 
 // Pages
 import HomePage from '@/pages/HomePage';
@@ -51,28 +51,96 @@ const navGroups = [
   },
 ];
 
+/**
+ * 一级页面缓存渲染器。
+ *
+ * 所有路由的页面组件常驻 DOM（display 控制显隐），
+ * 切换路由时不 unmount，保留所有 state / ref / 滚动位置 / 网络连接。
+ * 首次访问后该页面实例将在 session 期间一直存在。
+ */
+const CACHEABLE_PAGES = [
+  { path: '/home', element: <HomePage /> },
+  { path: '/chat', element: <ChatPage /> },
+  { path: '/wiki', element: <WikiPage /> },
+  { path: '/graph', element: <GraphPage /> },
+  { path: '/sources', element: <SourcesPage /> },
+  { path: '/search', element: <SearchPage /> },
+  { path: '/lint', element: <LintPage /> },
+];
+
+function CachedPageHost({ currentPath }: { currentPath: string }) {
+  // 记录已访问过的路径，这些页面的 DOM 会被保留
+  const [mountedPaths, setMountedPaths] = useState<Set<string>>(() => new Set());
+
+  // 将子路径归一化到父级缓存路径（如 /chat/123 → /chat）
+  const parentCachePath = useMemo(() => {
+    for (const p of CACHEABLE_PAGES) {
+      if (currentPath === p.path) return p.path;
+      if (p.path !== '/home' && currentPath.startsWith(p.path + '/')) return p.path;
+    }
+    return null;
+  }, [currentPath]);
+
+  const isCacheablePath = parentCachePath !== null;
+
+  useEffect(() => {
+    if (parentCachePath) {
+      setMountedPaths(prev => {
+        if (prev.has(parentCachePath)) return prev;
+        const next = new Set(prev);
+        next.add(parentCachePath);
+        return next;
+      });
+    }
+  }, [parentCachePath]);
+
+  return (
+    <>
+      {CACHEABLE_PAGES.map(({ path, element }) => {
+        const isActive = currentPath === path ||
+          (path !== '/home' && currentPath.startsWith(path + '/'));
+        const isMounted = mountedPaths.has(path);
+        if (!isMounted && !isActive) return null;
+        return (
+          <div
+            key={path}
+            className="flex flex-1 min-h-0 overflow-hidden"
+            style={{ display: isActive ? 'flex' : 'none' }}
+          >
+            {element}
+          </div>
+        );
+      })}
+      {/* 非缓存页面：仅在路径匹配时挂载，切换时销毁 */}
+      {!isCacheablePath && (
+        <Routes>
+          <Route path="/settings" element={<Navigate to="/settings/interface" replace />} />
+          <Route path="/settings/:tab" element={<SettingsPage />} />
+          <Route path="/health" element={<HealthPage />} />
+          <Route path="/" element={<Navigate to="/home" replace />} />
+          <Route path="*" element={<Navigate to="/home" replace />} />
+        </Routes>
+      )}
+    </>
+  );
+}
+
+function AppRoutes() {
+  const location = useLocation();
+  return <CachedPageHost currentPath={location.pathname} />;
+}
+
 export default function App() {
 
   return (
     <BrowserRouter>
       <TooltipProvider>
-        <SidebarProvider defaultOpen={true}>
+        <SidebarProvider defaultOpen={true} className="h-svh overflow-hidden">
           <AppSidebar />
           <SidebarInset className="flex flex-col min-h-0 m-2 rounded-xl shadow-sm bg-card overflow-hidden">
-            <Routes>
-              <Route path="/home" element={<HomePage />} />
-              <Route path="/chat" element={<ChatPage />} />
-              <Route path="/wiki" element={<WikiPage />} />
-              <Route path="/sources" element={<SourcesPage />} />
-              <Route path="/search" element={<SearchPage />} />
-              <Route path="/graph" element={<GraphPage />} />
-              <Route path="/lint" element={<LintPage />} />
-              <Route path="/settings" element={<Navigate to="/settings/interface" replace />} />
-              <Route path="/settings/:tab" element={<SettingsPage />} />
-              <Route path="/health" element={<HealthPage />} />
-              <Route path="/" element={<Navigate to="/home" replace />} />
-              <Route path="*" element={<Navigate to="/home" replace />} />
-            </Routes>
+            <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <AppRoutes />
+            </div>
           </SidebarInset>
         </SidebarProvider>
       </TooltipProvider>

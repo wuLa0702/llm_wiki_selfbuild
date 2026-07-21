@@ -412,7 +412,7 @@ export default function LintPage() {
   /* ─── Render ─── */
 
   return (
-    <div className="flex-1 overflow-y-auto p-6" ref={scrollRef}>
+    <div className="flex flex-1 flex-col min-h-0 overflow-y-auto p-6" ref={scrollRef}>
       <div className="max-w-4xl mx-auto space-y-5">
 
         {/* ── Header + Batch action bar ── */}
