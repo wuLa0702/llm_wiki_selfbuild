@@ -251,14 +251,14 @@ export default function WikiPage() {
 
   return (
     <>
-    <div className="flex flex-1 min-h-0">
+    <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* File tree panel */}
-      <div className="w-72 flex-shrink-0 border-r border-border bg-card flex flex-col min-h-0">
+      <div className="w-72 flex-shrink-0 border-r border-border bg-card flex flex-col min-h-0 overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
           <BookOpen className="h-4 w-4" />
           <span className="text-xs font-medium">知识库</span>
         </div>
-        <div className="flex-1 overflow-y-auto py-1">
+        <div className="flex-1 overflow-y-scroll py-1">
           {treeLoading ? (
             <div className="space-y-1 p-3">
               {[1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-5 w-full" />)}
@@ -273,7 +273,7 @@ export default function WikiPage() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 flex flex-col min-h-0 min-w-0">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
         {!selectedPage ? (
           <EmptyState icon={BookOpen} title="选择页面" desc="从左侧文件树中选择 Wiki 页面查看内容" />
         ) : contentLoading ? (
@@ -404,7 +404,7 @@ export default function WikiPage() {
             </div>
 
             {/* Scrollable markdown body — floating card */}
-            <div className={`flex-1 overflow-y-auto px-4 pb-4 content-swap ${contentLoading ? 'content-swap-loading' : ''}`}>
+            <div className={`flex-1 overflow-y-scroll px-4 pb-4 content-swap ${contentLoading ? 'content-swap-loading' : ''}`}>
               <div key={selectedPage} className="max-w-3xl mx-auto bg-card rounded-lg border border-border p-6 shadow-sm page-content-enter">
                 <MarkdownRenderer
                   content={raw.replace(/^---[\s\S]*?---\n*/, '')}

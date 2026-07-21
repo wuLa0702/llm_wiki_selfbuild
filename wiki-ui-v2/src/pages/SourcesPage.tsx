@@ -223,9 +223,9 @@ export default function SourcesPage() {
 
   return (
     <>
-    <div className="flex flex-1 min-h-0">
+    <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* File tree sidebar */}
-      <div className="w-64 flex-shrink-0 border-r border-border bg-card flex flex-col min-h-0">
+      <div className="w-64 flex-shrink-0 border-r border-border bg-card flex flex-col min-h-0 overflow-hidden">
         <div className="flex items-center justify-between px-3 py-2 border-b border-border">
           <span className="text-xs font-medium">原始资料</span>
           <div className="flex gap-1">
@@ -243,7 +243,7 @@ export default function SourcesPage() {
         <input type="file" ref={fileInputRef} className="hidden" multiple onChange={e => uploadFiles(e.target.files, false)} />
         <input type="file" ref={folderInputRef} className="hidden" multiple onChange={e => uploadFiles(e.target.files, true)} />
 
-        <div className="flex-1 overflow-y-auto py-1">
+        <div className="flex-1 overflow-y-scroll py-1">
           {loading ? (
             <div className="space-y-2 p-3">
               {[1,2,3,4].map(i => <Skeleton key={i} className="h-6 w-full" />)}
@@ -272,7 +272,7 @@ export default function SourcesPage() {
       </div>
 
       {/* Content preview */}
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {!selectedFile ? (
           <EmptyState icon={FileText} title="选择文件" desc="从左侧文件树中选择文件查看内容或编辑" />
         ) : previewLoading ? (
@@ -283,7 +283,7 @@ export default function SourcesPage() {
             </div>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 overflow-y-scroll p-6">
             <div className="flex items-center justify-between mb-4 max-w-3xl mx-auto w-full">
               <h2 className="text-lg font-bold">{selectedFile.split('/').pop()}</h2>
               <div className="flex gap-2 items-center">
