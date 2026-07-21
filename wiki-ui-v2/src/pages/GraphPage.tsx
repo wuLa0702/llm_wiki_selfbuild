@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Network as NetworkIcon, ZoomIn, ZoomOut, RotateCcw, Search, X,
   EyeOff, Filter, Maximize, FolderClosed, FileText, BookOpen, GitBranch,
-  Lightbulb, Layers, Palette, ChevronDown,
+  Lightbulb, Layers, Palette, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -149,6 +149,7 @@ export default function GraphPage() {
   const [filterText, setFilterText] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('type');
   const [showFilter, setShowFilter] = useState(false);
+  const [showLegend, setShowLegend] = useState(true);
 
   /* Filter panel options */
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
@@ -1146,15 +1147,19 @@ export default function GraphPage() {
             </div>
 
             {/* ── Bottom-left legend / info card ── */}
-            {!showFilter && (
+            {!showFilter && showLegend && (
               <div className={`absolute bottom-4 left-4 z-10 rounded-xl backdrop-blur-md shadow-lg border ${FLOATING_BG} ${FLOATING_BORDER} px-3 py-2.5 min-w-[160px] max-w-[260px]`}>
-                <div className="flex items-center justify-between mb-1.5">
+                {/* Clickable header — collapses legend */}
+                <div
+                  className="flex items-center justify-between mb-1.5 cursor-pointer"
+                  onClick={() => setShowLegend(false)}
+                >
                   <span className="text-[11px] font-semibold flex items-center gap-1" style={{ color: LABEL_COLOR }}>
                     {viewMode === 'type' && <><Palette className="h-3 w-3" /> 节点类型</>}
                     {viewMode === 'community' && <><Layers className="h-3 w-3" /> 社区</>}
                     {viewMode === 'insights' && <><Lightbulb className="h-3 w-3" /> 洞察</>}
                   </span>
-                  <ChevronDown className="h-3 w-3 opacity-50" style={{ color: LABEL_COLOR }} />
+                  <ChevronDown className="h-3 w-3 opacity-50 cursor-pointer hover:opacity-100 transition-opacity" style={{ color: LABEL_COLOR }} />
                 </div>
                 <div className="space-y-1 max-h-[40vh] overflow-y-auto">
                   {viewMode === 'type' && Object.entries(TYPE_LABELS).map(([key, label]) => {
@@ -1218,6 +1223,17 @@ export default function GraphPage() {
                     </>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* ── Collapsed legend stub — click to re-open ── */}
+            {!showFilter && !showLegend && (
+              <div
+                className={`absolute bottom-4 left-4 z-10 rounded-xl backdrop-blur-md shadow-lg border ${FLOATING_BG} ${FLOATING_BORDER} px-2.5 py-2 cursor-pointer hover:brightness-110 transition-all`}
+                onClick={() => setShowLegend(true)}
+                title="展开图例"
+              >
+                <ChevronRight className="h-3 w-3" style={{ color: LABEL_COLOR }} />
               </div>
             )}
           </>
