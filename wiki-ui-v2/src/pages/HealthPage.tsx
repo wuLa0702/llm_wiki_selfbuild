@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
 import {
   Package, Timer, FileText, Network,
-  ListTodo, Activity, AlertCircle, CheckCircle2,
+  ListTodo, Activity, AlertCircle, CheckCircle2, RefreshCw,
 } from 'lucide-react';
 
 interface HealthData {
@@ -63,28 +64,62 @@ export default function HealthPage() {
   const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
   const [data, setData] = useState<HealthData | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [lastUpdated, setLastUpdated] = useState<string>('');
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    fetch('/health')
-      .then(r => r.json())
-      .then(d => {
-        setData(d);
-        setStatus(d.status === 'ok' ? 'ok' : 'error');
-        if (d.status !== 'ok') setErrorMsg(d.message || '服务异常');
-      })
-      .catch(e => {
+  const fetchHealth = useCallback(async (isManual = false) => {
+    if (isManual) setRefreshing(true);
+    try {
+      const r = await fetch('/health');
+      const d = await r.json();
+      setData(d);
+      setStatus(d.status === 'ok' ? 'ok' : 'error');
+      if (d.status !== 'ok') setErrorMsg(d.message || '服务异常');
+      setLastUpdated(new Date().toLocaleTimeString());
+    } catch (e: any) {
+      // 仅在首次加载或手动刷新时显示错误，轮询静默失败
+      if (status === 'loading' || isManual) {
         setStatus('error');
         setErrorMsg(e.message || '无法连接服务');
-      });
-  }, []);
+      }
+    } finally {
+      if (isManual) setTimeout(() => setRefreshing(false), 400);
+    }
+  }, [status]);
+
+  // 首次加载 + 10s 轮询
+  useEffect(() => {
+    fetchHealth();
+    const id = setInterval(() => fetchHealth(), 10_000);
+    return () => clearInterval(id);
+  }, [fetchHealth]);
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-xl font-bold mb-1">健康检查</h1>
-          <p className="text-sm text-muted-foreground">系统运行状态和关键指标</p>
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h1 className="text-xl font-bold mb-1">健康检查</h1>
+            <p className="text-sm text-muted-foreground">系统运行状态和关键指标</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {lastUpdated && (
+              <span className="text-[10px] text-muted-foreground/50">
+                上次更新 {lastUpdated}
+              </span>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={() => fetchHealth(true)}
+              disabled={refreshing}
+            >
+              <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? '刷新中...' : '刷新'}
+            </Button>
+          </div>
         </div>
 
         {status === 'loading' ? (
