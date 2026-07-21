@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import EmptyState from '@/components/shared/EmptyState';
 import {
   Sheet, SheetContent, SheetClose,
 } from '@/components/ui/sheet';
@@ -251,12 +252,7 @@ export default function WikiPage() {
       {/* Content */}
       <div className="flex-1 flex flex-col min-h-0 min-w-0">
         {!selectedPage ? (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground">
-            <div className="text-center">
-              <FileText className="h-8 w-8 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">从左侧选择文件查看</p>
-            </div>
-          </div>
+          <EmptyState icon={BookOpen} title="选择页面" desc="从左侧文件树中选择 Wiki 页面查看内容" />
         ) : contentLoading ? (
           <div className="flex-1 p-6 space-y-4">
             <Skeleton className="h-8 w-64" />
