@@ -58,7 +58,7 @@ export default function App() {
       <TooltipProvider>
         <SidebarProvider defaultOpen={true}>
           <AppSidebar />
-          <SidebarInset className="flex flex-col min-h-0 m-2 rounded-xl shadow-sm bg-card">
+          <SidebarInset className="flex flex-col min-h-0 m-2 rounded-xl shadow-sm bg-card overflow-hidden">
             <Routes>
               <Route path="/home" element={<HomePage />} />
               <Route path="/chat" element={<ChatPage />} />
