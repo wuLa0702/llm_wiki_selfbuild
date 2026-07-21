@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import EmptyState from '@/components/shared/EmptyState';
 
 interface SearchResult {
   path: string;
@@ -130,13 +131,11 @@ export default function SearchPage() {
               </div>
             </div>
           ) : (
-            <div className="flex items-center justify-center h-64 text-muted-foreground">
-              <div className="text-center">
-                <Search className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                <p className="text-sm">输入关键词搜索 Wiki</p>
-                <p className="text-xs text-muted-foreground/60 mt-1">当前模式: {methodLabel}</p>
-              </div>
-            </div>
+            <EmptyState
+              icon={Search}
+              title="搜索知识库"
+              desc={`输入关键词搜索 Wiki 页面 · 当前模式: ${methodLabel}`}
+            />
           )}
         </div>
       </div>

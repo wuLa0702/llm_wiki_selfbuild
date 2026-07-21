@@ -6,6 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Sheet, SheetContent, SheetClose } from '@/components/ui/sheet';
 import { showToast } from '@/components/shared/Toast';
 import MarkdownRenderer from '@/components/shared/MarkdownRenderer';
+import EmptyState from '@/components/shared/EmptyState';
 
 interface SourceItem {
   name: string; type: 'file' | 'directory'; path: string;
@@ -248,9 +249,8 @@ export default function SourcesPage() {
               {[1,2,3,4].map(i => <Skeleton key={i} className="h-6 w-full" />)}
             </div>
           ) : tree.length === 0 ? (
-            <div className="text-xs text-muted-foreground text-center py-8">
-              <FileText className="h-6 w-6 mx-auto mb-1 opacity-30" />
-              暂无文件
+            <div className="py-8">
+              <EmptyState icon={FileText} title="暂无文件" desc="上传文件到 raw/sources/ 开始构建知识库" />
             </div>
           ) : renderItem(tree)}
         </div>
@@ -274,12 +274,7 @@ export default function SourcesPage() {
       {/* Content preview */}
       <div className="flex-1 flex flex-col min-h-0">
         {!selectedFile ? (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground">
-            <div className="text-center">
-              <FileText className="h-8 w-8 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">从左侧选择文件查看</p>
-            </div>
-          </div>
+          <EmptyState icon={FileText} title="选择文件" desc="从左侧文件树中选择文件查看内容或编辑" />
         ) : previewLoading ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
