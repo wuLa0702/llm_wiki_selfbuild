@@ -1,12 +1,15 @@
 import { useEffect, useState, useRef } from 'react';
-import { FileText, FolderClosed, Upload, Trash2, RefreshCw, Sparkles, Edit3, Save, X } from 'lucide-react';
+import { FileText, FolderClosed, Upload, Trash2, RefreshCw, Sparkles, Edit3, Save, X, ChevronDown, ChevronRight, RotateCcw, AlertCircle, CheckCircle2, Clock, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { Sheet, SheetContent, SheetClose } from '@/components/ui/sheet';
 import { showToast } from '@/components/shared/Toast';
 import MarkdownRenderer from '@/components/shared/MarkdownRenderer';
 import EmptyState from '@/components/shared/EmptyState';
+
+/* ─── Types ─── */
 
 interface SourceItem {
   name: string; type: 'file' | 'directory'; path: string;
@@ -18,14 +21,167 @@ interface QueueJob {
   error?: string; result_summary?: string;
 }
 
-const STATUS_ICON: Record<string, string> = {
-  pending: '⏳', processing: '🔄', done: '✅', failed: '❌',
+interface QueueProgress {
+  total: number; pending: number; processing: number;
+  done: number; failed: number; cancelled: number;
+}
+
+/* ─── Helpers ─── */
+
+const STATUS_CONFIG: Record<string, { icon: typeof Clock; color: string; label: string }> = {
+  pending:    { icon: Clock,     color: 'text-muted-foreground', label: '等待中' },
+  processing: { icon: Loader2,   color: 'text-blue-500',        label: '处理中' },
+  done:       { icon: CheckCircle2, color: 'text-green-500',    label: '完成' },
+  failed:     { icon: AlertCircle,  color: 'text-red-500',      label: '失败' },
+  cancelled:  { icon: X,          color: 'text-muted-foreground/50', label: '已取消' },
 };
 
 function countFiles(item: SourceItem): number {
   if (item.type === 'file') return 1;
   return (item.children || []).reduce((acc, c) => acc + countFiles(c), 0);
 }
+
+/* ─── Queue Panel Component ─── */
+
+function QueuePanel({
+  jobs, progress, collapsed, onToggle, onRetry, onClearFailed,
+}: {
+  jobs: QueueJob[]; progress: QueueProgress | null;
+  collapsed: boolean; onToggle: () => void;
+  onRetry: (jobId: string) => void; onClearFailed: () => void;
+}) {
+  const activeJobs = jobs.filter(j => j.status === 'pending' || j.status === 'processing');
+  const failedJobs = jobs.filter(j => j.status === 'failed');
+  const doneCount = progress?.done ?? jobs.filter(j => j.status === 'done').length;
+  const total = progress?.total ?? jobs.length;
+  const pct = total > 0 ? Math.round(((doneCount + (progress?.failed ?? 0) + (progress?.cancelled ?? 0)) / total) * 100) : 0;
+
+  if (jobs.length === 0) return null;
+
+  return (
+    <div className="border-t border-border">
+      {/* Header — clickable toggle */}
+      <button
+        className="flex items-center justify-between w-full px-3 py-2 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors cursor-pointer"
+        onClick={onToggle}
+      >
+        <div className="flex items-center gap-1.5">
+          {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          <span>导入队列</span>
+          {activeJobs.length > 0 && (
+            <Badge variant="default" className="text-[9px] h-4 px-1 bg-blue-500 text-white">
+              {activeJobs.length} 活跃
+            </Badge>
+          )}
+          {failedJobs.length > 0 && (
+            <Badge variant="outline" className="text-[9px] h-4 px-1 text-red-500 border-red-300">
+              {failedJobs.length} 失败
+            </Badge>
+          )}
+        </div>
+        <span className="text-[9px] text-muted-foreground/50">{doneCount}/{total}</span>
+      </button>
+
+      {!collapsed && (
+        <div className="px-3 pb-2 space-y-2">
+          {/* Progress bar */}
+          {total > 0 && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[9px] text-muted-foreground/60">
+                <span>{pct}%</span>
+                <span className="flex items-center gap-1">
+                  {progress && (
+                    <>
+                      <span className="text-blue-500">{progress.processing} 处理中</span>
+                      <span>·</span>
+                      <span className="text-green-500">{progress.done} 完成</span>
+                      {progress.failed > 0 && <><span>·</span><span className="text-red-500">{progress.failed} 失败</span></>}
+                    </>
+                  )}
+                </span>
+              </div>
+              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                {progress && (
+                  <div className="flex h-full rounded-full overflow-hidden">
+                    <div
+                      className="bg-green-500 transition-all duration-500"
+                      style={{ width: `${(progress.done / total) * 100}%` }}
+                    />
+                    <div
+                      className="bg-red-500 transition-all duration-500"
+                      style={{ width: `${(progress.failed / total) * 100}%` }}
+                    />
+                    <div
+                      className="bg-blue-400 animate-pulse transition-all duration-500"
+                      style={{ width: `${(progress.processing / total) * 100}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Job list */}
+          <div className="max-h-[200px] overflow-y-auto space-y-0.5">
+            {jobs.slice(0, 15).map(job => {
+              const cfg = STATUS_CONFIG[job.status] || STATUS_CONFIG.pending;
+              const Icon = cfg.icon;
+              return (
+                <div
+                  key={job.job_id}
+                  className="flex items-center gap-1.5 px-1.5 py-1 rounded text-[10px] hover:bg-muted/50 transition-colors group"
+                >
+                  <Icon className={`h-3 w-3 shrink-0 ${cfg.color} ${job.status === 'processing' ? 'animate-spin' : ''}`} />
+                  <span className="flex-1 truncate" title={job.source_path}>
+                    {job.source_path || job.job_id}
+                  </span>
+                  <span className="text-[9px] text-muted-foreground/40 shrink-0">{cfg.label}</span>
+                  {job.status === 'failed' && (
+                    <button
+                      className="opacity-0 group-hover:opacity-100 text-[9px] px-1 py-0.5 rounded text-red-500 hover:bg-red-500/10 transition-all cursor-pointer shrink-0"
+                      onClick={() => onRetry(job.job_id)}
+                      title="重试"
+                    >
+                      <RotateCcw className="h-2.5 w-2.5" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-2 pt-1">
+            {failedJobs.length > 1 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 text-[9px] gap-1 px-1.5 text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                onClick={onClearFailed}
+              >
+                <Trash2 className="h-2.5 w-2.5" />
+                清空失败记录
+              </Button>
+            )}
+            {failedJobs.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 text-[9px] gap-1 px-1.5"
+                onClick={() => failedJobs.forEach(j => onRetry(j.job_id))}
+              >
+                <RotateCcw className="h-2.5 w-2.5" />
+                全部重试
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Main Page ─── */
 
 export default function SourcesPage() {
   const [tree, setTree] = useState<SourceItem[]>([]);
@@ -36,6 +192,8 @@ export default function SourcesPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [jobs, setJobs] = useState<QueueJob[]>([]);
+  const [queueProgress, setQueueProgress] = useState<QueueProgress | null>(null);
+  const [queueCollapsed, setQueueCollapsed] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
@@ -52,12 +210,16 @@ export default function SourcesPage() {
 
   useEffect(() => { loadTree(); }, []);
 
+  /* ─── Queue polling ─── */
   useEffect(() => {
     const fetchQueue = () => {
-      fetch('/v1/ingest/queue/recent?limit=10')
-        .then(r => r.json())
-        .then(d => setJobs(d.jobs || []))
-        .catch(() => {});
+      Promise.all([
+        fetch('/v1/ingest/queue/recent?limit=15').then(r => r.json()),
+        fetch('/v1/ingest/queue/status').then(r => r.json()),
+      ]).then(([recent, status]) => {
+        setJobs(recent.jobs || []);
+        setQueueProgress(status);
+      }).catch(() => {});
     };
     fetchQueue();
     const id = setInterval(fetchQueue, 5000);
@@ -165,6 +327,22 @@ export default function SourcesPage() {
       .catch(() => showToast('上传失败', 'error'));
   };
 
+  const retryJob = async (jobId: string) => {
+    try {
+      const r = await fetch(`/v1/ingest/queue/retry/${jobId}`, { method: 'POST' });
+      const d = await r.json();
+      if (d.status === 'ok') showToast('已重新加入队列', 'success');
+    } catch { showToast('重试请求失败', 'error'); }
+  };
+
+  const clearFailed = async () => {
+    try {
+      const r = await fetch('/v1/ingest/queue/failed', { method: 'DELETE' });
+      const d = await r.json();
+      showToast(`已清理 ${d.deleted || 0} 条失败记录`, 'success');
+    } catch { showToast('清理请求失败', 'error'); }
+  };
+
   const renderItem = (items: SourceItem[], depth = 0): React.ReactNode => (
     <ul className="list-none p-0 m-0">
       {items.map(item => {
@@ -255,19 +433,18 @@ export default function SourcesPage() {
           ) : renderItem(tree)}
         </div>
 
-        <div className="border-t border-border p-2 text-[10px] text-muted-foreground">
-          <span className="px-2">{totalFiles} 个文件</span>
-          {jobs.length > 0 && (
-            <div className="border-t border-border mt-1 pt-1">
-              <div className="px-2 text-[10px] font-medium mb-1">任务队列</div>
-              {jobs.slice(0, 3).map(j => (
-                <div key={j.job_id} className="flex items-center gap-1 px-2 py-0.5 text-[10px]">
-                  <span>{STATUS_ICON[j.status] || '❓'}</span>
-                  <span className="flex-1 truncate">{j.source_path || j.job_id}</span>
-                </div>
-              ))}
-            </div>
-          )}
+        {/* ── Queue Panel (sidebar footer) ── */}
+        <QueuePanel
+          jobs={jobs}
+          progress={queueProgress}
+          collapsed={queueCollapsed}
+          onToggle={() => setQueueCollapsed(v => !v)}
+          onRetry={retryJob}
+          onClearFailed={clearFailed}
+        />
+
+        <div className="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground">
+          {totalFiles} 个文件
         </div>
       </div>
 
