@@ -249,3 +249,11 @@ wiki-ui-v2/dist/
 .kimi/
 .claude/hooks/
 .claude/skills/
+
+# AI config files (not project code)
+AGENTS.md
+GEMINI.md
+KIMI.md
+
+# Runtime logs
+logs/
