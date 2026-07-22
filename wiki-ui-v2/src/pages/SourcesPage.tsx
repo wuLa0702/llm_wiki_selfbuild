@@ -262,9 +262,27 @@ export default function SourcesPage() {
     } catch { showToast('删除请求失败', 'error'); }
   };
 
-  const extractFile = async (path: string) => {
+  const extractFile = async (path: string, force = false) => {
     setPreviewLoading(true);
     setSelectedFile(path);
+
+    // 预检：检查文件自上次 ingest 后是否有变化
+    if (!force) {
+      try {
+        const check = await fetch(`/v1/sources/check-changed?path=${encodeURIComponent(path)}`);
+        const d = await check.json();
+        if (d.changed === false) {
+          setPreviewLoading(false);
+          const ok = confirm('该文件近期无变化，无需生成 Wiki。\n是否强制重新生成？');
+          if (!ok) return;
+          extractFile(path, true);
+          return;
+        }
+      } catch {
+        // 预检失败降级容忍：继续执行提取
+      }
+    }
+
     try {
       const r = await fetch('/v1/sources/extract-to-wiki', {
         method: 'POST',

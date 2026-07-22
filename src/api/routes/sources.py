@@ -233,6 +233,45 @@ async def extract_to_wiki(body: ExtractRequest):
 
 
 # =====================================================================
+# 提取前预检
+# =====================================================================
+
+
+@router.get("/v1/sources/check-changed")
+async def check_source_changed(path: str):
+    """检查源文件自上次 ingest 后是否变化
+
+    返回 {"changed": true/false, "cached": true/false}
+    - changed=true → 文件有变更或从未 ingest，需要提取
+    - changed=false → 文件无变更，缓存命中，提醒用户
+    """
+    logger.info("GET /v1/sources/check-changed | path=%s", path)
+
+    # 安全校验
+    safe_prefix = "raw/sources/"
+    if not path.startswith(safe_prefix):
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    full = os.path.normpath(path)
+    safe_base = os.path.normpath(safe_prefix)
+    if not full.startswith(safe_base):
+        return JSONResponse(status_code=403, content={"error": "Path traversal detected"})
+    if not os.path.isfile(full):
+        return JSONResponse(status_code=404, content={"error": "File not found"})
+
+    from src.core.cache import IngestCache
+    cache = IngestCache(sources_dir=safe_prefix)
+
+    # path 是 "raw/sources/xxx.md"，IngestCache 需要相对路径
+    rel_path = path[len(safe_prefix):]
+    changed = cache.has_changed(rel_path)
+    return {
+        "changed": changed,
+        "cached": not changed,
+        "path": path,
+    }
+
+
+# =====================================================================
 # 编辑原始文件
 # =====================================================================
 
