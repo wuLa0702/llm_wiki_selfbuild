@@ -4,6 +4,7 @@ import {
   Network as NetworkIcon, ZoomIn, ZoomOut, RotateCcw, Search, X,
   EyeOff, Filter, Maximize, FolderClosed, FileText, BookOpen, GitBranch,
   Lightbulb, Layers, Palette, ChevronDown, ChevronRight,
+  Zap, Link2, Target, AlertTriangle, Sparkles, BarChart3, X as XIcon,
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -63,9 +64,10 @@ interface Insight {
 }
 
 interface KnowledgeGap {
-  page: string;
-  reason: string;
-  gap_type: string;
+  node: string;
+  description: string;
+  type: string;
+  suggestion?: string;
 }
 
 interface InsightsResp {
@@ -139,6 +141,7 @@ export default function GraphPage() {
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* Graph state */
   const [loading, setLoading] = useState(true);
@@ -150,6 +153,10 @@ export default function GraphPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('type');
   const [showFilter, setShowFilter] = useState(false);
   const [showLegend, setShowLegend] = useState(true);
+  const [showInsightPanel, setShowInsightPanel] = useState(false);
+  const [insightTab, setInsightTab] = useState<'surprising' | 'gaps'>('surprising');
+  const [focusedConn, setFocusedConn] = useState<number | null>(null);
+  const [focusedGap, setFocusedGap] = useState<number | null>(null);
 
   /* Filter panel options */
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
@@ -581,6 +588,7 @@ export default function GraphPage() {
       if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
       if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
       container?.removeEventListener('mousemove', resumePhysics);
       container?.removeEventListener('mousedown', resumePhysics);
       container?.removeEventListener('touchstart', resumePhysics);
@@ -789,6 +797,167 @@ export default function GraphPage() {
     );
   };
 
+  /* ─── Insight panel helpers ─── */
+  const CONN_TYPE_META: Record<string, { label: string; icon: any; color: string; bg: string }> = {
+    cross_community: { label: '跨社区', icon: Zap, color: '#a855f7', bg: 'rgba(168,85,247,0.12)' },
+    cross_type:      { label: '跨类型', icon: Link2, color: '#3b82f6', bg: 'rgba(59,130,246,0.12)' },
+    hub_spoke:       { label: '中心-边缘', icon: Target, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+    unexpected:      { label: '意外连接', icon: Sparkles, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+  };
+
+  const GAP_TYPE_META: Record<string, { label: string; icon: any; color: string; bg: string }> = {
+    isolated:          { label: '孤立节点', icon: AlertTriangle, color: '#ef4444', bg: 'rgba(239,68,68,0.10)' },
+    sparse_community:  { label: '稀疏社区', icon: BarChart3, color: '#f97316', bg: 'rgba(249,115,22,0.10)' },
+    bridge:            { label: '关键桥节点', icon: Target, color: '#a855f7', bg: 'rgba(168,85,247,0.10)' },
+  };
+
+  // Restore node/edge colors to current viewMode defaults (called after focus timeout)
+  const restoreColors = useCallback(() => {
+    const nds = nodesRef.current;
+    const edgs = edgesRef.current;
+    if (!nds || !edgs) return;
+
+    nds.update(nds.get().map((n: any) => {
+      // Use the stored _pageType / _communityId to recompute base color (never read n.color)
+      let baseColor: string;
+      if (viewMode === 'community') {
+        baseColor = communityColor(n._communityId);
+      } else {
+        baseColor = TYPE_COLORS[n._pageType || 'entity'] || TYPE_COLORS.entity;
+      }
+      return {
+        id: n.id,
+        color: {
+          background: baseColor,
+          border: baseColor,
+          borderWidth: 0,
+          highlight: { background: baseColor, border: '#ffffff' },
+          hover: { background: baseColor, border: '#ffffff' },
+        },
+        font: { ...n.font, color: LABEL_COLOR },
+      };
+    }));
+
+    // Re-derive edge states (surprise highlight in insights mode)
+    const surpriseSet = new Set<string>();
+    if (viewMode === 'insights' && insights) {
+      insights.surprising_connections.forEach(s => {
+        const f = s.source.startsWith('wiki/') ? s.source.slice(5) : s.source;
+        const t = s.target.startsWith('wiki/') ? s.target.slice(5) : s.target;
+        surpriseSet.add([f, t].sort().join('||'));
+      });
+    }
+    edgs.update(edgs.get().map((e: any) => {
+      const key = [e.from, e.to].sort().join('||');
+      const isSurprise = surpriseSet.has(key);
+      return {
+        id: e.id,
+        _isSurprise: isSurprise,
+        color: { color: isSurprise ? EDGE_HIGHLIGHT : EDGE_COLOR, opacity: isSurprise ? 0.9 : 0.6 },
+        width: isSurprise ? 2 : (large ? 0.6 : 1),
+      };
+    }));
+  }, [viewMode, insights, nodeCommunityMap, LABEL_COLOR, large, EDGE_HIGHLIGHT, EDGE_COLOR, isDark]);
+
+  const focusOnConnection = useCallback((idx: number) => {
+    const nw = networkRef.current;
+    const nds = nodesRef.current;
+    const edgs = edgesRef.current;
+    if (!nw || !nds || !edgs || !insights) return;
+    const conn = insights.surprising_connections[idx];
+    if (!conn) return;
+    const f = conn.source.startsWith('wiki/') ? conn.source.slice(5) : conn.source;
+    const t = conn.target.startsWith('wiki/') ? conn.target.slice(5) : conn.target;
+    const nodeF = nds.get(f);
+    const nodeT = nds.get(t);
+    if (!nodeF || !nodeT) return;
+
+    // Clear any previous focus timer
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+
+    setFocusedConn(idx);
+    nw.selectNodes([f, t]);
+    nw.fit({ nodes: [f, t], animation: { duration: 400, easingFunction: 'easeOutQuad' } as any });
+
+    // Highlight only these 2 nodes + their edge, dim everything else
+    // Use stored _pageType to compute base color (not n.color which may be rgba)
+    const edgeKey = [f, t].sort().join('||');
+    nds.update(nds.get().map((n: any) => {
+      const isTarget = n.id === f || n.id === t;
+      const pt = n._pageType || 'entity';
+      const baseColor = TYPE_COLORS[pt] || TYPE_COLORS.entity;
+      return {
+        id: n.id,
+        color: {
+          background: isTarget ? baseColor : hexToRgba(baseColor, 0.1),
+          border: isTarget ? '#ffffff' : hexToRgba(baseColor, 0.1),
+          borderWidth: isTarget ? 3 : 0,
+        },
+        font: { ...n.font, color: isTarget ? LABEL_COLOR : hexToRgba(LABEL_COLOR, 0.1) },
+      };
+    }));
+    edgs.update(edgs.get().map((e: any) => {
+      const key = [e.from, e.to].sort().join('||');
+      const isTarget = key === edgeKey;
+      return {
+        id: e.id,
+        color: { color: isTarget ? '#f59e0b' : EDGE_DIM, opacity: isTarget ? 1 : 0.03 },
+        width: isTarget ? 3 : 0.4,
+      };
+    }));
+
+    // Auto-restore after 4s
+    focusTimerRef.current = setTimeout(() => {
+      setFocusedConn(null);
+      restoreColors();
+    }, 4000);
+  }, [insights, LABEL_COLOR, restoreColors]);
+
+  const focusOnGap = useCallback((idx: number) => {
+    const nw = networkRef.current;
+    const nds = nodesRef.current;
+    const edgs = edgesRef.current;
+    if (!nw || !nds || !edgs || !insights) return;
+    const gap = insights.knowledge_gaps[idx];
+    if (!gap) return;
+    const nodeId = gap.node.startsWith('wiki/') ? gap.node.slice(5) : gap.node;
+    if (!nds.get(nodeId)) return;
+
+    // Clear any previous focus timer
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+
+    setFocusedGap(idx);
+    nw.selectNodes([nodeId]);
+    nw.focus(nodeId, { scale: 1.8, animation: { duration: 400, easingFunction: 'easeOutQuad' } as any });
+
+    // Pulse highlight: bright node (red), dim rest
+    nds.update(nds.get().map((n: any) => {
+      const isTarget = n.id === nodeId;
+      const pt = n._pageType || 'entity';
+      const baseColor = TYPE_COLORS[pt] || TYPE_COLORS.entity;
+      return {
+        id: n.id,
+        color: {
+          background: isTarget ? '#ef4444' : hexToRgba(baseColor, 0.1),
+          border: isTarget ? '#ffffff' : hexToRgba(baseColor, 0.1),
+          borderWidth: isTarget ? 3 : 0,
+        },
+        font: { ...n.font, color: isTarget ? LABEL_COLOR : hexToRgba(LABEL_COLOR, 0.1) },
+      };
+    }));
+    // Dim all edges
+    edgs.update(edgs.get().map((e: any) => ({
+      id: e.id,
+      color: { color: EDGE_DIM, opacity: 0.03 },
+      width: 0.4,
+    })));
+
+    focusTimerRef.current = setTimeout(() => {
+      setFocusedGap(null);
+      restoreColors();
+    }, 4000);
+  }, [insights, LABEL_COLOR, restoreColors]);
+
   /* ─── View controls ─── */
   const resetView = () => {
     networkRef.current?.fit({ animation: { duration: 300, easingFunction: 'easeOutQuad' } as any });
@@ -928,7 +1097,12 @@ export default function GraphPage() {
                 ] as { key: ViewMode; label: string; icon: any }[]).map(({ key, label, icon: Icon }) => (
                   <button
                     key={key}
-                    onClick={() => setViewMode(key)}
+                    onClick={() => {
+                      setViewMode(key);
+                      if (key === 'insights') {
+                        setShowInsightPanel(true);
+                      }
+                    }}
                     className={`flex items-center gap-1 px-2 h-6 rounded text-[11px] font-medium transition-colors ${
                       viewMode === key
                         ? (isDark ? 'bg-white/10 text-white shadow-sm' : 'bg-white text-gray-900 shadow-sm')
@@ -939,7 +1113,7 @@ export default function GraphPage() {
                     {label}
                     {key === 'insights' && insights && (
                       <span className="ml-0.5 text-[9px] bg-amber-500/30 text-amber-300 rounded-full px-1">
-                        {insights.surprising_connections.length}
+                        {insights.summary.total_surprising + insights.summary.total_gaps}
                       </span>
                     )}
                   </button>
@@ -1209,17 +1383,23 @@ export default function GraphPage() {
                         <span className="inline-block w-3 h-0.5" style={{ backgroundColor: EDGE_HIGHLIGHT }} />
                         惊奇连接 ({insights.surprising_connections.length})
                       </div>
-                      <div className="text-[10px] mb-1 flex items-center gap-1.5" style={{ color: isDark ? '#9ca3af' : '#6b7280' }}>
+                      <div className="text-[10px] mb-1.5 flex items-center gap-1.5" style={{ color: isDark ? '#9ca3af' : '#6b7280' }}>
                         <span className="inline-block w-3 h-3 rounded-full opacity-40" style={{ backgroundColor: LABEL_COLOR }} />
                         知识孤岛 ({insights.summary.total_gaps})
                       </div>
-                      {insights.surprising_connections.slice(0, 5).map((s, i) => (
+                      {insights.surprising_connections.slice(0, 3).map((s, i) => (
                         <div key={i} className="text-[10px] px-1 py-0.5 rounded flex items-center gap-1" style={{ color: LABEL_COLOR }}>
                           <span className="truncate opacity-80">{shortName(s.source)}</span>
                           <span className="opacity-40">↔</span>
                           <span className="truncate opacity-80">{shortName(s.target)}</span>
                         </div>
                       ))}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setShowInsightPanel(true); }}
+                        className={`mt-1.5 w-full text-[10px] py-1 rounded-md transition-colors ${isDark ? 'bg-white/10 hover:bg-white/15 text-gray-200' : 'bg-black/5 hover:bg-black/10 text-gray-700'}`}
+                      >
+                        📊 查看洞察详情
+                      </button>
                     </>
                   )}
                 </div>
@@ -1234,6 +1414,192 @@ export default function GraphPage() {
                 title="展开图例"
               >
                 <ChevronRight className="h-3 w-3" style={{ color: LABEL_COLOR }} />
+              </div>
+            )}
+
+            {/* ── Right-side Insight Panel ── */}
+            {showInsightPanel && insights && viewMode === 'insights' && (
+              <div
+                className={`absolute top-0 right-0 bottom-0 z-30 w-[380px] flex-shrink-0 backdrop-blur-xl shadow-2xl border-l ${FLOATING_BG} ${FLOATING_BORDER} flex flex-col animate-in slide-in-from-right duration-300`}
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }}>
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg" style={{ background: 'rgba(245,158,11,0.12)' }}>
+                      <Lightbulb className="h-4 w-4" style={{ color: '#f59e0b' }} />
+                    </div>
+                    <div>
+                      <span className="text-sm font-semibold block" style={{ color: LABEL_COLOR }}>知识洞察</span>
+                      <span className="text-[10px]" style={{ color: isDark ? '#9ca3af' : '#6b7280' }}>
+                        {insights.summary.total_surprising + insights.summary.total_gaps} 条发现
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowInsightPanel(false)}
+                    className={`p-1 rounded-md transition-colors ${isDark ? 'hover:bg-white/10 text-gray-400' : 'hover:bg-black/5 text-gray-500'}`}
+                  >
+                    <XIcon className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {/* Tabs */}
+                <div className="flex px-3 pt-2 gap-1">
+                  <button
+                    onClick={() => setInsightTab('surprising')}
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                      insightTab === 'surprising'
+                        ? isDark ? 'bg-amber-500/15 text-amber-300' : 'bg-amber-100 text-amber-700'
+                        : isDark ? 'text-gray-400 hover:text-gray-200 hover:bg-white/5' : 'text-gray-500 hover:text-gray-700 hover:bg-black/5'
+                    }`}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    惊奇连接
+                    <span className={`text-[10px] rounded-full px-1.5 py-0.5 ${
+                      insightTab === 'surprising'
+                        ? isDark ? 'bg-amber-500/25 text-amber-200' : 'bg-amber-200 text-amber-800'
+                        : isDark ? 'bg-white/10 text-gray-400' : 'bg-black/10 text-gray-500'
+                    }`}>
+                      {insights.surprising_connections.length}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setInsightTab('gaps')}
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                      insightTab === 'gaps'
+                        ? isDark ? 'bg-red-500/15 text-red-300' : 'bg-red-100 text-red-700'
+                        : isDark ? 'text-gray-400 hover:text-gray-200 hover:bg-white/5' : 'text-gray-500 hover:text-gray-700 hover:bg-black/5'
+                    }`}
+                  >
+                    <BarChart3 className="h-3.5 w-3.5" />
+                    知识空白
+                    <span className={`text-[10px] rounded-full px-1.5 py-0.5 ${
+                      insightTab === 'gaps'
+                        ? isDark ? 'bg-red-500/25 text-red-200' : 'bg-red-200 text-red-800'
+                        : isDark ? 'bg-white/10 text-gray-400' : 'bg-black/10 text-gray-500'
+                    }`}>
+                      {insights.knowledge_gaps.length}
+                    </span>
+                  </button>
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+                  {/* Surprising Connections tab */}
+                  {insightTab === 'surprising' && (
+                    <>
+                      {insights.surprising_connections.length === 0 ? (
+                        <div className="text-center py-10">
+                          <Sparkles className="h-8 w-8 mx-auto mb-2 opacity-20" style={{ color: LABEL_COLOR }} />
+                          <p className="text-xs" style={{ color: isDark ? '#6b7280' : '#9ca3af' }}>暂无惊奇连接</p>
+                          <p className="text-[10px] mt-1" style={{ color: isDark ? '#4b5563' : '#9ca3af' }}>导入更多文档后会自动发现意外关联</p>
+                        </div>
+                      ) : (
+                        insights.surprising_connections.map((conn, idx) => {
+                          const meta = CONN_TYPE_META[conn.connection_type] || CONN_TYPE_META.unexpected;
+                          const Icon = meta.icon;
+  const stars = Math.round(conn.surprise_score * 5);
+                          const isFocused = focusedConn === idx;
+                          return (
+                            <div
+                              key={idx}
+                              onClick={() => focusOnConnection(idx)}
+                              className={`rounded-lg border p-2.5 cursor-pointer transition-all duration-150 ${
+                                isFocused ? 'ring-2 ring-amber-400/50 scale-[1.01]' : ''
+                              } ${isDark ? 'border-white/8 bg-white/[0.03] hover:bg-white/[0.06]' : 'border-black/5 bg-black/[0.02] hover:bg-black/[0.04]'}`}
+                            >
+                              <div className="flex items-center gap-1.5 mb-1.5">
+                                <span
+                                  className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md"
+                                  style={{ color: meta.color, background: meta.bg }}
+                                >
+                                  <Icon className="h-2.5 w-2.5" />
+                                  {meta.label}
+                                </span>
+                                <div className="flex gap-0.5 ml-auto">
+                                  {Array.from({ length: 5 }).map((_, si) => (
+                                    <span key={si} className="text-[9px]" style={{ color: si < stars ? '#f59e0b' : (isDark ? '#374151' : '#d1d5db') }}>★</span>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 text-xs font-medium" style={{ color: LABEL_COLOR }}>
+                                <span className="truncate flex-1">{shortName(conn.source)}</span>
+                                <span className="opacity-30 text-[10px]">↔</span>
+                                <span className="truncate flex-1 text-right">{shortName(conn.target)}</span>
+                              </div>
+                              <p className="text-[10px] mt-1 leading-relaxed" style={{ color: isDark ? '#9ca3af' : '#6b7280' }}>
+                                {conn.reason}
+                              </p>
+                              <div className="text-[9px] mt-1 opacity-50" style={{ color: LABEL_COLOR }}>
+                                惊奇度 {(conn.surprise_score * 100).toFixed(0)}% · 点击在图中定位
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </>
+                  )}
+
+                  {/* Knowledge Gaps tab */}
+                  {insightTab === 'gaps' && (
+                    <>
+                      {insights.knowledge_gaps.length === 0 ? (
+                        <div className="text-center py-10">
+                          <BarChart3 className="h-8 w-8 mx-auto mb-2 opacity-20" style={{ color: LABEL_COLOR }} />
+                          <p className="text-xs" style={{ color: isDark ? '#6b7280' : '#9ca3af' }}>未发现知识空白</p>
+                          <p className="text-[10px] mt-1" style={{ color: isDark ? '#4b5563' : '#9ca3af' }}>你的知识网络结构良好</p>
+                        </div>
+                      ) : (
+                        insights.knowledge_gaps.map((gap, idx) => {
+                          const meta = GAP_TYPE_META[gap.type] || GAP_TYPE_META.isolated;
+                          const Icon = meta.icon;
+                          const isFocused = focusedGap === idx;
+                          return (
+                            <div
+                              key={idx}
+                              onClick={() => focusOnGap(idx)}
+                              className={`rounded-lg border p-2.5 cursor-pointer transition-all duration-150 ${
+                                isFocused ? 'ring-2 ring-red-400/50 scale-[1.01]' : ''
+                              } ${isDark ? 'border-white/8 bg-white/[0.03] hover:bg-white/[0.06]' : 'border-black/5 bg-black/[0.02] hover:bg-black/[0.04]'}`}
+                            >
+                              <div className="flex items-center gap-1.5 mb-1.5">
+                                <span
+                                  className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md"
+                                  style={{ color: meta.color, background: meta.bg }}
+                                >
+                                  <Icon className="h-2.5 w-2.5" />
+                                  {meta.label}
+                                </span>
+                              </div>
+                              <div className="text-xs font-medium truncate" style={{ color: LABEL_COLOR }}>
+                                {shortName(gap.node)}
+                              </div>
+                              <p className="text-[10px] mt-1 leading-relaxed" style={{ color: isDark ? '#9ca3af' : '#6b7280' }}>
+                                {gap.description}
+                              </p>
+                              {gap.suggestion && (
+                                <p className="text-[10px] mt-1 italic leading-relaxed" style={{ color: isDark ? '#6b7280' : '#9ca3af' }}>
+                                  💡 {gap.suggestion}
+                                </p>
+                              )}
+                              <div className="text-[9px] mt-1 opacity-50" style={{ color: LABEL_COLOR }}>
+                                点击在图中定位
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Footer summary */}
+                <div className="px-4 py-2.5 border-t text-[10px]" style={{ borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', color: isDark ? '#6b7280' : '#9ca3af' }}>
+                  <div className="flex items-center justify-between">
+                    <span>洞察由图谱结构自动分析生成</span>
+                    <span>{insights.surprising_connections.length + insights.knowledge_gaps.length} 条</span>
+                  </div>
+                </div>
               </div>
             )}
           </>
