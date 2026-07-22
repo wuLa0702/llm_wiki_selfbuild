@@ -80,6 +80,16 @@ CREATE TABLE IF NOT EXISTS graph_relevance (
     PRIMARY KEY (source_path, target_path)
 );
 
+CREATE TABLE IF NOT EXISTS graph_cache (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    signature TEXT NOT NULL,
+    nodes_json TEXT NOT NULL DEFAULT '{}',
+    edges_json TEXT NOT NULL DEFAULT '[]',
+    communities_json TEXT DEFAULT 'null',
+    insights_json TEXT DEFAULT 'null',
+    built_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS wiki_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,

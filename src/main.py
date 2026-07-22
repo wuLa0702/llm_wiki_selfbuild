@@ -3,6 +3,7 @@ LLM Wiki — FastAPI 服务入口
 
 职责：App 创建 + 中间件配置 + 路由注册 + 生命周期
 """
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -70,7 +71,21 @@ if _ui_dist.is_dir():
 
 @app.on_event("startup")
 async def _start_services():
+    import time
+    t0 = time.time()
+
     init_services()
+
+    # 同步预热：构建图谱 + 计算关联度 + 写入 DB 缓存
+    # 启动阶段多花几秒，换来第一个请求瞬时响应
+    logger.info("启动预热：预构建知识图谱并写入缓存 ...")
+    try:
+        from src.core.graph.graph import WikiGraph
+        await asyncio.to_thread(WikiGraph.compute_and_cache)
+        elapsed = time.time() - t0
+        logger.info("启动预热完成 | 耗时=%.1fs", elapsed)
+    except Exception as exc:
+        logger.warning("启动预热失败，后续请求将触发懒重建 | %s", exc)
 
 
 @app.on_event("shutdown")

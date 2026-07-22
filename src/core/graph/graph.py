@@ -6,9 +6,12 @@ Wiki 页面关系图 — 纯确定性算法解析 [[wikilinks]]
 
 Phase 4 增强：4-Signal 加权关联度模型。
 """
+import hashlib
+import json
 import math
 import os
 import re
+import sqlite3
 from collections import defaultdict
 
 from src.core.logging_config import get_logger
@@ -127,6 +130,108 @@ class WikiGraph:
         self._dirty = False  # 懒重建标志
 
     # ------------------------------------------------------------------
+    # 缓存持久化（graph_cache 表）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_signature(wiki_dir: str = "wiki") -> str:
+        """计算 wiki/ 目录的文件签名，用于缓存失效检测
+
+        签名 = SHA256 所有 .md 文件的 (相对路径 + mtime)。
+        文件没变 -> 签名不变 -> 缓存有效。
+        """
+        h = hashlib.sha256()
+        if not os.path.isdir(wiki_dir):
+            return h.hexdigest()
+        for root, _dirs, files in os.walk(wiki_dir):
+            for f in sorted(files):
+                if not f.endswith(".md"):
+                    continue
+                rel = os.path.relpath(os.path.join(root, f), wiki_dir)
+                path = os.path.join(root, f)
+                try:
+                    mtime = os.path.getmtime(path)
+                    h.update(f"{rel}:{mtime}\n".encode())
+                except OSError:
+                    pass
+        return h.hexdigest()
+
+    def save_cache(self, db_path: str = "wiki.db") -> None:
+        """将当前图谱写入 graph_cache 表"""
+        from src.db.schema import CREATE_TABLES
+        conn = sqlite3.connect(db_path)
+        conn.executescript(CREATE_TABLES)
+
+        sig = self._compute_signature(self.wiki_dir)
+        graph_data = {
+            "adj": {k: v for k, v in self._adj.items()},
+            "backlinks": {k: v for k, v in self._backlinks.items()},
+            "in_degree": dict(self._in_degree),
+            "out_degree": dict(self._out_degree),
+        }
+
+        conn.execute(
+            "INSERT OR REPLACE INTO graph_cache "
+            "(id, signature, nodes_json, edges_json, built_at) "
+            "VALUES (1, ?, ?, ?, datetime('now'))",
+            (sig, json.dumps(list(self._adj.keys())), json.dumps(graph_data)),
+        )
+        conn.commit()
+        conn.close()
+        logger.info("WikiGraph 缓存已写入 | nodes=%d", len(self._adj))
+
+    def load_cache(self, db_path: str = "wiki.db") -> bool:
+        """尝试从 graph_cache 加载图谱
+
+        Returns:
+            True - 加载成功（缓存有效），False - 无缓存或签名不匹配
+        """
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM graph_cache WHERE id = 1"
+            ).fetchone()
+            conn.close()
+
+            if not row:
+                return False
+
+            current_sig = self._compute_signature(self.wiki_dir)
+            if row["signature"] != current_sig:
+                logger.info("WikiGraph 缓存签名不匹配，需要重建")
+                return False
+
+            graph_data = json.loads(row["edges_json"])
+            self._adj = defaultdict(list, graph_data.get("adj", {}))
+            self._backlinks = defaultdict(list, graph_data.get("backlinks", {}))
+            self._in_degree = defaultdict(int, graph_data.get("in_degree", {}))
+            self._out_degree = defaultdict(int, graph_data.get("out_degree", {}))
+            self._built = True
+            self._dirty = False
+
+            logger.info("WikiGraph 从缓存加载 | nodes=%d sig=%s..",
+                        len(self._adj), current_sig[:12])
+            return True
+
+        except Exception as exc:
+            logger.warning("WikiGraph 缓存加载失败，将重建 | %s", exc)
+            return False
+
+    @classmethod
+    def compute_and_cache(cls, db_path: str = "wiki.db") -> "WikiGraph":
+        """构建图谱 + 计算关联度 + 写入缓存（一次性 warmup）"""
+        from src.db.repository import WikiRepository
+
+        graph = cls()
+        graph.build()
+        repo = WikiRepository()
+        graph.compute_relevance(repo)
+        graph.save_cache(db_path)
+        logger.info("WikiGraph 预热完成 | nodes=%d", len(graph.nodes()))
+        return graph
+
+    # ------------------------------------------------------------------
     # 构建
     # ------------------------------------------------------------------
 
@@ -143,11 +248,16 @@ class WikiGraph:
 
     def _ensure_built(self, repo=None) -> None:
         """
-        确保图已构建：如果脏则懒重建
+        确保图已构建：优先从缓存加载，缓存失效则全量重建
 
         在 to_dict()、neighbors() 等读取方法入口调用。
         """
         if self._dirty or not self._built:
+            # 第一优先：尝试从 DB 缓存加载（避免全量扫描文件）
+            if not self._dirty and not self._built and self.load_cache():
+                # relevance 已在 warmup/rebuild 时写入 graph_relevance 表，不需重复计算
+                return
+
             self._adj.clear()
             self._backlinks.clear()
             self._in_degree.clear()
@@ -719,16 +829,12 @@ class RelevanceSignal:
 
 
 def rebuild_graph(payload: dict | None = None) -> None:
-    """后台重建图谱 + 关联度
+    """重建图谱 + 关联度 + 写缓存
 
     被 TaskQueue 注册为 "rebuild_graph" 事件的处理器。
-    避免 app_state 直接引用 WikiGraph/WikiRepository。
+    也会被 _warmup_graph() 调用做启动预热。
+    结果持久化到 graph_cache + graph_relevance 表。
     """
-    from src.db.repository import WikiRepository
-
     logger.info("后台任务开始重建图谱...")
-    graph = WikiGraph()
-    repo = WikiRepository()
-    graph.build()
-    graph.compute_relevance(repo)
-    logger.info("后台任务图谱重建完成 | nodes=%d", len(graph.nodes()))
+    WikiGraph.compute_and_cache()
+    logger.info("后台任务图谱重建完成")
