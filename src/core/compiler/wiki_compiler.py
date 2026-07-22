@@ -147,6 +147,20 @@ class WikiCompiler:
             "en": "Please respond in English. Use English titles and filenames.",
         }.get(settings.output_language, "")
 
+    def _privacy_enabled(self) -> bool:
+        """检查隐私过滤开关是否开启（从 DB 读取）"""
+        try:
+            val = self.repo.get_setting("settings.privacy_enabled")
+            if val is None:
+                return False
+            import json
+            try:
+                return bool(json.loads(val))
+            except (json.JSONDecodeError, TypeError):
+                return val in ("1", "true", "True")
+        except Exception:
+            return False
+
     # ------------------------------------------------------------------
     # 读写页面的共享逻辑
     # ------------------------------------------------------------------
@@ -475,7 +489,8 @@ class WikiCompiler:
     # Phase 2 — 两步 CoT
     # ==================================================================
 
-    def ingest(self, source_path: str, max_source_chars: int | None = None, folder_context: str | None = None) -> dict:
+    def ingest(self, source_path: str, max_source_chars: int | None = None,
+               folder_context: str | None = None, force: bool = False) -> dict:
         """两步 CoT：先分析再生成，带重试和降级
 
         Args:
@@ -484,9 +499,10 @@ class WikiCompiler:
                               默认从环境变量 DEBUG_MAX_CHARS 读取（0=不限制）。
             folder_context: 文件夹上下文描述，如"该文件位于「LLM 论文」目录下"。
                             注入到 Step 1 的分析 prompt 中，引导 LLM 关注相关主题。
+            force: 强制重新生成，跳过 SHA256 缓存检查。
         """
-        # 0. 增量缓存 — 内容未变则跳过
-        if not self.cache.has_changed(source_path):
+        # 0. 增量缓存 — 内容未变则跳过（force=True 时跳过检查）
+        if not force and not self.cache.has_changed(source_path):
             logger.info("缓存命中，跳过 ingest | source=%s", source_path)
             return IngestResponse(
                 status="skipped",
@@ -517,13 +533,15 @@ class WikiCompiler:
             )
             content = content[:max_source_chars] + f"\n\n_（内容截断，仅前 {max_source_chars} 字符）_"
 
-        # 0.5 隐私检测
-        privacy_matches = self.privacy.match(content)
-        if privacy_matches:
-            logger.info(
-                "隐私规则命中 | source=%s matches=%s",
-                source_path, [m["keyword"] for m in privacy_matches],
-            )
+        # 0.5 隐私检测（受 privacy_enabled 开关控制）
+        privacy_matches: list[dict] = []
+        if self._privacy_enabled():
+            privacy_matches = self.privacy.match(content)
+            if privacy_matches:
+                logger.info(
+                    "隐私规则命中 | source=%s matches=%s",
+                    source_path, [m["keyword"] for m in privacy_matches],
+                )
 
         index_context = self._index_summary()
         purpose_context = self._get_purpose_context()
@@ -652,9 +670,9 @@ class WikiCompiler:
     # ==================================================================
 
     def ingest_simple(self, source_path: str, privacy_matches: list[dict] | None = None,
-                       max_source_chars: int | None = None) -> dict:
+                       max_source_chars: int | None = None, force: bool = False) -> dict:
         # 4. 缓存检查
-        if not self.cache.has_changed(source_path):
+        if not force and not self.cache.has_changed(source_path):
             logger.info("缓存命中，跳过 simple ingest | source=%s", source_path)
             return IngestResponse(
                 status="skipped",
@@ -683,7 +701,7 @@ class WikiCompiler:
             content = content[:max_source_chars] + f"\n\n_（内容截断，仅前 {max_source_chars} 字符）_"
 
         if privacy_matches is None:
-            privacy_matches = self.privacy.match(content)
+            privacy_matches = self.privacy.match(content) if self._privacy_enabled() else []
 
         response = self.llm.chat(
             prompt=f"请处理以下源文件内容：\n\n{content}",
