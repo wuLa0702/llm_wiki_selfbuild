@@ -303,7 +303,8 @@ const STORAGE_KEY = 'lint-page-state';
 export default function LintPage() {
   const navigate = useNavigate();
   const [result, setResult] = useState<LintResult | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [isSemantic, setIsSemantic] = useState(false);
   const [brokenPage, setBrokenPage] = useState(() => {
     try {
@@ -313,27 +314,41 @@ export default function LintPage() {
     return 1;
   });
   const [fixing, setFixing] = useState(false);
+  const [lastChecked, setLastChecked] = useState<string>('');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const resultRef = useRef<LintResult | null>(null);
+  resultRef.current = result;
 
   /* ─── Data fetching ─── */
 
-  const runLint = useCallback(async (semantic = false) => {
-    setLoading(true);
+  const runLint = useCallback(async (semantic = false, isManual = false) => {
+    const isInitial = resultRef.current === null;
+    if (isInitial) setInitialLoading(true);
+    else if (isManual) setRefreshing(true);
     setIsSemantic(semantic);
     try {
       const r = await fetch(`/v1/lint?semantic=${semantic}`);
       const d = await r.json();
       setResult(d);
-      // Reset pagination on new data
-      setBrokenPage(1);
-      showToast('检查完成', 'success');
+      setLastChecked(new Date().toLocaleTimeString());
+      // Reset pagination only on manual or initial load (not silent poll)
+      if (isManual || isInitial) setBrokenPage(1);
+      if (isManual) showToast('检查完成', 'success');
     } catch {
-      showToast('检查失败', 'error');
+      if (isManual) showToast('检查失败', 'error');
+      // 静默轮询失败不打扰用户
+    } finally {
+      setInitialLoading(false);
+      setRefreshing(false);
     }
-    setLoading(false);
   }, []);
 
-  useEffect(() => { runLint(false); }, [runLint]);
+  // 首次加载 + 30s 静默轮询
+  useEffect(() => {
+    runLint(false);
+    const id = setInterval(() => runLint(isSemantic, false), 30_000);
+    return () => clearInterval(id);
+  }, [runLint, isSemantic]);
 
   /* ─── Copy all issues ─── */
 
@@ -354,8 +369,8 @@ export default function LintPage() {
       const r = await fetch('/v1/lint/fix', { method: 'POST' });
       const d = await r.json();
       showToast(d.message || '修复完成', 'success');
-      // Refresh lint results
-      await runLint(isSemantic);
+      // Refresh lint results (manual = true 以显示 toast + 重置分页)
+      await runLint(isSemantic, true);
     } catch {
       showToast('修复请求失败', 'error');
     }
@@ -419,38 +434,43 @@ export default function LintPage() {
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-xl font-bold">Wiki 健康检查</h1>
-            <p className="text-sm text-muted-foreground">检测断链、孤立页面、Index 缺口等质量问题</p>
+            <p className="text-sm text-muted-foreground flex items-center gap-2">
+              检测断链、孤立页面、Index 缺口等质量问题
+              {lastChecked && (
+                <span className="text-[10px] text-muted-foreground/50">· 上次检查 {lastChecked}</span>
+              )}
+            </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Button
               variant="outline" size="sm"
-              onClick={() => runLint(isSemantic)}
-              disabled={loading}
+              onClick={() => runLint(isSemantic, true)}
+              disabled={refreshing}
             >
-              <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} />
-              {loading ? '检查中...' : '刷新检测'}
+              <RefreshCw className={`h-3.5 w-3.5 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? '检查中...' : '刷新检测'}
             </Button>
             <Button
               variant="outline" size="sm"
               onClick={copyAll}
-              disabled={!result || loading}
+              disabled={!result || initialLoading || refreshing}
             >
               <Copy className="h-3.5 w-3.5 mr-1" />
               复制问题清单
             </Button>
             <Button
               size="sm"
-              onClick={() => runLint(!isSemantic)}
-              disabled={loading}
+              onClick={() => runLint(!isSemantic, true)}
+              disabled={refreshing}
               variant={isSemantic ? 'default' : 'secondary'}
             >
-              <BrainCircuit className={`h-3.5 w-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} />
+              <BrainCircuit className={`h-3.5 w-3.5 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
               {isSemantic ? '语义检查 ✓' : '语义检查'}
             </Button>
           </div>
         </div>
 
-        {loading ? (
+        {initialLoading ? (
           /* ── Skeleton loading ── */
           <div className="space-y-3">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

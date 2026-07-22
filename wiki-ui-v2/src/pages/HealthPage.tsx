@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -66,6 +66,9 @@ export default function HealthPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [lastUpdated, setLastUpdated] = useState<string>('');
   const [refreshing, setRefreshing] = useState(false);
+  // 用 ref 追踪 status，避免 fetchHealth 依赖 status 导致 effect 无限重跑
+  const statusRef = useRef(status);
+  statusRef.current = status;
 
   const fetchHealth = useCallback(async (isManual = false) => {
     if (isManual) setRefreshing(true);
@@ -75,19 +78,20 @@ export default function HealthPage() {
       setData(d);
       setStatus(d.status === 'ok' ? 'ok' : 'error');
       if (d.status !== 'ok') setErrorMsg(d.message || '服务异常');
+      else setErrorMsg('');
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (e: any) {
       // 仅在首次加载或手动刷新时显示错误，轮询静默失败
-      if (status === 'loading' || isManual) {
+      if (statusRef.current === 'loading' || isManual) {
         setStatus('error');
         setErrorMsg(e.message || '无法连接服务');
       }
     } finally {
       if (isManual) setTimeout(() => setRefreshing(false), 400);
     }
-  }, [status]);
+  }, []);
 
-  // 首次加载 + 10s 轮询
+  // 首次加载 + 10s 轮询（依赖空数组，只注册一次 interval）
   useEffect(() => {
     fetchHealth();
     const id = setInterval(() => fetchHealth(), 10_000);
