@@ -273,10 +273,14 @@ export default function SourcesPage() {
         const d = await check.json();
         if (d.changed === false) {
           setPreviewLoading(false);
-          const ok = confirm('该文件近期无变化，无需生成 Wiki。\n是否强制重新生成？');
+          const ok = window.confirm(
+            '该文件内容自上次生成 Wiki 后没有变化。\n\n' +
+            '· 点击「确定」强制重新生成（消耗 LLM 额度）\n' +
+            '· 点击「取消」跳过本次操作'
+          );
           if (!ok) return;
-          extractFile(path, true);
-          return;
+          // 用户确认强制生成 → 带 force=true 重新调用
+          return extractFile(path, true);
         }
       } catch {
         // 预检失败降级容忍：继续执行提取
@@ -287,12 +291,21 @@ export default function SourcesPage() {
       const r = await fetch('/v1/sources/extract-to-wiki', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source_path: path }),
+        body: JSON.stringify({ source_path: path, force }),
       });
       const d = await r.json();
-      if (d.status === 'ok') {
-        showToast(`提取完成: ${d.pages_created?.length || 0} 创建`, 'success');
+      if (d.status === 'skipped') {
+        showToast('文件内容无变化，已跳过。勾选"强制生成"可重新提取。', 'info');
+      } else if (d.status === 'ok' || d.status === 'success') {
+        const created = d.pages_created?.length || 0;
+        const updated = d.pages_updated?.length || 0;
+        const parts = [];
+        if (created) parts.push(`${created} 创建`);
+        if (updated) parts.push(`${updated} 更新`);
+        showToast(`提取完成：${parts.join(' · ') || '无变更'}`, 'success');
         loadTree();
+      } else if (d.error) {
+        showToast(`提取失败：${d.error}`, 'error');
       }
     } catch { showToast('提取请求失败', 'error'); }
     setPreviewLoading(false);

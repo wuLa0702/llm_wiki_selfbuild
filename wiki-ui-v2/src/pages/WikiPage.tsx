@@ -1,6 +1,13 @@
 import { useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { FileText, FolderClosed, BookOpen, ArrowRight, ArrowLeft, Edit3, Save, X } from 'lucide-react';
+
+/** 从 hash #L<number> 解析行号 */
+function parseLineHash(): number | null {
+  const hash = window.location.hash;
+  const m = hash.match(/^#L(\d+)$/);
+  return m ? parseInt(m[1], 10) : null;
+}
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -147,6 +154,40 @@ export default function WikiPage() {
   useEffect(() => {
     localStorage.setItem('wiki-sidebar-wiki', JSON.stringify(expanded));
   }, [expanded]);
+
+  /** 处理 hash 行号定位：搜索结果跳转 #L<line> */
+  const scrollToLine = (line: number | null) => {
+    if (!line) return;
+    const el = document.getElementById(`L${line}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // 短暂高亮效果
+    el.classList.add('bg-yellow-200/40', 'dark:bg-yellow-500/20');
+    setTimeout(() => {
+      el.classList.remove('bg-yellow-200/40', 'dark:bg-yellow-500/20');
+    }, 2500);
+  };
+
+  // 页面内容加载完后检测 hash 行号
+  useEffect(() => {
+    if (contentLoading || !selectedPage) return;
+    const line = parseLineHash();
+    if (line) {
+      // 延迟一帧等 DOM 渲染完成
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => scrollToLine(line));
+      });
+    }
+  }, [contentLoading, selectedPage]);
+
+  // 监听 hash 变化（同页内跳转）
+  useEffect(() => {
+    const onHashChange = () => {
+      scrollToLine(parseLineHash());
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   const handleSelectPage = (path: string) => {
     setSearchParams({ path });
@@ -410,6 +451,7 @@ export default function WikiPage() {
                   content={raw.replace(/^---[\s\S]*?---\n*/, '')}
                   onNavigate={handleSelectPage}
                   plainLinks
+                  lineAnchors
                 />
               </div>
             </div>

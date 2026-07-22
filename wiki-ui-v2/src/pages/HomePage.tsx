@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useNavigate } from 'react-router-dom';
 import EmptyState from '@/components/shared/EmptyState';
+import { fetchJson } from '@/api/client';
 
 interface WikiStats {
   total_pages?: number;
@@ -40,9 +41,9 @@ export default function HomePage() {
 
   useEffect(() => {
     Promise.all([
-      fetch('/v1/pages').then(r => r.json()).catch(() => ({ pages: [] })),
-      fetch('/v1/lint?semantic=false').then(r => r.json()).catch(() => ({})),
-      fetch('/v1/pages?sort=created_at&limit=5').then(r => r.json()).catch(() => ({ pages: [] })),
+      fetchJson<{ pages: any[] }>('/v1/pages').catch(() => ({ pages: [] as any[] })),
+      fetchJson<{ broken_links?: any[] }>('/v1/lint?semantic=false').catch(() => ({})),
+      fetchJson<{ pages: any[] }>('/v1/pages?sort=created_at&limit=5').catch(() => ({ pages: [] as any[] })),
     ]).then(([pagesData, lintData, recentData]) => {
       const pages = pagesData.pages || [];
       const types: Record<string, number> = {};

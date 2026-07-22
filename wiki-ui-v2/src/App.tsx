@@ -18,7 +18,8 @@ import {
   Settings, Network, Sparkles,
 } from 'lucide-react';
 import { useTheme } from '@/hooks/useTheme';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
+import { prefetch } from '@/api/client';
 
 // Pages
 import HomePage from '@/pages/HomePage';
@@ -131,6 +132,45 @@ function AppRoutes() {
 }
 
 export default function App() {
+  /* ──────────────────────────────────────────────
+     后端就绪检测 — 轮询 /health 直到后端启动完成
+     避免在后端预热图谱期间显示散乱的骨架屏
+     ────────────────────────────────────────────── */
+  const [backendReady, setBackendReady] = useState(false);
+  const [startTime] = useState(() => Date.now());
+  const warmupRan = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch('/health');
+        if (res.ok) {
+          if (!cancelled) setBackendReady(true);
+          // 后端就绪后启动 prefetch 填满缓存
+          if (!warmupRan.current) {
+            warmupRan.current = true;
+            prefetch(
+              '/v1/pages',
+              '/v1/pages?sort=created_at&limit=5',
+              '/v1/file-tree',
+              '/v1/settings',
+              '/v1/graph',
+              '/v1/sources/tree',
+              '/v1/lint?semantic=false',
+              '/v1/privacy/rules',
+            );
+          }
+          return;
+        }
+      } catch {
+        // 后端还没起来，继续轮询
+      }
+      if (!cancelled) setTimeout(check, 500);
+    };
+    check();
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <BrowserRouter>
@@ -139,12 +179,52 @@ export default function App() {
           <AppSidebar />
           <SidebarInset className="flex flex-col min-h-0 m-2 rounded-xl shadow-sm bg-card overflow-hidden">
             <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-              <AppRoutes />
+              {backendReady ? <AppRoutes /> : <StartupSplash elapsed={Date.now() - startTime} />}
             </div>
           </SidebarInset>
         </SidebarProvider>
       </TooltipProvider>
     </BrowserRouter>
+  );
+}
+
+/**
+ * 后端启动等待画面 — 替代散乱的骨架屏
+ * 在后端同步预热图谱期间（~3-5s）显示统一的加载状态
+ */
+function StartupSplash({ elapsed }: { elapsed: number }) {
+  const [dots, setDots] = useState('');
+  useEffect(() => {
+    const id = setInterval(() => setDots(d => d.length >= 3 ? '' : d + '.'), 500);
+    return () => clearInterval(id);
+  }, []);
+  const seconds = Math.floor(elapsed / 1000);
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center gap-6 p-8">
+      <div className="relative">
+        <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+          <Sparkles className="w-8 h-8 text-primary animate-pulse" />
+        </div>
+        <div className="absolute inset-0 rounded-2xl border-2 border-primary/20 animate-ping opacity-20" />
+      </div>
+      <div className="text-center space-y-2">
+        <p className="text-base font-medium">
+          系统启动中{dots}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          正在构建知识图谱和索引，请稍候
+        </p>
+        {seconds > 2 && (
+          <p className="text-xs text-muted-foreground/70 mt-2">
+            已等待 {seconds}s
+          </p>
+        )}
+      </div>
+      <div className="w-48 h-1 bg-muted rounded-full overflow-hidden">
+        <div className="h-full bg-primary rounded-full animate-[loading_2s_ease-in-out_infinite]"
+             style={{ width: '60%' }} />
+      </div>
+    </div>
   );
 }
 

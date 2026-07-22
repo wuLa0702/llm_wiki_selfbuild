@@ -1,9 +1,12 @@
+import { useMemo } from 'react';
 import { marked } from 'marked';
 
 interface Props {
   content: string;
   onNavigate?: (path: string) => void;
   plainLinks?: boolean;
+  /** 启用源行号锚点（Lxx），用于搜索跳转定位 */
+  lineAnchors?: boolean;
 }
 
 function parseWikilink(raw: string) {
@@ -56,8 +59,60 @@ const headingCls: Record<number, string> = {
   6: 'text-xs font-medium mt-2 mb-1',
 };
 
-export default function MarkdownRenderer({ content, onNavigate, plainLinks }: Props) {
-  const tokens = marked.lexer(content);
+/**
+ * 将源文本按行拆分，顺序扫描 tokens（marked 的 tokens 按源码顺序排列），
+ * 计算每个 token 在源文本中的起始行号。
+ * 返回 Map<tokenIndex, lineNumber>。
+ */
+function computeLineMap(rawContent: string, tokens: any[]): Map<number, number> {
+  const lineMap = new Map<number, number>();
+  const lines = rawContent.split('\n');
+  // 累积每行字符偏移（含换行符）
+  const offsets: number[] = [0];
+  let acc = 0;
+  for (let i = 0; i < lines.length; i++) {
+    acc += lines[i].length + 1; // +1 for \n
+    offsets.push(acc);
+  }
+  /** 根据字符偏移量返回行号（1-based） */
+  const offsetToLine = (charOffset: number): number => {
+    let lo = 0, hi = offsets.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (offsets[mid] <= charOffset) lo = mid + 1;
+      else hi = mid;
+    }
+    return Math.max(1, lo);
+  };
+  // 顺序扫描：维护搜索起点指针，避免 indexOf 重复内容问题
+  let searchFrom = 0;
+  tokens.forEach((token: any, idx: number) => {
+    const raw = token.raw || '';
+    if (!raw || typeof (token as any).type !== 'string') return;
+    // 从上次位置后查找，保证顺序正确
+    const foundAt = rawContent.indexOf(raw, searchFrom);
+    if (foundAt >= 0) {
+      lineMap.set(idx, offsetToLine(foundAt));
+      searchFrom = foundAt + raw.length;
+    }
+  });
+  return lineMap;
+}
+
+export default function MarkdownRenderer({ content, onNavigate, plainLinks, lineAnchors = false }: Props) {
+  const tokens = useMemo(() => marked.lexer(content), [content]);
+  const lineMap = useMemo(() => lineAnchors ? computeLineMap(content, tokens) : new Map(), [content, tokens, lineAnchors]);
+
+  const wrapWithAnchor = (node: React.ReactNode, key: number) => {
+    if (!lineAnchors) return node;
+    const line = lineMap.get(key);
+    if (!line) return node;
+    return (
+      <span id={`L${line}`} className="scroll-mt-20 block search-line-anchor transition-colors duration-500">
+        {node}
+      </span>
+    );
+  };
 
   return (
     <div className="md-content">
@@ -67,41 +122,49 @@ export default function MarkdownRenderer({ content, onNavigate, plainLinks }: Pr
             const t = token as any;
             const cls = headingCls[t.depth] || '';
             const { text } = t;
-            switch (t.depth) {
-              case 1: return <h1 key={i} className={cls}>{text}</h1>;
-              case 2: return <h2 key={i} className={cls}>{text}</h2>;
-              case 3: return <h3 key={i} className={cls}>{text}</h3>;
-              case 4: return <h4 key={i} className={cls}>{text}</h4>;
-              case 5: return <h5 key={i} className={cls}>{text}</h5>;
-              default: return <h6 key={i} className={cls}>{text}</h6>;
-            }
+            const headings: Record<number, React.ReactNode> = {
+              1: <h1 key={i} className={cls}>{text}</h1>,
+              2: <h2 key={i} className={cls}>{text}</h2>,
+              3: <h3 key={i} className={cls}>{text}</h3>,
+              4: <h4 key={i} className={cls}>{text}</h4>,
+              5: <h5 key={i} className={cls}>{text}</h5>,
+              6: <h6 key={i} className={cls}>{text}</h6>,
+            };
+            return wrapWithAnchor(headings[t.depth] || headings[6], i);
           }
           case 'paragraph': {
             const t = token as any;
-            return <p key={i} className="mb-2 text-sm leading-relaxed"><InlineTokens tokens={t.tokens} onNav={onNavigate} plain={plainLinks} /></p>;
+            return wrapWithAnchor(
+              <p key={i} className="mb-2 text-sm leading-relaxed">
+                <InlineTokens tokens={t.tokens} onNav={onNavigate} plain={plainLinks} />
+              </p>,
+              i
+            );
           }
           case 'code': {
             const t = token as any;
-            return (
+            return wrapWithAnchor(
               <pre key={i} className="bg-muted rounded-lg p-3 my-2 text-xs overflow-x-auto border border-border">
                 <code>{t.text}</code>
-              </pre>
+              </pre>,
+              i
             );
           }
           case 'list': {
             const t = token as any;
             const Tag = t.ordered ? 'ol' : 'ul';
-            return (
+            return wrapWithAnchor(
               <Tag key={i} className={`mb-2 pl-5 text-sm ${t.ordered ? 'list-decimal' : 'list-disc'}`}>
                 {t.items.map((item: any, j: number) => (
                   <li key={j} className="mb-0.5"><InlineTokens tokens={item.tokens} onNav={onNavigate} plain={plainLinks} /></li>
                 ))}
-              </Tag>
+              </Tag>,
+              i
             );
           }
           case 'table': {
             const t = token as any;
-            return (
+            return wrapWithAnchor(
               <div key={i} className="overflow-x-auto mb-3">
                 <table className="w-full border-collapse text-sm">
                   <thead>
@@ -117,24 +180,29 @@ export default function MarkdownRenderer({ content, onNavigate, plainLinks }: Pr
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </div>,
+              i
             );
           }
           case 'blockquote': {
             const t = token as any;
-            return (
+            return wrapWithAnchor(
               <blockquote key={i} className="border-l-3 border-blue-500 pl-4 mb-2 text-sm text-muted-foreground">
                 {t.tokens ? <InlineTokens tokens={t.tokens} onNav={onNavigate} plain={plainLinks} /> : t.text}
-              </blockquote>
+              </blockquote>,
+              i
             );
           }
           case 'hr':
-            return <hr key={i} className="border-t border-border my-4" />;
+            return wrapWithAnchor(<hr key={i} className="border-t border-border my-4" />, i);
           case 'space':
             return null;
           case 'html': {
             const t = token as any;
-            return <div key={i} className="text-sm mb-2" dangerouslySetInnerHTML={{ __html: t.text }} />;
+            return wrapWithAnchor(
+              <div key={i} className="text-sm mb-2" dangerouslySetInnerHTML={{ __html: t.text }} />,
+              i
+            );
           }
           default:
             return null;
