@@ -62,33 +62,45 @@ class SearchEngine:
     # 搜索
     # ------------------------------------------------------------------
 
-    def search(self, query: str, method: str = "bm25", k: int = 10) -> list[dict]:
+    def search(self, query: str, method: str = "bm25", k: int = 10, offset: int = 0) -> tuple[list[dict], int]:
         """统一搜索入口
 
         Args:
             query: 搜索关键词
             method: 搜索模式 — bm25 / vector / hybrid
-            k: 最大返回条数
+            k: 每页返回条数
+            offset: 偏移量（用于翻页，0=第一页）
 
         Returns:
-            [{"path": "...", "score": 0.85, "snippet": "..."}, ...]
+            (results, total_matched)
+            results: [{"path": "...", "score": 0.72, ...}, ...]
+            total_matched: 匹配文档总数（用于计算总页数）
         """
         if not self._initialized:
-            return []
+            return [], 0
 
         query = query.strip()
         if not query:
-            return []
+            return [], 0
+
+        total_matched = 0
+        total_needed = k + offset
 
         if method == "bm25":
-            return self._search_bm25(query, k)
+            results, total_matched = self._search_bm25(query, k=total_needed)
         elif method == "vector":
-            return self._search_vector(query, k)
+            results = self._search_vector(query, k=total_needed)
         elif method == "hybrid":
-            return self._search_hybrid(query, k)
+            results = self._search_hybrid(query, k=total_needed)
+            # hybrid 暂时无法精确计算 total，用结果数近似
+            total_matched = len(results)
         else:
             logger.warning("未知搜索模式 | method=%s", method)
-            return []
+            return [], 0
+
+        # 翻页切片
+        sliced = results[offset:offset + k]
+        return sliced, total_matched
 
     def _rebuild_bm25_if_dirty(self) -> bool:
         """如果 BM25 索引脏，扫描 wiki/ 目录重建
@@ -111,18 +123,33 @@ class SearchEngine:
             logger.exception("BM25 索引重建失败")
             return False
 
-    def _search_bm25(self, query: str, k: int = 10) -> list[dict]:
-        """纯 BM25 搜索（自动重建脏索引）"""
+    def _search_bm25(self, query: str, k: int = 10) -> tuple[list[dict], int]:
+        """纯 BM25 搜索（自动重建脏索引）
+
+        Returns:
+            (results, total_matched)
+        """
         if not self._rebuild_bm25_if_dirty():
-            return []
-        return self.bm25.search(query, k=k)
+            return [], 0
+        results, total_matched = self.bm25.search(query, k=k)
+        results = _normalize_scores(results)
+        for r in results:
+            r["search_method"] = "bm25"
+        return results, total_matched
 
     def _search_vector(self, query: str, k: int = 10) -> list[dict]:
         """纯向量语义搜索"""
         try:
             from src.core.embedding import get_embedding_engine
             engine = get_embedding_engine()
-            return engine.search(query, k=k)
+            results = engine.search(query, k=k)
+            # 向量分数已是 [0, 1]，但统一过 normalize 保持字段完整
+            results = _normalize_scores(results)
+            for r in results:
+                r["search_method"] = "vector"
+                r.setdefault("title", "")
+                r["match_positions"] = []
+            return results
         except Exception:
             return []
 
@@ -130,7 +157,14 @@ class SearchEngine:
         """RRF 融合搜索"""
         bm25_results = self._search_bm25(query, k=k * 2)
         vector_results = self._search_vector(query, k=k * 2)
-        return rrf_fuse(bm25_results, vector_results, top_n=k)
+        results = rrf_fuse(bm25_results, vector_results, top_n=k)
+        for r in results:
+            r["search_method"] = "hybrid"
+            if "rrf_score" not in r:
+                r["rrf_score"] = r.get("score", 0)
+        # 对 hybrid，主 score 用归一化的 rrf_score
+        results = _normalize_rrf_scores(results)
+        return results
 
     # ------------------------------------------------------------------
     # 辅助
@@ -169,6 +203,51 @@ class SearchEngine:
                 })
 
         return pages
+
+
+# ====================================================================
+# 分数归一化
+# ====================================================================
+
+_EPSILON = 1e-8
+
+
+def _normalize_scores(results: list[dict]) -> list[dict]:
+    """Min-max 归一化 scores 到 [0, 1]，原值存入 raw_score"""
+    if not results:
+        return results
+
+    scores = [r.get("score", 0) for r in results]
+    min_s = min(scores)
+    max_s = max(scores)
+
+    for r in results:
+        r["raw_score"] = r.get("score", 0)
+        if max_s - min_s < _EPSILON:
+            r["score"] = 0.0
+        else:
+            r["score"] = round((r["score"] - min_s) / (max_s - min_s), 4)
+    return results
+
+
+def _normalize_rrf_scores(results: list[dict]) -> list[dict]:
+    """对 hybrid 结果，用 rrf_score 归一化作为主 score"""
+    if not results:
+        return results
+
+    scores = [r.get("rrf_score", 0) for r in results]
+    min_s = min(scores)
+    max_s = max(scores)
+
+    for r in results:
+        if "raw_score" not in r:
+            r["raw_score"] = r.get("score", 0)
+        if max_s - min_s < _EPSILON:
+            r["score"] = 0.0
+        else:
+            r["score"] = round((r["rrf_score"] - min_s) / (max_s - min_s), 4)
+        r["rrf_score"] = round(r.get("rrf_score", 0), 4)
+    return results
 
 
 # ====================================================================

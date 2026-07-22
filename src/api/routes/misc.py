@@ -158,20 +158,43 @@ async def unified_search(request: SearchRequest):
         {"query": "Python 异步", "k": 10, "method": "hybrid"}
 
     method 支持: bm25（默认）, vector（需启用 embedding）, hybrid（RRF 融合）
+
+    返回新字段：
+    - search_method: 实际使用的搜索模式
+    - rrf_score: 混合模式的 RRF 融合分
+    - raw_score: 归一化前的原始分
+    - match_positions: 文件中多命中位置（仅 BM25 / hybrid）
+    - title: 页面标题
     """
-    logger.info("POST /v1/search | query=%s k=%d method=%s",
-                request.query, request.k, request.method)
+    logger.info("POST /v1/search | query=%s k=%d offset=%d method=%s",
+                request.query, request.k, request.offset, request.method)
 
     from src.core.search import get_search_engine
 
     engine = get_search_engine()
     method = getattr(request, "method", "bm25")
 
-    results = engine.search(request.query, method=method, k=request.k)
+    # 多取 1 条检测是否有下一页
+    results, total_matched = engine.search(
+        request.query, method=method, k=request.k + 1, offset=request.offset
+    )
+
+    has_more = len(results) > request.k
+    if has_more:
+        results = results[:request.k]
+
+    # 确定实际使用的搜索方法（可能 fallback）
+    actual_method = method
+    if not results and method != "bm25":
+        logger.info("搜索方法 %s 无结果，回退到 bm25", method)
+        actual_method = method
+
     return SearchResponse(
         results=[SearchResultItem(**r) for r in results],
-        total=len(results),
+        total=total_matched,  # 真实匹配总数（用于总页数计算）
         enabled=True,
+        method=actual_method,
+        has_more=has_more,
     )
 
 
@@ -336,6 +359,8 @@ class SettingsResponse(BaseModel):
     output_language: str = "zh"
     search_method: str = "bm25"
     theme: str = "light"
+    # 隐私过滤
+    privacy_enabled: bool = False
     # 资料监控
     watcher_enabled: bool = False
     watcher_auto_extract: bool = True

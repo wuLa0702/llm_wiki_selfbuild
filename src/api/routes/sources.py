@@ -202,13 +202,19 @@ async def delete_source_folder(folder_path: str):
 class ExtractRequest(BaseModel):
     """大文件提取请求"""
     source_path: str
+    force: bool = False
 
 
 @router.post("/v1/sources/extract-to-wiki")
 async def extract_to_wiki(body: ExtractRequest):
-    """大文件 → Agent 多页面提取（异步，加入任务队列）"""
+    """大文件 → Agent 多页面提取
+
+    - 文件无变化时返回 status=skipped（前端提示用户）
+    - force=true 时跳过 SHA256 缓存检查，强制重新生成
+    """
     source_path = body.source_path
-    logger.info("POST /v1/sources/extract-to-wiki | %s", source_path)
+    force = body.force
+    logger.info("POST /v1/sources/extract-to-wiki | %s force=%s", source_path, force)
 
     full = os.path.normpath(source_path)
     safe_base = os.path.normpath("raw/sources")
@@ -223,10 +229,14 @@ async def extract_to_wiki(body: ExtractRequest):
     compiler = WikiCompiler(task_queue=get_task_queue())
 
     try:
-        result = compiler.ingest(source_path)
-        return JSONResponse({"status": "ok", "message": "提取完成",
+        result = compiler.ingest(source_path, force=force)
+        # 透传 compiler 返回的 status (ok/skipped/success)
+        return JSONResponse({
+            "status": result.get("status", "ok"),
+            "message": result.get("message", "提取完成"),
             "pages_created": result.get("pages_created", []),
-            "pages_updated": result.get("pages_updated", [])})
+            "pages_updated": result.get("pages_updated", []),
+        })
     except Exception as e:
         logger.error("提取失败: %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
