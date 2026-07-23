@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from src.agent.agent import build_agent, chat_stream
+from src.agent.agent import MAX_MESSAGE_TURNS, build_agent, chat_stream
 
 
 # ============================================================================
@@ -252,3 +252,65 @@ class TestChatStream:
         # python.md 应只出现一次
         python_count = sum(1 for s in sources if "python" in s)
         assert python_count <= 1
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_window_truncates_messages(self, mocker):
+        """超出 MAX_MESSAGE_TURNS 的消息被截断"""
+        agent = mocker.MagicMock()
+
+        async def event_generator(events_dict, **kwargs):
+            # 验证传递给 astream_events 的消息数量不超过 MAX_MESSAGE_TURNS + system
+            messages = events_dict.get("messages", [])
+            non_system = [m for m in messages if hasattr(m, "type") and m.type != "system"]
+            assert len(non_system) <= MAX_MESSAGE_TURNS
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="截断后")},
+            }
+
+        agent.astream_events = event_generator
+
+        # 构造超过 MAX_MESSAGE_TURNS 条消息
+        many_messages = []
+        for i in range(MAX_MESSAGE_TURNS + 10):
+            many_messages.append({"role": "user", "content": f"msg-{i}"})
+            many_messages.append({"role": "assistant", "content": f"reply-{i}"})
+
+        events = [e async for e in chat_stream(agent, many_messages)]
+
+        token_events = [e for e in events if e["type"] == "token"]
+        assert len(token_events) >= 1
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_preserves_system_message(self, mocker):
+        """窗口截断后 system message 仍保留"""
+        from langchain_core.messages import SystemMessage
+
+        agent = mocker.MagicMock()
+
+        async def event_generator(events_dict, **kwargs):
+            messages = events_dict.get("messages", [])
+            system_msgs = [m for m in messages if hasattr(m, "type") and m.type == "system"]
+            assert len(system_msgs) == 1
+            assert "助手" in system_msgs[0].content
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="OK")},
+            }
+
+        agent.astream_events = event_generator
+
+        # system + 很多轮对话 — system 应被保留
+        messages = [{"role": "system", "content": "你是一个助手"}]
+        for i in range(MAX_MESSAGE_TURNS + 5):
+            messages.append({"role": "user", "content": f"q-{i}"})
+            messages.append({"role": "assistant", "content": f"a-{i}"})
+
+        events = [e async for e in chat_stream(agent, messages)]
+
+        token_events = [e for e in events if e["type"] == "token"]
+        assert len(token_events) >= 1

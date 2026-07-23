@@ -35,6 +35,10 @@ P1_TOOLS = [search_wiki, read_page]
 # P1.5 可选加入
 P1_5_TOOLS = [query_graph]
 
+# P1 硬窗口保护：超出此轮数的历史被丢弃，防止 token 爆炸
+# P2 会用 ConversationSummaryMemory 替代简单截断
+MAX_MESSAGE_TURNS = 20
+
 
 def build_agent() -> object:
     """构建 ReAct Agent（CompiledStateGraph）
@@ -88,6 +92,19 @@ async def chat_stream(
     if not lc_messages:
         yield {"type": "error", "message": "消息列表为空"}
         return
+
+    # P1 硬窗口保护：保留最近 MAX_MESSAGE_TURNS 轮对话，防止 token 爆炸
+    # 保留第一个 system 消息（如果存在）以确保 Agent 人格不丢失
+    system_msgs = [m for m in lc_messages if isinstance(m, SystemMessage)]
+    non_system = [m for m in lc_messages if not isinstance(m, SystemMessage)]
+    if len(non_system) > MAX_MESSAGE_TURNS:
+        logger.warning(
+            "消息超窗口 | total=%d keeping=%d",
+            len(non_system),
+            MAX_MESSAGE_TURNS,
+        )
+        non_system = non_system[-MAX_MESSAGE_TURNS:]
+    lc_messages = system_msgs + non_system
 
     sources: list[str] = []
 
