@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from src.app_state import init_services, shutdown_services
 from src.api.errors import global_exception_handler
 from src.api.middleware import setup_middleware
-from src.api.routes import auth, graph, ingest, lint, misc, pages, purpose, sources, system
+from src.api.routes import auth, chat, graph, ingest, lint, misc, pages, purpose, sources, system
 
 # 保持向后兼容 — 测试仍 import 这些符号
 from src.api.helpers import (_check_page_access, _convert_wikilinks,
@@ -39,6 +39,7 @@ app.mount("/static", StaticFiles(directory=_static_path), name="static")
 
 # 注册 API 路由（优先于 SPA）
 app.include_router(auth.router)
+app.include_router(chat.router)
 app.include_router(graph.router)
 app.include_router(ingest.router)
 app.include_router(lint.router)

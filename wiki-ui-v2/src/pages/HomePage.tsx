@@ -53,7 +53,7 @@ export default function HomePage() {
         entities: types.entity || 0,
         concepts: types.concept || 0,
         sources: types.source || 0,
-        broken_links: (lintData.broken_links || []).length,
+        broken_links: ((lintData as { broken_links?: any[] }).broken_links || []).length,
       });
       setRecentPages((recentData.pages || pages).slice(0, 5));
     }).finally(() => setLoading(false));

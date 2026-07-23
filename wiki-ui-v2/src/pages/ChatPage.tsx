@@ -19,20 +19,48 @@ interface Session {
 
 function mid() { return Math.random().toString(36).slice(2, 10); }
 
-/* ─── Simulated AI responses (no backend calls) ─── */
-const MOCK_RESPONSES: Record<string, string> = {
-  async: '异步编程是一种并发编程范式，允许程序在等待 I/O 操作时继续执行其他任务，而不是阻塞线程。在 Python 中通过 `async/await` 语法实现，JavaScript 通过 `Promise` 和 `async/await` 实现。核心思想是将耗时操作委托给事件循环，在等待期间让出 CPU 给其他任务。',
-  python: 'Python 是一种动态类型、解释型的高级编程语言，以简洁易读的语法著称。它支持多种编程范式（面向对象、函数式、过程式）。**与 JavaScript 的主要区别：**\n\n1. **类型系统：** Python 是动态强类型，JS 是动态弱类型\n2. **运行环境：** Python 主要在服务端，JS 在浏览器和 Node.js\n3. **并发模型：** Python 多线程受 GIL 限制，JS 单线程事件循环\n4. **语法风格：** Python 用缩进，JS 用花括号',
-  docker: 'Docker 是一种容器化平台，将应用及其依赖打包到轻量级容器中，实现"一次构建，到处运行"。\n\n**核心概念：**\n- **镜像（Image）：** 只读模板，包含应用运行所需的一切\n- **容器（Container）：** 镜像的运行实例，独立隔离\n- **Dockerfile：** 描述镜像构建步骤的脚本\n- **docker-compose：** 编排多容器应用\n\n容器相比虚拟机的优势：启动快（秒级）、资源占用小、密度高。',
-  default: '这是一个模拟回复。当前对话系统为前端模拟模式，未对接真实 AI 模型。\n\n您可以继续输入问题测试交互流程，包括：\n- 流式打字机动画效果\n- 消息气泡左右布局\n- 会话管理功能\n\n实际部署时，系统将通过后端 LLM 接口返回真实回答。',
-};
+/** SSE 事件类型 */
+interface SseToken { type: 'token'; content: string }
+interface SseToolStart { type: 'tool_start'; tool: string; input: Record<string, unknown> }
+interface SseToolEnd { type: 'tool_end'; tool: string; output: string }
+interface SseDone { type: 'done'; sources: string[] }
+interface SseError { type: 'error'; message: string }
+type SseEvent = SseToken | SseToolStart | SseToolEnd | SseDone | SseError;
 
-function mockReply(question: string): string {
-  const q = question.toLowerCase();
-  if (q.includes('异步') || q.includes('async')) return MOCK_RESPONSES.async;
-  if (q.includes('python') || q.includes('js') || q.includes('javascript')) return MOCK_RESPONSES.python;
-  if (q.includes('docker') || q.includes('容器')) return MOCK_RESPONSES.docker;
-  return MOCK_RESPONSES.default;
+/** 调用后端 Agent，通过 fetch + ReadableStream 读取 SSE */
+async function* agentChatStream(messages: { role: string; content: string }[]): AsyncGenerator<SseEvent> {
+  const res = await fetch('/v1/agent/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error('Response body is null');
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';  // 保留最后一个不完整的行
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const data: SseEvent = JSON.parse(line.slice(6));
+        yield data;
+      } catch { /* 忽略解析错误 */ }
+    }
+  }
 }
 
 export default function ChatPage() {
@@ -66,7 +94,6 @@ export default function ChatPage() {
     setSessions(prev => [s, ...prev]);
     setActiveId(s.id);
     setInput('');
-    // Auto-focus input after next render
     setTimeout(() => inputRef.current?.focus(), 50);
   };
 
@@ -81,23 +108,47 @@ export default function ChatPage() {
     ));
     setStreaming(true);
 
-    const answer = mockReply(text);
-    const delay = 300 + Math.random() * 400;
-    await new Promise(r => setTimeout(r, delay));
+    // 构造对话历史：当前 session 的所有消息 + 新用户消息
+    const active = sessions.find(s => s.id === sid);
+    const history = active
+      ? [...active.messages.map(m => ({ role: m.role, content: m.content })), { role: 'user', content: text }]
+      : [{ role: 'user', content: text }];
 
-    let idx = 0;
-    const interval = setInterval(() => {
-      idx += 2;
-      const chunk = answer.slice(0, idx);
-      setSessions(prev => prev.map(s => {
-        if (s.id !== sid) return s;
-        const msgs = [...s.messages];
-        const last = msgs[msgs.length - 1];
-        if (last.role === 'assistant') msgs[msgs.length - 1] = { ...last, content: chunk };
-        return { ...s, messages: msgs };
-      }));
-      if (idx >= answer.length) { clearInterval(interval); setStreaming(false); }
-    }, 25);
+    let accumulated = '';
+
+    try {
+      for await (const event of agentChatStream(history)) {
+        switch (event.type) {
+          case 'token':
+            accumulated += event.content;
+            setSessions(prev => prev.map(s => {
+              if (s.id !== sid) return s;
+              const msgs = [...s.messages];
+              const last = msgs[msgs.length - 1];
+              if (last.role === 'assistant') msgs[msgs.length - 1] = { ...last, content: accumulated };
+              return { ...s, messages: msgs };
+            }));
+            break;
+          case 'tool_start':
+            // 可选：显示"正在搜索..."状态
+            break;
+          case 'tool_end':
+            break;
+          case 'done':
+            if (event.sources?.length) {
+              console.log('Sources:', event.sources);
+            }
+            break;
+          case 'error':
+            showToast(`对话出错：${event.message}`, 'error');
+            break;
+        }
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`连接失败：${message}`, 'error');
+    }
+    setStreaming(false);
   };
 
   const send = async () => {
