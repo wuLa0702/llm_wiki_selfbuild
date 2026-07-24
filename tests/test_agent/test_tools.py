@@ -12,8 +12,8 @@ import os
 
 import pytest
 
+from src.agent import constants as C
 from src.agent.tools import (
-    SEARCH_LIMIT,
     _get_search_tool,
     query_graph,
     read_page,
@@ -73,7 +73,7 @@ class TestSearchWiki:
         assert "`concepts/oop.md`" in result
 
     def test_search_calls_search_tool(self, mocker):
-        """search_wiki 使用 SearchTool 搜索，limit 使用 SEARCH_LIMIT 常量"""
+        """search_wiki 使用 SearchTool 搜索，limit 使用 C.SEARCH_LIMIT 常量"""
         mock_search = mocker.patch("src.agent.tools.SearchTool")
         mock_instance = mock_search.return_value
         mock_instance.search.return_value = []
@@ -81,7 +81,7 @@ class TestSearchWiki:
         search_wiki.invoke({"query": "异步编程"})
 
         mock_search.assert_called_once()
-        mock_instance.search.assert_called_once_with(keyword="异步编程", limit=SEARCH_LIMIT)
+        mock_instance.search.assert_called_once_with(keyword="异步编程", limit=C.SEARCH_LIMIT)
 
     def test_search_empty_results(self, mocker):
         """无匹配时返回友好提示"""

@@ -1,7 +1,9 @@
 """
-路由: Chat Agent — POST /v1/agent/chat
+路由: Chat Agent — SSE 流式对话端点
 
-SSE 流式对话端点，对接 LangChain Agent。
+接口:
+  POST /v1/agent/chat       — 无状态版（前端管理全量消息）
+  POST /v1/agent/chat/session — 多轮会话隔离版（后端 Checkpointer 管理历史）
 """
 import json
 import logging
@@ -10,7 +12,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from src.agent.agent import build_agent, chat_stream
+from src.agent.agent import build_agent, chat_stream, chat_stream_session
 
 logger = logging.getLogger("api.routes.chat")
 router = APIRouter(tags=["agent"])
@@ -33,10 +35,44 @@ class ChatRequest(BaseModel):
     )
 
 
-class ChatMessage(BaseModel):
-    """单条消息"""
-    role: str = Field(description="user / assistant / system")
-    content: str = Field(description="消息内容")
+class ChatSessionRequest(BaseModel):
+    """多轮会话聊天请求"""
+    content: str = Field(description="用户本轮输入文本")
+    thread_id: str = Field(
+        description="会话 ID，由前端生成 UUID 并在后续请求中复用",
+        examples=["a1b2c3d4-e5f6-7890-abcd-ef1234567890"],
+    )
+
+
+@router.post("/v1/agent/chat/session")
+async def agent_chat_session(body: ChatSessionRequest):
+    """多轮会话隔离版对话 — SSE 流式返回
+
+    每个 thread_id 有独立的状态空间：
+      - 首轮：自动注入 SYSTEM_PROMPT
+      - 续轮：Checkpointer 回溯历史，无需前端拼接全量消息
+
+    前端自行生成 thread_id（如 crypto.randomUUID()）并复用。
+    """
+    agent = _get_agent()
+
+    async def event_stream():
+        try:
+            async for event in chat_stream_session(agent, body.content, body.thread_id):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error("SSE 流异常 | thread=%s error=%s", body.thread_id, e)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/v1/agent/chat")

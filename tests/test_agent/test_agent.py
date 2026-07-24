@@ -11,7 +11,8 @@ import os
 
 import pytest
 
-from src.agent.agent import MAX_MESSAGE_TURNS, build_agent, chat_stream
+from src.agent.agent import build_agent, chat_stream, chat_stream_session
+from src.agent.constants import MAX_MESSAGE_TURNS
 
 
 # ============================================================================
@@ -305,3 +306,163 @@ class TestChatStream:
 
         token_events = [e for e in events if e["type"] == "token"]
         assert len(token_events) >= 1
+
+
+# ============================================================================
+# chat_stream_session（多轮会话隔离）
+# ============================================================================
+
+
+class TestChatStreamSession:
+    """chat_stream_session 多轮会话隔离版测试"""
+
+    @pytest.mark.asyncio
+    async def test_session_first_turn_injects_system_prompt(self, mocker):
+        """首轮自动注入 SYSTEM_PROMPT"""
+        from src.agent.agent import SYSTEM_PROMPT
+
+        agent = mocker.MagicMock()
+
+        snapshot = mocker.MagicMock()
+        snapshot.values = {"messages": []}
+        agent.get_state.return_value = snapshot
+
+        captured_inputs = []
+
+        async def event_generator(inputs, config, **kwargs):
+            captured_inputs.append((inputs, config))
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="你好")},
+            }
+
+        agent.astream_events = event_generator
+        events = [e async for e in chat_stream_session(agent, "你好", "thread-1")]
+
+        assert len(captured_inputs) == 1
+        messages = captured_inputs[0][0]["messages"]
+        assert messages[0].type == "system"
+        assert SYSTEM_PROMPT in messages[0].content
+        assert messages[1].type == "human"
+        assert messages[1].content == "你好"
+        assert len(events) >= 1
+
+    @pytest.mark.asyncio
+    async def test_session_second_turn_no_system_prompt(self, mocker):
+        """续轮不再注入 SYSTEM_PROMPT"""
+        agent = mocker.MagicMock()
+
+        snapshot = mocker.MagicMock()
+        snapshot.values = {"messages": [mocker.MagicMock(type="human", content="之前的问题")]}
+        agent.get_state.return_value = snapshot
+
+        captured_inputs = []
+
+        async def event_generator(inputs, config, **kwargs):
+            captured_inputs.append((inputs, config))
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="跟进回答")},
+            }
+
+        agent.astream_events = event_generator
+        events = [e async for e in chat_stream_session(agent, "追问", "thread-1")]
+
+        assert len(captured_inputs) == 1
+        messages = captured_inputs[0][0]["messages"]
+        assert len(messages) == 1
+        assert messages[0].type == "human"
+        assert messages[0].content == "追问"
+        assert len(events) >= 1
+
+    @pytest.mark.asyncio
+    async def test_session_thread_id_in_config(self, mocker):
+        """thread_id 传入了 astream_events 的 config"""
+        agent = mocker.MagicMock()
+
+        snapshot = mocker.MagicMock()
+        snapshot.values = {"messages": []}
+        agent.get_state.return_value = snapshot
+
+        captured_config = []
+
+        async def event_generator(inputs, config, **kwargs):
+            captured_config.append(config)
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="ok")},
+            }
+
+        agent.astream_events = event_generator
+        _ = [e async for e in chat_stream_session(agent, "hi", "my-thread-id")]
+
+        assert captured_config[0]["configurable"]["thread_id"] == "my-thread-id"
+
+    @pytest.mark.asyncio
+    async def test_session_events_format(self, mocker):
+        """事件格式与 chat_stream 一致"""
+        agent = mocker.MagicMock()
+
+        snapshot = mocker.MagicMock()
+        snapshot.values = {"messages": []}
+        agent.get_state.return_value = snapshot
+
+        async def event_generator(inputs, config, **kwargs):
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="token1")},
+            }
+            yield {
+                "event": "on_tool_start",
+                "run_id": "r2",
+                "name": "search_wiki",
+                "data": {"input": {"query": "test"}},
+            }
+            yield {
+                "event": "on_tool_end",
+                "run_id": "r2",
+                "name": "search_wiki",
+                "data": {"output": "结果：`entities/test.md`"},
+            }
+
+        agent.astream_events = event_generator
+        events = [e async for e in chat_stream_session(agent, "test", "t1")]
+
+        types = {e["type"] for e in events}
+        assert "token" in types
+        assert "tool_start" in types
+        assert "tool_end" in types
+        assert "done" in types
+
+    @pytest.mark.asyncio
+    async def test_session_error_event(self, mocker):
+        """异常转成 error 事件（模拟流中崩溃）"""
+        agent = mocker.MagicMock()
+
+        snapshot = mocker.MagicMock()
+        snapshot.values = {"messages": []}
+        agent.get_state.return_value = snapshot
+
+        async def failing_generator(inputs, config, **kwargs):
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="一半")},
+            }
+            raise Exception("会话崩溃")
+
+        agent.astream_events = failing_generator
+        events = [e async for e in chat_stream_session(agent, "hi", "err-thread")]
+
+        error_events = [e for e in events if e["type"] == "error"]
+        assert len(error_events) >= 1
+        assert "崩溃" in error_events[0]["message"]
