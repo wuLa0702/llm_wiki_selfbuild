@@ -2,8 +2,9 @@
 Agent 构建 + 流式对话测试
 
 Mock 策略：
-  - Mock LangChain's create_agent 返回的 CompiledStateGraph 的 astream_events
-  - 避免真实 LLM 调用
+  - Mock ChatOpenAI 避免真实 LLM 调用
+  - Mock 返回的 CompiledStateGraph 的 astream_events 方法
+  - 手写 LangGraph StateGraph 直接验证节点结构
 """
 import json
 import os
@@ -33,39 +34,29 @@ class TestBuildAgent:
         assert agent is not None
 
     def test_build_agent_includes_tools(self, mocker):
-        """agent 包含 search_wiki 和 read_page 两个工具"""
+        """agent 包含 search_wiki 和 read_page 两个工具（手写 LangGraph）"""
         mock_llm = mocker.MagicMock()
         mock_llm.invoke.return_value = mocker.MagicMock(content="ok")
         mocker.patch("src.llm.adapter.ChatOpenAI", return_value=mock_llm)
         mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
 
-        # Mock create_agent 来捕获 tools 参数
-        mock_create = mocker.patch("src.agent.agent.create_agent")
-        mock_create.return_value = mocker.MagicMock()
+        # 手写 LangGraph 图：直接验证 P1_TOOLS 和 graph 结构
+        from src.agent.agent import P1_TOOLS
 
         agent = build_agent()
         assert agent is not None
 
-        # 验证 create_agent 被调用，且 tools 包含 search_wiki 和 read_page
-        call_kwargs = mock_create.call_args.kwargs if mock_create.call_args.kwargs else {}
-        tools_arg = mock_create.call_args[1].get("tools") if len(mock_create.call_args) > 1 else None
-        # kwargs 方式
-        tools_kw = call_kwargs.get("tools", [])
-        tool_names = {t.name for t in tools_kw} if tools_kw else set()
-        if not tool_names:
-            # 如果通过 positional 方式调用 - 检查 args
-            for arg in mock_create.call_args:
-                if isinstance(arg, list):
-                    tool_names = {t.name for t in arg}
-                    break
-                if isinstance(arg, dict) and "tools" in arg:
-                    tool_names = {t.name for t in arg["tools"]}
-
-        # create_agent 在 agent.py 中以关键字参数传递
-        # agent.py: agent = create_agent(model=..., tools=..., system_prompt=..., name=...)
+        # P1_TOOLS 应包含正确工具
+        tool_names = {t.name for t in P1_TOOLS}
         assert "search_wiki" in tool_names
         assert "read_page" in tool_names
         assert "query_graph" not in tool_names  # P1 不包含
+
+        # Graph 应包含 agent + tools 两个节点
+        graph = agent.get_graph()
+        node_names = {n for n in graph.nodes.keys() if not n.startswith("__")}
+        assert "agent" in node_names
+        assert "tools" in node_names
 
 
 # ============================================================================

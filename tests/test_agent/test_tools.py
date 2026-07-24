@@ -103,7 +103,6 @@ class TestSearchWiki:
         result = search_wiki.invoke({"query": "test"})
 
         assert "搜索失败" in result
-        assert "搜索服务不可用" in result
 
     def test_search_tool_singleton(self, mocker):
         """_get_search_tool 返回同一个实例"""

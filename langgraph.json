@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "wiki_agent": "./src/agent/agent.py:build_agent"
+  },
+  "env": "./.env",
+  "python_version": "3.11"
+}

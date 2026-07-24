@@ -258,3 +258,6 @@ KIMI.md
 # Runtime logs
 logs/
 static/
+
+# LangGraph API/Studio cache (auto-generated)
+.langgraph_api/

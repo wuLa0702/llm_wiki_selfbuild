@@ -7,18 +7,29 @@ Agent 构建 + 流式对话接口
 
 接口固定，换 LangGraph 时路由层和前端不改。
 """
+
 import logging
+import os
+import re
 from collections.abc import AsyncIterator
+from typing import Literal, TypedDict
 
-from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from dotenv import load_dotenv
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.prebuilt import ToolNode
 
-from src.agent.tools import search_wiki, read_page, query_graph
-from src.llm.adapter import LLMAdapter
+from src.agent.tools import read_page, search_wiki
 
+load_dotenv()
 logger = logging.getLogger("agent")
 
-# System Prompt（与最终方案一致）
+
+# ── 系统提示 ──────────────────────────────────────────────────────────────────
+
 SYSTEM_PROMPT = """你是 LLM Wiki 的知识助手。你可以搜索、阅读、分析知识库中的内容来回答用户问题。
 
 规则：
@@ -29,56 +40,99 @@ SYSTEM_PROMPT = """你是 LLM Wiki 的知识助手。你可以搜索、阅读、
 5. 使用中文回答（除非用户用其他语言提问）
 6. 回答要简洁准确，适当使用 Markdown 格式"""
 
-# P1 工具列表：全部只读
+
+# ── 配置 ──────────────────────────────────────────────────────────────────────
+
 P1_TOOLS = [search_wiki, read_page]
 
-# P1.5 可选加入
-P1_5_TOOLS = [query_graph]
-
-# P1 硬窗口保护：超出此轮数的历史被丢弃，防止 token 爆炸
+# 硬窗口保护：超出此轮数的历史被丢弃，防止 token 爆炸
 # P2 会用 ConversationSummaryMemory 替代简单截断
 MAX_MESSAGE_TURNS = 20
 
 
-def build_agent() -> object:
-    """构建 ReAct Agent（CompiledStateGraph）
+# ── 图状态定义 ────────────────────────────────────────────────────────────────
 
-    Returns:
-        CompiledStateGraph: LangChain v1 agent graph
+class AgentState(TypedDict):
+    """LangGraph 图共享状态
+
+    messages: 对话 + 工具调用全链路记录，元素必须是 BaseMessage 子类
     """
-    adapter = LLMAdapter()
-    llm = adapter._llm  # ChatOpenAI 实例，已配置 DeepSeek provider
+    messages: list[BaseMessage]
 
-    agent = create_agent(
-        model=llm,
-        tools=P1_TOOLS.copy(),
-        system_prompt=SYSTEM_PROMPT,
-        name="wiki_agent",
-    )
+
+# ── LLM 初始化 ────────────────────────────────────────────────────────────────
+
+llm = ChatOpenAI(
+    model=os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+    api_key=os.environ["DEEPSEEK_API_KEY"],
+    base_url=os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"),
+    timeout=15,
+    max_retries=1,
+)
+llm_with_tools = llm.bind_tools(P1_TOOLS)
+
+
+# ── 图节点 ────────────────────────────────────────────────────────────────────
+
+def call_model(state: AgentState) -> dict:
+    """调 LLM，返回响应追加到 messages"""
+    response = llm_with_tools.invoke(state["messages"])
+    return {"messages": [response]}
+
+
+tool_node = ToolNode(P1_TOOLS)
+
+
+def should_continue(state: AgentState) -> Literal["tools", "__end__"]:
+    """判断 LLM 输出是否需要执行工具——图分支路由函数
+
+    存在 tool_calls → 跳转 tools 节点执行工具
+    无工具调用     → 结束对话流程
+    """
+    last_msg = state["messages"][-1]
+    if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+        return "tools"
+    return "__end__"
+
+
+# ── 图构建 ────────────────────────────────────────────────────────────────────
+
+builder = StateGraph(AgentState)
+builder.add_node("agent", call_model)
+builder.add_node("tools", tool_node)
+builder.set_entry_point("agent")
+builder.add_edge("tools", "agent")
+builder.add_conditional_edges("agent", should_continue)
+
+app = builder.compile(checkpointer=MemorySaver())
+
+
+def build_agent() -> CompiledStateGraph:
+    """构建 ReAct Agent（CompiledStateGraph）"""
     logger.info("Agent 构建完成 | tools=%s", [t.name for t in P1_TOOLS])
-    return agent
+    return app
 
+
+# ── 流式对话接口 ──────────────────────────────────────────────────────────────
 
 async def chat_stream(
-    agent: object,
+    agent: CompiledStateGraph,
     messages: list[dict],
 ) -> AsyncIterator[dict]:
-    """流式对话接口 — 生产 SSE 事件
+    """流式对话接口 —— 生产 SSE 事件
 
     Args:
-        agent: build_agent() 返回的 agent 实例
-        messages: 对话历史 [{"role": "user"|"assistant", "content": "..."}, ...]
+        agent: build_agent() 返回的 CompiledStateGraph 实例
+        messages: [{"role": "user"|"assistant"|"system", "content": "..."}, ...]
 
     Yields:
-        事件 dict，类型：
-          {"type": "token", "content": "..."}
-          {"type": "tool_start", "tool": "...", "input": {...}}
-          {"type": "tool_end", "tool": "...", "output": "..."}
-          {"type": "done", "sources": [...]}
-          {"type": "error", "message": "..."}
+        {"type": "token", "content": "..."}      — LLM token 级输出
+        {"type": "tool_start", "tool": "...", "input": {...}}  — 工具调用开始
+        {"type": "tool_end", "tool": "...", "output": "..."}   — 工具调用结束
+        {"type": "done", "sources": [...]}        — 对话结束，返回引用来源
+        {"type": "error", "message": "..."}       — 错误事件
     """
-    # 转换消息格式
-    lc_messages = []
+    lc_messages: list[BaseMessage] = []
     for msg in messages:
         role = msg.get("role", "user")
         content = msg.get("content", "")
@@ -93,51 +147,43 @@ async def chat_stream(
         yield {"type": "error", "message": "消息列表为空"}
         return
 
-    # P1 硬窗口保护：保留最近 MAX_MESSAGE_TURNS 轮对话，防止 token 爆炸
-    # 保留第一个 system 消息（如果存在）以确保 Agent 人格不丢失
+    # 窗口截断：保留 SystemMessage（人格设定）+ 最近 MAX_MESSAGE_TURNS 轮对话
     system_msgs = [m for m in lc_messages if isinstance(m, SystemMessage)]
     non_system = [m for m in lc_messages if not isinstance(m, SystemMessage)]
     if len(non_system) > MAX_MESSAGE_TURNS:
         logger.warning(
-            "消息超窗口 | total=%d keeping=%d",
-            len(non_system),
-            MAX_MESSAGE_TURNS,
+            "消息超窗口 | total=%d keeping=%d", len(non_system), MAX_MESSAGE_TURNS
         )
         non_system = non_system[-MAX_MESSAGE_TURNS:]
     lc_messages = system_msgs + non_system
 
-    sources: list[str] = []
+    # 收集工具调用中引用的 Wiki 页面路径，用于最终返回来源列表
+    wiki_path_source: list[str] = []
 
     try:
-        # 使用 astream_events 获取流式事件
         async for event in agent.astream_events(
             {"messages": lc_messages},
             version="v1",
         ):
             kind = event.get("event", "")
-            event_id = event.get("run_id", "")
             name = event.get("name", "")
             data = event.get("data", {})
 
             if kind == "on_chat_model_stream":
-                # LLM token 级输出
-                chunk = data.get("chunk", None)
+                chunk = data.get("chunk")
                 if chunk is not None:
                     content = getattr(chunk, "content", "")
                     if content:
                         yield {"type": "token", "content": content}
 
             elif kind == "on_tool_start":
-                # 工具调用开始
-                tool_input = data.get("input", {})
                 yield {
                     "type": "tool_start",
                     "tool": name,
-                    "input": tool_input,
+                    "input": data.get("input", {}),
                 }
 
             elif kind == "on_tool_end":
-                # 工具调用结束 — 从输出中提取来源页面
                 output = data.get("output", "")
                 output_str = str(output) if output else ""
                 yield {
@@ -145,17 +191,13 @@ async def chat_stream(
                     "tool": name,
                     "output": output_str[:500],
                 }
-                # 收集 wiki 页面路径作为来源
                 if output_str:
-                    import re
                     wiki_paths = re.findall(r'`([^`]+\.md)`', output_str)
-                    sources.extend(wiki_paths)
+                    wiki_path_source.extend(wiki_paths)
 
     except Exception as e:
         logger.error("Agent 流式调用失败 | error=%s", e)
         yield {"type": "error", "message": f"Agent 调用失败: {e}"}
         return
 
-    # 去重来源
-    unique_sources = list(dict.fromkeys(sources))
-    yield {"type": "done", "sources": unique_sources}
+    yield {"type": "done", "sources": list(dict.fromkeys(wiki_path_source))}

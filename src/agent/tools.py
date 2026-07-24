@@ -56,36 +56,39 @@ def _get_graph():
 
 
 # ── 工具定义 ────────────────────────────────────────────────────────────────
+ 
 
-
-@tool
+@tool(name_or_callable="search_wiki")
+# ask 2026-07-23 18:04:  现在方法有需要访问上下文的么？ 以后呢？
+# ask 2026-07-23 18:05:  为啥没有使用from langgraph.prebuilt import ToolNode 用toolNode包裹一层？
 def search_wiki(query: str) -> str:
-    """搜索 Wiki 知识库，返回匹配页面列表（标题、路径、摘要）。
-
+    """
+    搜索wiki 知识库，返回匹配的页面列表（标题、路径、摘要）
     当用户问问题时，优先使用此工具找到相关页面。
-    返回每个页面的标题、路径和内容摘要，方便 Agent 决定读哪个页面。
+    返回每个页面的标题、路径和内容摘要，方便agent决定读哪个页面。
+    :param query:
+    :return:
     """
     logger.info("tool:search_wiki | query=%s", query)
     try:
-        st = _get_search_tool()
-        results = st.search(keyword=query, limit=SEARCH_LIMIT)
+        search_tool = _get_search_tool()
+        results = search_tool.search(keyword=query, limit=SEARCH_LIMIT)  # ← fix: 接住返回值
     except Exception as e:
-        logger.error("search_wiki 失败 | error=%s", e)
-        return f"搜索失败：{e}"
+        logger.error("search_wiki失败 | error=%s", e)
+        return f"搜索失败：{query}"
 
-    if not results:
-        return "未找到匹配的页面。"
+    if not results:  # ← fix: results 不是 result
+        return "未找到匹配的页面"
 
     lines: list[str] = []
     for r in results:
-        path = r.get("path", "?")
-        title = r.get("title") or Path(path).stem
+        path = r.get("path","?")
+        title = r.get("title") or Path(path).stem  # ← fix: 赋值给 title
         snippet = (r.get("snippet") or "")[:200].replace("\n", " ")
         score = r.get("score", 0)
         lines.append(f"- **{title}** (`{path}`) [匹配度 {score:.2f}]\n  {snippet}")
 
     return "\n".join(lines)
-
 
 @tool
 def read_page(path: str, offset: int = 0, max_chars: int = READ_PAGE_MAX_CHARS) -> str:
