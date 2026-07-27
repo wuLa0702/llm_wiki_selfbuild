@@ -261,3 +261,4 @@ static/
 
 # LangGraph API/Studio cache (auto-generated)
 .langgraph_api/
+test_checkpoints.db*
