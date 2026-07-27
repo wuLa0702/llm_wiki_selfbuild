@@ -17,13 +17,14 @@ from collections.abc import AsyncIterator
 from typing import Annotated, Literal, TypedDict
 
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
+from langgraph.types import Command, interrupt
 
 from src.agent import constants as C
 from src.agent import persistence as P
@@ -87,22 +88,73 @@ def call_model(state: AgentState) -> dict:
 tool_node = ToolNode(P1_TOOLS)
 
 
-def should_continue(state: AgentState) -> Literal["tools", "__end__"]:
+def should_continue(state: AgentState) -> Literal["approve", "__end__"]:
     """判断 LLM 输出是否需要执行工具——图分支路由函数"""
     last_msg = state[C.STATE_MESSAGES][-1]
     if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-        return C.NODE_TOOLS
+        return C.NODE_APPROVE
     return "__end__"
+
+
+def human_approval_node(state: AgentState) -> dict:
+    """人工审批节点：工具调用前暂停，等待用户批准或拒绝
+
+    通过 interrupt() 暂停图执行。用户审批结果通过 Command(resume=...) 恢复。
+    批准后 → 状态不变 → should_after_approval 路由到 tools 节点
+    拒绝后 → 追加拒绝 ToolMessage → should_after_approval 路由回 agent 节点
+    """
+    last_msg = state[C.STATE_MESSAGES][-1]
+    tool_calls = getattr(last_msg, "tool_calls", [])
+    if not tool_calls:
+        return {}
+
+    # 暂停图，等待人工审批
+    approval = interrupt({
+        "question": "是否批准以下工具调用？",
+        C.FIELD_TOOL_CALLS: [
+            {"name": tc["name"], "args": tc["args"], "id": tc["id"]}
+            for tc in tool_calls
+        ],
+    })
+
+    if approval and approval.get(C.FIELD_APPROVAL):
+        # 批准：不修改状态，后续 should_after_approval 路由到 tools
+        logger.info(C.LOG_APPROVAL_RESUMED, "approve", "approved")
+        return {}
+
+    # 拒绝：为每个 tool_call 创建拒绝的 ToolMessage
+    logger.info(C.LOG_APPROVAL_RESUMED, "approve", "rejected")
+    rejection_msgs = []
+    for tc in tool_calls:
+        rejection_msgs.append(ToolMessage(
+            content="用户拒绝执行此工具调用。请基于已有知识回答，或告知用户需要数据但被拒绝。",
+            tool_call_id=tc["id"],
+        ))
+    return {C.STATE_MESSAGES: rejection_msgs}
+
+
+def should_after_approval(state: AgentState) -> Literal["tools", "agent"]:
+    """审批后的路由决策
+
+    当 human_approval_node 返回 {}（批准）时，最后一条消息仍是含 tool_calls 的 AIMessage
+    当 human_approval_node 返回 rejection ToolMessages 时，最后一条是 ToolMessage（无 tool_calls）
+    """
+    last_msg = state[C.STATE_MESSAGES][-1]
+    if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+        return C.NODE_TOOLS  # 批准 → 执行工具
+    return C.NODE_AGENT  # 拒绝 → 返回 agent 让 LLM 处理拒绝结果
 
 
 # ── 图构建 ────────────────────────────────────────────────────────────────────
 
 builder = StateGraph(AgentState)
 builder.add_node(C.NODE_AGENT, call_model)
+builder.add_node(C.NODE_APPROVE, human_approval_node)
 builder.add_node(C.NODE_TOOLS, tool_node)
 builder.set_entry_point(C.NODE_AGENT)
 builder.add_edge(C.NODE_TOOLS, C.NODE_AGENT)
 builder.add_conditional_edges(C.NODE_AGENT, should_continue)
+builder.add_conditional_edges(C.NODE_APPROVE, should_after_approval)
 
 # ── 持久化 Checkpointer ───────────────────────────────────────────────────────
 # MemorySaver 在运行时管理图状态（内存中）。
@@ -270,8 +322,9 @@ async def chat_stream_session(
     agent: CompiledStateGraph,
     content: str,
     thread_id: str,
+    approval: dict | None = None,
 ) -> AsyncIterator[dict]:
-    """多轮会话隔离版流式接口——MemorySaver 主存 + SQLite 持久化备份
+    """多轮会话隔离版流式接口——MemorySaver 主存 + SQLite 持久化备份 + 人工审批
 
     跨会话记忆策略（MemorySaver 优先，SQLite 冷启动恢复）：
       ┌─ 同会话续轮（MemorySaver 有状态）
@@ -283,54 +336,67 @@ async def chat_stream_session(
       └─ 首轮对话（MemorySaver 空，SQLite 无数据）
            注入 SYSTEM_PROMPT + 本轮用户消息
 
-    优点：
-      - MemorySaver 处理运行时状态合并（不产生重复消息）
-      - SQLite 提供跨重启持久化
-      - 两者解耦，各自职责单一
+    人工审批（Human-in-the-Loop）：
+      当 LLM 决定调用工具时，图路由到 approve 节点，interrupt() 暂停执行。
+      流结束后检测到 interrupt → 发送 tool_approval_needed 事件给前端。
+      前端展示审批对话框 → 用户批准/拒绝 → 下一次请求带 approval 字段。
+      approval={"approved": True}  → 执行工具
+      approval={"approved": False} → 给 LLM 注入拒绝消息，让它基于已有知识回答
 
     Args:
         agent: build_agent() 返回的 CompiledStateGraph
         content: 用户本轮输入文本
         thread_id: 会话 ID，由前端生成 UUID 并在后续请求中复用
+        approval: 可选，审批决策（批准/拒绝），用于恢复被 interrupt 暂停的图
 
     Yields:
-        与 chat_stream() 相同的事件格式
+        与 chat_stream() 相同的事件格式 + tool_approval_needed
     """
     config: dict = {C.CONFIG_CONFIGURABLE: {C.CONFIG_THREAD_ID: thread_id}}
 
-    # ── Step 1: 查 MemorySaver（运行时状态） ─────────────────────────────
-    # get_state() 在 MemorySaver 中按 thread_id 查找已存状态
-    # 若有 → 同会话续轮，仅传本轮用户消息（避免 add_messages 重复合并）
+    # ── Step 0: 检测是否处于 interrupt 状态（需审批恢复） ───────────────
     state_snapshot = agent.get_state(config)
-    existing_messages = state_snapshot.values.get(C.STATE_MESSAGES, [])
+    if state_snapshot.interrupts:
+        # 图已暂停等待审批
+        if approval is None:
+            logger.error("interrupt 状态但未提供审批决策 | thread=%s", thread_id)
+            yield {C.FIELD_TYPE: C.EVENT_ERROR, C.FIELD_MESSAGE: C.ERROR_APPROVAL_REQUIRED}
+            return
 
-    if existing_messages:
-        # 同会话续轮：MemorySaver 已有历史，仅传新输入
-        logger.info(C.LOG_SESSION_CONTINUE, thread_id, len(existing_messages))
-        input_messages: list[BaseMessage] = [HumanMessage(content=content)]
-
+        # 用 Command(resume=approval) 恢复图执行
+        logger.info(C.LOG_APPROVAL_RESUMED, thread_id, "approved" if approval.get(C.FIELD_APPROVAL) else "rejected")
+        stream_input = Command(resume=approval)
+        input_messages: list[BaseMessage] = []  # 恢复时不传新消息
     else:
-        # ── Step 2: MemorySaver 空 → 查 SQLite（冷启动恢复） ────────────
-        persisted = P.load_thread(thread_id)
-        if persisted is None:
-            # 首轮对话：注入 SYSTEM_PROMPT
-            logger.info(C.LOG_SESSION_FIRST_TURN, thread_id)
-            input_messages = [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=content),
-            ]
-        else:
-            # 冷启动恢复：从 SQLite 加载历史
-            logger.info(C.LOG_SESSION_COLD_RECOVER, thread_id, len(persisted))
-            input_messages = _deserialize_messages(persisted)
-            input_messages.append(HumanMessage(content=content))
+        # ── Step 1: 查 MemorySaver（运行时状态） ─────────────────────────
+        existing_messages = state_snapshot.values.get(C.STATE_MESSAGES, [])
 
-    # ── Step 3: 流式处理（MemorySaver 运行时管理） ────────────────────────
+        if existing_messages:
+            logger.info(C.LOG_SESSION_CONTINUE, thread_id, len(existing_messages))
+            input_messages = [HumanMessage(content=content)]
+
+        else:
+            # ── Step 2: MemorySaver 空 → 查 SQLite（冷启动恢复） ──────────
+            persisted = P.load_thread(thread_id)
+            if persisted is None:
+                logger.info(C.LOG_SESSION_FIRST_TURN, thread_id)
+                input_messages = [
+                    SystemMessage(content=SYSTEM_PROMPT),
+                    HumanMessage(content=content),
+                ]
+            else:
+                logger.info(C.LOG_SESSION_COLD_RECOVER, thread_id, len(persisted))
+                input_messages = _deserialize_messages(persisted)
+                input_messages.append(HumanMessage(content=content))
+
+        stream_input = {C.STATE_MESSAGES: input_messages}
+
+    # ── Step 3: 统一的流式处理 ──────────────────────────────────────────────
     wiki_path_source: list[str] = []
 
     try:
         async for event in agent.astream_events(
-            {C.STATE_MESSAGES: input_messages},
+            stream_input,
             config,
             version=C.ASTREAM_EVENTS_VERSION,
         ):
@@ -365,10 +431,21 @@ async def chat_stream_session(
         yield {C.FIELD_TYPE: C.EVENT_ERROR, C.FIELD_MESSAGE: C.ERROR_AGENT_FAILED.format(e)}
         return
 
-    # ── Step 4: 流结束后，将最终状态持久化到 SQLite ──────────────────────
-    # 从 MemorySaver 取完整消息列表 → 序列化 → 写入 SQLite
-    state_snapshot = agent.get_state(config)
-    final_messages = state_snapshot.values.get(C.STATE_MESSAGES, [])
+    # ── Step 4: 检查新 interrupt（审批等待） ──────────────────────────────
+    new_state = agent.get_state(config)
+    if new_state.interrupts:
+        interrupt_value = new_state.interrupts[0].value
+        tool_calls_info = interrupt_value.get(C.FIELD_TOOL_CALLS, [])
+        logger.info(C.LOG_APPROVAL_NEEDED, thread_id, [t.get("name") for t in tool_calls_info])
+        yield {
+            C.FIELD_TYPE: C.EVENT_TOOL_APPROVAL_NEEDED,
+            C.FIELD_TOOL_CALLS: tool_calls_info,
+        }
+        return  # 不持久化，不 yield done
+
+    # ── Step 5: 流正常结束 → 持久化到 SQLite ───────────────────────────────
+    final_state = agent.get_state(config)
+    final_messages = final_state.values.get(C.STATE_MESSAGES, [])
     serialized = _serialize_messages(final_messages)
     P.save_thread(thread_id, serialized)
     logger.info("会话已持久化 | thread=%s messages=%d", thread_id, len(serialized))

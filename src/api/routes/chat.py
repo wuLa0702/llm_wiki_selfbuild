@@ -44,6 +44,10 @@ class ChatSessionRequest(BaseModel):
         description="会话 ID，由前端生成 UUID 并在后续请求中复用",
         examples=["a1b2c3d4-e5f6-7890-abcd-ef1234567890"],
     )
+    approval: dict | None = Field(
+        default=None,
+        description="审批决策（human-in-the-loop），如 {\"approved\": true}",
+    )
 
 
 @router.get("/v1/agent/threads")
@@ -72,7 +76,7 @@ async def agent_chat_session(body: ChatSessionRequest):
 
     async def event_stream():
         try:
-            async for event in chat_stream_session(agent, body.content, body.thread_id):
+            async for event in chat_stream_session(agent, body.content, body.thread_id, approval=body.approval):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.error("SSE 流异常 | thread=%s error=%s", body.thread_id, e)

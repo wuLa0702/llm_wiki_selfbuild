@@ -42,6 +42,7 @@ PERSISTENCE_DB_PATH = "agent_persistence.db"
 # 图节点名（必须与 add_node 的第一个参数完全一致）
 NODE_AGENT = "agent"
 NODE_TOOLS = "tools"
+NODE_APPROVE = "approve"
 
 # 状态键
 STATE_MESSAGES = "messages"
@@ -62,6 +63,7 @@ ASTREAM_EVENTS_VERSION = "v1"
 EVENT_TOKEN = "token"
 EVENT_TOOL_START = "tool_start"
 EVENT_TOOL_END = "tool_end"
+EVENT_TOOL_APPROVAL_NEEDED = "tool_approval_needed"
 EVENT_DONE = "done"
 EVENT_ERROR = "error"
 
@@ -73,6 +75,8 @@ FIELD_TOOL = "tool"
 FIELD_INPUT = "input"
 FIELD_OUTPUT = "output"
 FIELD_SOURCES = "sources"
+FIELD_TOOL_CALLS = "tool_calls"
+FIELD_APPROVAL = "approval"
 FIELD_MESSAGE = "message"
 FIELD_EVENT = "event"
 FIELD_NAME = "name"
@@ -134,6 +138,7 @@ WIKI_PATH_REGEX = r'`([^`]+\.md)`'
 # ═══════════════════════════════════════════════════════════════════════════════
 
 ERROR_AGENT_FAILED = "Agent 调用失败: {}"
+ERROR_APPROVAL_REQUIRED = "图已暂停等待审批，但请求未包含审批决策"
 ERROR_EMPTY_MESSAGES = "消息列表为空"
 ERROR_SEARCH_FAILED = "搜索失败：{}"
 ERROR_PATH_UNAUTHORIZED = "路径越权：{}"
@@ -158,6 +163,8 @@ LOG_SESSION_FIRST_TURN = "会话首轮 | thread=%s 注入 SYSTEM_PROMPT"
 LOG_SESSION_CONTINUE = "会话续轮 | thread=%s 已有 %d 条历史消息"
 LOG_SESSION_COLD_RECOVER = "会话冷启动恢复 | thread=%s messages=%d"
 LOG_WINDOW_EXCEEDED = "消息超窗口 | total=%d keeping=%d"
+LOG_APPROVAL_NEEDED = "工具调用等待审批 | thread=%s tools=%s"
+LOG_APPROVAL_RESUMED = "工具调用审批结果 | thread=%s decision=%s"
 
 # Tools
 LOG_TOOL_SEARCH = "tool:search_wiki | query=%s"

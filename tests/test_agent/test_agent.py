@@ -315,6 +315,20 @@ class TestChatStream:
 # ============================================================================
 
 
+def _make_snapshot(mocker, messages: list | None = None, has_interrupt: bool = False):
+    """创建 Mock StateSnapshot（模块级，各测试类复用）
+
+    Args:
+        mocker: pytest-mock fixture
+        messages: state 中的 messages 列表（None=空）
+        has_interrupt: 是否模拟 interrupt 状态
+    """
+    snapshot = mocker.MagicMock()
+    snapshot.values = {"messages": messages or []}
+    snapshot.interrupts = (mocker.MagicMock(),) if has_interrupt else ()
+    return snapshot
+
+
 class TestChatStreamSession:
     """chat_stream_session 多轮会话隔离版测试
 
@@ -327,14 +341,12 @@ class TestChatStreamSession:
 
     # ── Helper: mock 首轮场景 ───────────────────────────────────────────
 
-    def _mock_first_turn(self, mocker) -> tuple:
+    def _mock_first_turn(self, mocker):
         """Mock MemorySaver 空 + SQLite 无数据 → 首轮对话"""
         agent = mocker.MagicMock()
 
-        # MemorySaver 空
-        snapshot = mocker.MagicMock()
-        snapshot.values = {"messages": []}
-        agent.get_state.return_value = snapshot
+        # MemorySaver 空（无 interrupt）
+        agent.get_state.return_value = _make_snapshot(mocker)
 
         # SQLite 无数据（冷启动也查不到）
         mocker.patch("src.agent.persistence.load_thread", return_value=None)
@@ -375,8 +387,10 @@ class TestChatStreamSession:
         """续轮不再注入 SYSTEM_PROMPT（MemorySaver 已有状态）"""
         agent = mocker.MagicMock()
 
-        snapshot = mocker.MagicMock()
-        snapshot.values = {"messages": [mocker.MagicMock(type="human", content="之前的问题")]}
+        snapshot = _make_snapshot(
+            mocker,
+            messages=[mocker.MagicMock(type="human", content="之前的问题")],
+        )
         agent.get_state.return_value = snapshot
 
         captured_inputs = []
@@ -483,9 +497,8 @@ class TestChatStreamSession:
 
         agent = mocker.MagicMock()
 
-        # MemorySaver 空（服务器重启）
-        snapshot = mocker.MagicMock()
-        snapshot.values = {"messages": []}
+        # MemorySaver 空（服务器重启，无 interrupt）
+        snapshot = _make_snapshot(mocker)
         agent.get_state.return_value = snapshot
 
         # SQLite 有持久化数据（历史消息）
@@ -532,7 +545,35 @@ class TestChatStreamSession:
     @pytest.mark.asyncio
     async def test_session_persists_after_stream(self, mocker):
         """流结束后将最终状态保存到 SQLite（save_thread 被调用）"""
-        agent = self._mock_first_turn(mocker)
+        from src.agent.agent import SYSTEM_PROMPT
+
+        agent = mocker.MagicMock()
+
+        # get_state 前两次返回空（首轮检测），第三次返回最终状态（持久化）
+        call_index = [0]  # mutable for closure
+
+        def mock_get_state(config):  # noqa: ARG001
+            i = call_index[0]
+            call_index[0] += 1
+            if i <= 1:
+                # Call 1: pre-stream, Call 2: post-stream interrupt check
+                snap = mocker.MagicMock()
+                snap.values = {"messages": []}
+                snap.interrupts = ()
+                return snap
+            # Call 3: persistence
+            snap = mocker.MagicMock()
+            snap.values = {
+                "messages": [
+                    SystemMessage(content=SYSTEM_PROMPT),
+                    HumanMessage(content="hi"),
+                    AIMessage(content="回复"),
+                ]
+            }
+            snap.interrupts = ()
+            return snap
+
+        agent.get_state = mock_get_state
 
         async def event_generator(inputs, config, **kwargs):
             yield {
@@ -543,17 +584,6 @@ class TestChatStreamSession:
             }
 
         agent.astream_events = event_generator
-
-        # mock get_state（Step 4 中读 MemorySaver 最终状态）
-        final_snapshot = mocker.MagicMock()
-        final_snapshot.values = {
-            "messages": [
-                SystemMessage(content="prompt"),
-                HumanMessage(content="hi"),
-                AIMessage(content="回复"),
-            ]
-        }
-        agent.get_state.return_value = final_snapshot
 
         # mock save_thread
         mock_save = mocker.patch("src.agent.persistence.save_thread")
@@ -569,3 +599,227 @@ class TestChatStreamSession:
         assert len(serialized) >= 2
         assert serialized[0]["role"] == "system"
         assert serialized[-1]["role"] == "assistant"
+
+
+# ============================================================================
+# 人工审批（Human-in-the-Loop）
+# ============================================================================
+
+
+class TestHumanApproval:
+    """human_approval_node + interrupt 检测 + 审批恢复测试"""
+
+    def _make_interrupt_snapshot(self, mocker, tool_calls=None):
+        """创建包含 interrupt 的 StateSnapshot"""
+        snapshot = mocker.MagicMock()
+        snapshot.values = {"messages": [mocker.MagicMock()]}
+        snapshot.interrupts = (
+            mocker.MagicMock(value={
+                "question": "是否批准以下工具调用？",
+                "tool_calls": tool_calls or [
+                    {"name": "search_wiki", "args": {"query": "test"}, "id": "call_1"},
+                ],
+            }),
+        )
+        return snapshot
+
+    @pytest.mark.asyncio
+    async def test_interrupt_detected_after_stream(self, mocker):
+        """工具调用后流正常结束，但 get_state 显示 interrupt → 发出 tool_approval_needed"""
+        agent = mocker.MagicMock()
+
+        # get_state: call 1 = 正常（首轮）, call 2 = interrupt 状态
+        call_idx = [0]
+
+        def mock_get_state(config):  # noqa: ARG001
+            i = call_idx[0]
+            call_idx[0] += 1
+            if i == 0:
+                s = _make_snapshot(mocker)
+                return s
+            # Post-stream: 模拟 interrupted
+            return self._make_interrupt_snapshot(mocker, tool_calls=[
+                {"name": "search_wiki", "args": {"query": "Python"}, "id": "call_abc"},
+            ])
+
+        agent.get_state = mock_get_state
+
+        # astream_events 正常完成（模拟 agent 节点输出了 tool_calls）
+        async def stream_events(*args, **kwargs):
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="")},
+            }
+
+        agent.astream_events = stream_events
+
+        # Mock SQLite 无数据
+        mocker.patch("src.agent.persistence.load_thread", return_value=None)
+        mock_save = mocker.patch("src.agent.persistence.save_thread")
+
+        events = [e async for e in chat_stream_session(agent, "查 Python", "interrupt-test")]
+
+        # 应发出 tool_approval_needed 事件
+        approval_events = [e for e in events if e["type"] == "tool_approval_needed"]
+        assert len(approval_events) == 1
+        assert "tool_calls" in approval_events[0]
+        assert approval_events[0]["tool_calls"][0]["name"] == "search_wiki"
+
+        # 不应有 done 事件
+        done_events = [e for e in events if e["type"] == "done"]
+        assert len(done_events) == 0
+
+        # 不应持久化
+        assert not mock_save.called
+
+    @pytest.mark.asyncio
+    async def test_approval_required_when_no_approval_given(self, mocker):
+        """graph 已中断但请求未带 approval → 返回 error 事件"""
+        agent = mocker.MagicMock()
+
+        # get_state 直接返回 interrupt 状态
+        agent.get_state.return_value = self._make_interrupt_snapshot(mocker)
+
+        events = [e async for e in chat_stream_session(agent, "hi", "no-approval")]
+
+        error_events = [e for e in events if e["type"] == "error"]
+        assert len(error_events) == 1
+        assert "审批" in error_events[0]["message"]
+
+    @pytest.mark.asyncio
+    async def test_approve_resume(self, mocker):
+        """审批批准后恢复图执行，正常流式输出 → done"""
+        agent = mocker.MagicMock()
+
+        # get_state: call 1 = interrupt, call 2+ = 正常
+        call_idx = [0]
+
+        def mock_get_state(config):  # noqa: ARG001
+            i = call_idx[0]
+            call_idx[0] += 1
+            if i == 0:
+                return self._make_interrupt_snapshot(mocker)
+            s = _make_snapshot(mocker)
+            return s
+
+        agent.get_state = mock_get_state
+
+        # 捕获传给 astream_events 的 input
+        captured_input = []
+
+        async def event_generator(input_arg, config, **kwargs):
+            captured_input.append(input_arg)
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="审批批准后继续")},
+            }
+
+        agent.astream_events = event_generator
+
+        mock_save = mocker.patch("src.agent.persistence.save_thread")
+
+        approval = {"approved": True}
+        events = [e async for e in chat_stream_session(agent, "", "approve-test", approval=approval)]
+
+        # 验证输入是 Command(resume=approval)
+        from langgraph.types import Command
+
+        assert len(captured_input) == 1
+        assert isinstance(captured_input[0], Command)
+        assert captured_input[0].resume == approval
+
+        # 正常流式事件
+        token_events = [e for e in events if e["type"] == "token"]
+        assert len(token_events) >= 1
+
+        # done 事件
+        done_events = [e for e in events if e["type"] == "done"]
+        assert len(done_events) == 1
+
+        # 持久化
+        assert mock_save.called
+
+    @pytest.mark.asyncio
+    async def test_reject_resume(self, mocker):
+        """审批拒绝后恢复图执行，正常流式输出 → done"""
+        agent = mocker.MagicMock()
+
+        call_idx = [0]
+
+        def mock_get_state(config):  # noqa: ARG001
+            i = call_idx[0]
+            call_idx[0] += 1
+            if i == 0:
+                return self._make_interrupt_snapshot(mocker)
+            s = _make_snapshot(mocker)
+            return s
+
+        agent.get_state = mock_get_state
+
+        async def event_generator(input_arg, config, **kwargs):
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="工具被拒后回答")},
+            }
+
+        agent.astream_events = event_generator
+
+        mock_save = mocker.patch("src.agent.persistence.save_thread")
+
+        approval = {"approved": False}
+        events = [e async for e in chat_stream_session(agent, "", "reject-test", approval=approval)]
+
+        # 正常流式事件
+        assert any(e["type"] == "token" for e in events)
+
+        # done 事件
+        assert any(e["type"] == "done" for e in events)
+
+        # 持久化
+        assert mock_save.called
+
+    @pytest.mark.asyncio
+    async def test_no_interrupt_on_direct_answer(self, mocker):
+        """LLM 直接回答（无 tool_calls）时不会触发 interrupt"""
+        agent = mocker.MagicMock()
+
+        # get_state 正常
+        call_idx = [0]
+
+        def mock_get_state(config):  # noqa: ARG001
+            i = call_idx[0]
+            call_idx[0] += 1
+            s = _make_snapshot(mocker)
+            return s
+
+        agent.get_state = mock_get_state
+
+        async def event_generator(*args, **kwargs):
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="直接回答")},
+            }
+
+        agent.astream_events = event_generator
+
+        mocker.patch("src.agent.persistence.load_thread", return_value=None)
+        mock_save = mocker.patch("src.agent.persistence.save_thread")
+
+        events = [e async for e in chat_stream_session(agent, "你好", "direct-answer")]
+
+        # 无审批事件
+        assert all(e["type"] != "tool_approval_needed" for e in events)
+
+        # 有 done 事件
+        assert any(e["type"] == "done" for e in events)
+
+        # 持久化
+        assert mock_save.called
