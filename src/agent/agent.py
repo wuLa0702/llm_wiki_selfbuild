@@ -9,6 +9,7 @@ Agent 构建 + 流式对话接口
 接口固定，换 LLM Provider 或 LangGraph 版本时路由层和前端不改。
 """
 
+import json
 import logging
 import os
 import re
@@ -25,6 +26,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 
 from src.agent import constants as C
+from src.agent import persistence as P
 from src.agent.tools import read_page, search_wiki
 
 load_dotenv()
@@ -101,6 +103,11 @@ builder.add_node(C.NODE_TOOLS, tool_node)
 builder.set_entry_point(C.NODE_AGENT)
 builder.add_edge(C.NODE_TOOLS, C.NODE_AGENT)
 builder.add_conditional_edges(C.NODE_AGENT, should_continue)
+
+# ── 持久化 Checkpointer ───────────────────────────────────────────────────────
+# MemorySaver 在运行时管理图状态（内存中）。
+# 跨会话持久化由 persistence.py 的 SQLite 层在 chat_stream_session 中完成。
+P.migrate_memorysaver_to_sqlite()
 
 app = builder.compile(checkpointer=MemorySaver())
 
@@ -218,42 +225,107 @@ async def chat_stream(
 
 # ── 多轮会话隔离接口 ──────────────────────────────────────────────────────────
 
+def _serialize_messages(msgs: list[BaseMessage]) -> list[dict]:
+    """将 BaseMessage 列表序列化为 [{role, content}] 格式，用于持久化
+
+    LangChain 内部类型 → API 格式映射：
+      BaseMessage.type   → 序列化 role
+      "human"            → "user"
+      "ai"               → "assistant"
+      "system"           → "system"
+      其他               → 原样（跳过 tool 消息——前端不需要）
+    """
+    LC_TYPE_TO_API = {
+        "human": C.ROLE_USER,
+        "ai": C.ROLE_ASSISTANT,
+        "system": C.ROLE_SYSTEM,
+    }
+
+    result: list[dict] = []
+    for m in msgs:
+        lc_type = getattr(m, "type", "unknown")
+        content = getattr(m, "content", "")
+        api_role = LC_TYPE_TO_API.get(lc_type)
+        if api_role:
+            result.append({"role": api_role, "content": content})
+    return result
+
+
+def _deserialize_messages(data: list[dict]) -> list[BaseMessage]:
+    """将 [{role, content}] 列表反序列化为 BaseMessage 列表"""
+    result: list[BaseMessage] = []
+    for m in data:
+        role = m.get(C.FIELD_ROLE, "")
+        content = m.get(C.FIELD_CONTENT, "")
+        if role == C.ROLE_USER:
+            result.append(HumanMessage(content=content))
+        elif role == C.ROLE_ASSISTANT:
+            result.append(AIMessage(content=content))
+        elif role == C.ROLE_SYSTEM:
+            result.append(SystemMessage(content=content))
+    return result
+
+
 async def chat_stream_session(
     agent: CompiledStateGraph,
     content: str,
     thread_id: str,
 ) -> AsyncIterator[dict]:
-    """多轮会话隔离版流式接口——基于 LangGraph Checkpointer 管理对话历史
+    """多轮会话隔离版流式接口——MemorySaver 主存 + SQLite 持久化备份
 
-    原理：
-      - 每个 thread_id 有独立的状态空间，互不干扰
-      - 自动检测是否首轮：首轮注入 SYSTEM_PROMPT，后续轮次 Checkpointer 已有
-      - add_messages reducer 负责合并新消息到历史状态，而非覆盖
-      - 前端只需传本轮 content + 唯一 thread_id（如 UUID），无需拼接全量历史
+    跨会话记忆策略（MemorySaver 优先，SQLite 冷启动恢复）：
+      ┌─ 同会话续轮（MemorySaver 有状态）
+      │    仅传本轮用户消息，MemorySaver 通过 add_messages 自动合并
+      │
+      ├─ 冷启动恢复（服务器重启，MemorySaver 空，SQLite 有数据）
+      │    从 SQLite 加载历史 → 构造完整初始状态 → 传给 MemorySaver
+      │
+      └─ 首轮对话（MemorySaver 空，SQLite 无数据）
+           注入 SYSTEM_PROMPT + 本轮用户消息
+
+    优点：
+      - MemorySaver 处理运行时状态合并（不产生重复消息）
+      - SQLite 提供跨重启持久化
+      - 两者解耦，各自职责单一
 
     Args:
-        agent: build_agent() 返回的 CompiledStateGraph（必须含 Checkpointer）
+        agent: build_agent() 返回的 CompiledStateGraph
         content: 用户本轮输入文本
         thread_id: 会话 ID，由前端生成 UUID 并在后续请求中复用
 
     Yields:
-        与 chat_stream() 完全相同的事件格式
+        与 chat_stream() 相同的事件格式
     """
     config: dict = {C.CONFIG_CONFIGURABLE: {C.CONFIG_THREAD_ID: thread_id}}
 
-    # get_state() 若无持久化状态返回空状态，以此判断是否首轮
+    # ── Step 1: 查 MemorySaver（运行时状态） ─────────────────────────────
+    # get_state() 在 MemorySaver 中按 thread_id 查找已存状态
+    # 若有 → 同会话续轮，仅传本轮用户消息（避免 add_messages 重复合并）
     state_snapshot = agent.get_state(config)
     existing_messages = state_snapshot.values.get(C.STATE_MESSAGES, [])
-    is_first_turn = not existing_messages
 
-    input_messages: list[BaseMessage] = []
-    if is_first_turn:
-        logger.info(C.LOG_SESSION_FIRST_TURN, thread_id)
-        input_messages.append(SystemMessage(content=SYSTEM_PROMPT))
+    if existing_messages:
+        # 同会话续轮：MemorySaver 已有历史，仅传新输入
+        logger.info(C.LOG_SESSION_CONTINUE, thread_id, len(existing_messages))
+        input_messages: list[BaseMessage] = [HumanMessage(content=content)]
+
     else:
-        logger.debug(C.LOG_SESSION_CONTINUE, thread_id, len(existing_messages))
-    input_messages.append(HumanMessage(content=content))
+        # ── Step 2: MemorySaver 空 → 查 SQLite（冷启动恢复） ────────────
+        persisted = P.load_thread(thread_id)
+        if persisted is None:
+            # 首轮对话：注入 SYSTEM_PROMPT
+            logger.info(C.LOG_SESSION_FIRST_TURN, thread_id)
+            input_messages = [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content=content),
+            ]
+        else:
+            # 冷启动恢复：从 SQLite 加载历史
+            logger.info(C.LOG_SESSION_COLD_RECOVER, thread_id, len(persisted))
+            input_messages = _deserialize_messages(persisted)
+            input_messages.append(HumanMessage(content=content))
 
+    # ── Step 3: 流式处理（MemorySaver 运行时管理） ────────────────────────
     wiki_path_source: list[str] = []
 
     try:
@@ -292,5 +364,13 @@ async def chat_stream_session(
         logger.error(C.LOG_SESSION_FAILED, thread_id, e)
         yield {C.FIELD_TYPE: C.EVENT_ERROR, C.FIELD_MESSAGE: C.ERROR_AGENT_FAILED.format(e)}
         return
+
+    # ── Step 4: 流结束后，将最终状态持久化到 SQLite ──────────────────────
+    # 从 MemorySaver 取完整消息列表 → 序列化 → 写入 SQLite
+    state_snapshot = agent.get_state(config)
+    final_messages = state_snapshot.values.get(C.STATE_MESSAGES, [])
+    serialized = _serialize_messages(final_messages)
+    P.save_thread(thread_id, serialized)
+    logger.info("会话已持久化 | thread=%s messages=%d", thread_id, len(serialized))
 
     yield {C.FIELD_TYPE: C.EVENT_DONE, C.FIELD_SOURCES: list(dict.fromkeys(wiki_path_source))}

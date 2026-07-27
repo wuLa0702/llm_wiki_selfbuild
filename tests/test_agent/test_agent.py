@@ -11,6 +11,8 @@ import os
 
 import pytest
 
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
 from src.agent.agent import build_agent, chat_stream, chat_stream_session
 from src.agent.constants import MAX_MESSAGE_TURNS
 
@@ -314,18 +316,37 @@ class TestChatStream:
 
 
 class TestChatStreamSession:
-    """chat_stream_session 多轮会话隔离版测试"""
+    """chat_stream_session 多轮会话隔离版测试
+
+    Mock 策略（MemorySaver 优先，SQLite 冷启动恢复）：
+      - agent.get_state 返回空            → 检查 SQLite（需 mock P.load_thread）
+      - agent.get_state 返回有消息          → MemorySaver 有状态，不走 SQLite
+      - P.load_thread 返回 None             → 首轮
+      - P.load_thread 返回持久化数据          → 冷启动恢复
+    """
+
+    # ── Helper: mock 首轮场景 ───────────────────────────────────────────
+
+    def _mock_first_turn(self, mocker) -> tuple:
+        """Mock MemorySaver 空 + SQLite 无数据 → 首轮对话"""
+        agent = mocker.MagicMock()
+
+        # MemorySaver 空
+        snapshot = mocker.MagicMock()
+        snapshot.values = {"messages": []}
+        agent.get_state.return_value = snapshot
+
+        # SQLite 无数据（冷启动也查不到）
+        mocker.patch("src.agent.persistence.load_thread", return_value=None)
+
+        return agent
 
     @pytest.mark.asyncio
     async def test_session_first_turn_injects_system_prompt(self, mocker):
         """首轮自动注入 SYSTEM_PROMPT"""
         from src.agent.agent import SYSTEM_PROMPT
 
-        agent = mocker.MagicMock()
-
-        snapshot = mocker.MagicMock()
-        snapshot.values = {"messages": []}
-        agent.get_state.return_value = snapshot
+        agent = self._mock_first_turn(mocker)
 
         captured_inputs = []
 
@@ -351,7 +372,7 @@ class TestChatStreamSession:
 
     @pytest.mark.asyncio
     async def test_session_second_turn_no_system_prompt(self, mocker):
-        """续轮不再注入 SYSTEM_PROMPT"""
+        """续轮不再注入 SYSTEM_PROMPT（MemorySaver 已有状态）"""
         agent = mocker.MagicMock()
 
         snapshot = mocker.MagicMock()
@@ -382,11 +403,7 @@ class TestChatStreamSession:
     @pytest.mark.asyncio
     async def test_session_thread_id_in_config(self, mocker):
         """thread_id 传入了 astream_events 的 config"""
-        agent = mocker.MagicMock()
-
-        snapshot = mocker.MagicMock()
-        snapshot.values = {"messages": []}
-        agent.get_state.return_value = snapshot
+        agent = self._mock_first_turn(mocker)
 
         captured_config = []
 
@@ -407,11 +424,7 @@ class TestChatStreamSession:
     @pytest.mark.asyncio
     async def test_session_events_format(self, mocker):
         """事件格式与 chat_stream 一致"""
-        agent = mocker.MagicMock()
-
-        snapshot = mocker.MagicMock()
-        snapshot.values = {"messages": []}
-        agent.get_state.return_value = snapshot
+        agent = self._mock_first_turn(mocker)
 
         async def event_generator(inputs, config, **kwargs):
             yield {
@@ -445,11 +458,7 @@ class TestChatStreamSession:
     @pytest.mark.asyncio
     async def test_session_error_event(self, mocker):
         """异常转成 error 事件（模拟流中崩溃）"""
-        agent = mocker.MagicMock()
-
-        snapshot = mocker.MagicMock()
-        snapshot.values = {"messages": []}
-        agent.get_state.return_value = snapshot
+        agent = self._mock_first_turn(mocker)
 
         async def failing_generator(inputs, config, **kwargs):
             yield {
@@ -466,3 +475,97 @@ class TestChatStreamSession:
         error_events = [e for e in events if e["type"] == "error"]
         assert len(error_events) >= 1
         assert "崩溃" in error_events[0]["message"]
+
+    @pytest.mark.asyncio
+    async def test_session_cold_start_recovery(self, mocker):
+        """冷启动恢复：MemorySaver 空 + SQLite 有数据 → 从持久化加载历史"""
+        from src.agent.agent import SYSTEM_PROMPT
+
+        agent = mocker.MagicMock()
+
+        # MemorySaver 空（服务器重启）
+        snapshot = mocker.MagicMock()
+        snapshot.values = {"messages": []}
+        agent.get_state.return_value = snapshot
+
+        # SQLite 有持久化数据（历史消息）
+        persisted_data = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": "第一轮问题"},
+            {"role": "assistant", "content": "第一轮回答"},
+        ]
+        mocker.patch("src.agent.persistence.load_thread", return_value=persisted_data)
+
+        captured_inputs = []
+
+        async def event_generator(inputs, config, **kwargs):
+            captured_inputs.append((inputs, config))
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="第二轮回答")},
+            }
+
+        agent.astream_events = event_generator
+        events = [e async for e in chat_stream_session(agent, "第二轮问题", "cold-thread")]
+
+        # 验证从 SQLite 恢复的 3 条 + 新用户输入 = 4 条消息
+        assert len(captured_inputs) == 1
+        messages = captured_inputs[0][0]["messages"]
+        assert len(messages) == 4
+
+        # 恢复的历史
+        assert isinstance(messages[0], SystemMessage)
+        assert SYSTEM_PROMPT in messages[0].content
+        assert isinstance(messages[1], HumanMessage)
+        assert messages[1].content == "第一轮问题"
+        assert isinstance(messages[2], AIMessage)
+        assert messages[2].content == "第一轮回答"
+
+        # 新追加的本轮输入
+        assert isinstance(messages[3], HumanMessage)
+        assert messages[3].content == "第二轮问题"
+
+        assert len(events) >= 1
+
+    @pytest.mark.asyncio
+    async def test_session_persists_after_stream(self, mocker):
+        """流结束后将最终状态保存到 SQLite（save_thread 被调用）"""
+        agent = self._mock_first_turn(mocker)
+
+        async def event_generator(inputs, config, **kwargs):
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="回复")},
+            }
+
+        agent.astream_events = event_generator
+
+        # mock get_state（Step 4 中读 MemorySaver 最终状态）
+        final_snapshot = mocker.MagicMock()
+        final_snapshot.values = {
+            "messages": [
+                SystemMessage(content="prompt"),
+                HumanMessage(content="hi"),
+                AIMessage(content="回复"),
+            ]
+        }
+        agent.get_state.return_value = final_snapshot
+
+        # mock save_thread
+        mock_save = mocker.patch("src.agent.persistence.save_thread")
+
+        _ = [e async for e in chat_stream_session(agent, "hi", "persist-thread")]
+
+        # save_thread 被调用且传入了正确的 thread_id
+        assert mock_save.called
+        call_args = mock_save.call_args
+        assert call_args[0][0] == "persist-thread"
+        # 序列化后的消息列表中包含角色
+        serialized = call_args[0][1]
+        assert len(serialized) >= 2
+        assert serialized[0]["role"] == "system"
+        assert serialized[-1]["role"] == "assistant"

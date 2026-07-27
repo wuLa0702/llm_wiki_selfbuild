@@ -179,3 +179,178 @@ class TestChatRoute:
             assert len(error_events) >= 1
         finally:
             chat_module.chat_stream = original
+
+
+# ============================================================================
+# POST /v1/agent/chat/session
+# ============================================================================
+
+
+class TestChatSessionRoute:
+    """POST /v1/agent/chat/session 路由测试"""
+
+    @pytest.fixture(autouse=True)
+    def _mock_deps(self, mocker):
+        """Mock build_agent 避免真实 LLM"""
+        self._mock_agent_obj = mocker.MagicMock()
+        mocker.patch("src.api.routes.chat.build_agent", return_value=self._mock_agent_obj)
+
+    @pytest.fixture
+    def _patch_session(self, mocker):
+        """替换 chat_stream_session 为可控 async generator"""
+        import src.api.routes.chat as chat_module
+        original = chat_module.chat_stream_session
+
+        async def _null_stream(*args, **kwargs):
+            yield {"type": "done", "sources": []}
+            return
+
+        chat_module.chat_stream_session = _null_stream
+        yield
+        chat_module.chat_stream_session = original
+
+    @pytest.mark.asyncio
+    async def test_session_returns_sse_stream(self, _patch_session):
+        """正常请求返回 text/event-stream"""
+        import src.api.routes.chat as chat_module
+
+        original = chat_module.chat_stream_session
+
+        async def mock_stream(*args, **kwargs):
+            yield {"type": "token", "content": "你好"}
+            yield {"type": "done", "sources": []}
+
+        try:
+            chat_module.chat_stream_session = mock_stream
+
+            response = client.post(
+                "/v1/agent/chat/session",
+                json={"content": "你好", "thread_id": "test-thread"},
+            )
+            assert response.status_code == 200
+            assert "text/event-stream" in response.headers["content-type"]
+        finally:
+            chat_module.chat_stream_session = original
+
+    @pytest.mark.asyncio
+    async def test_session_events_fire(self):
+        """SSE 事件能被正确解析"""
+        import src.api.routes.chat as chat_module
+
+        original = chat_module.chat_stream_session
+
+        async def mock_stream(*args, **kwargs):
+            yield {"type": "token", "content": "流式"}
+            yield {"type": "done", "sources": []}
+
+        try:
+            chat_module.chat_stream_session = mock_stream
+
+            response = client.post(
+                "/v1/agent/chat/session",
+                json={"content": "test", "thread_id": "t1"},
+            )
+            assert response.status_code == 200
+
+            lines = response.text.strip().split("\n")
+            events = [json.loads(l[6:]) for l in lines if l.startswith("data: ")]
+            assert events[0]["type"] == "token"
+            assert events[0]["content"] == "流式"
+        finally:
+            chat_module.chat_stream_session = original
+
+    @pytest.mark.asyncio
+    async def test_session_stream_error(self):
+        """流中异常返回 error 事件"""
+        import src.api.routes.chat as chat_module
+
+        original = chat_module.chat_stream_session
+
+        async def mock_stream(*args, **kwargs):
+            yield {"type": "error", "message": "会话异常"}
+
+        try:
+            chat_module.chat_stream_session = mock_stream
+
+            response = client.post(
+                "/v1/agent/chat/session",
+                json={"content": "hi", "thread_id": "err-thread"},
+            )
+            assert response.status_code == 200
+
+            lines = response.text.strip().split("\n")
+            events = [json.loads(l[6:]) for l in lines if l.startswith("data: ")]
+            assert events[0]["type"] == "error"
+        finally:
+            chat_module.chat_stream_session = original
+
+    def test_session_missing_content(self):
+        """缺少 content 字段返回 422"""
+        response = client.post(
+            "/v1/agent/chat/session",
+            json={"thread_id": "xxx"},
+        )
+        assert response.status_code == 422
+
+    def test_session_missing_thread_id(self):
+        """缺少 thread_id 字段返回 422"""
+        response = client.post(
+            "/v1/agent/chat/session",
+            json={"content": "hi"},
+        )
+        assert response.status_code == 422
+
+
+# ============================================================================
+# GET /v1/agent/threads
+# ============================================================================
+
+
+class TestThreadsRoute:
+    """GET /v1/agent/threads 路由测试"""
+
+    @pytest.fixture(autouse=True)
+    def _mock_deps(self, mocker):
+        """Mock 持久化层和 build_agent"""
+        mocker.patch("src.api.routes.chat.build_agent", return_value=mocker.MagicMock())
+
+    def test_threads_empty(self, mocker):
+        """空数据库返回空列表"""
+        mocker.patch("src.api.routes.chat.P.list_threads", return_value=[])
+
+        response = client.get("/v1/agent/threads")
+        assert response.status_code == 200
+        assert response.json()["threads"] == []
+
+    def test_threads_with_data(self, mocker):
+        """有持久化数据时返回列表"""
+        mock_data = [
+            {"thread_id": "t1", "title": "对话1", "message_count": 5,
+             "created_at": 1000.0, "updated_at": 2000.0},
+            {"thread_id": "t2", "title": "对话2", "message_count": 3,
+             "created_at": 900.0, "updated_at": 1800.0},
+        ]
+        mocker.patch("src.api.routes.chat.P.list_threads", return_value=mock_data)
+
+        response = client.get("/v1/agent/threads")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["threads"]) == 2
+        assert data["threads"][0]["thread_id"] == "t1"
+        assert data["threads"][1]["thread_id"] == "t2"
+
+    def test_threads_with_limit_query(self, mocker):
+        """limit 查询参数被传递"""
+        mock_list = mocker.patch("src.api.routes.chat.P.list_threads", return_value=[])
+
+        response = client.get("/v1/agent/threads?limit=5")
+        assert response.status_code == 200
+        assert mock_list.call_args[1]["limit"] == 5
+
+    def test_threads_with_offset_query(self, mocker):
+        """offset 查询参数被传递"""
+        mock_list = mocker.patch("src.api.routes.chat.P.list_threads", return_value=[])
+
+        response = client.get("/v1/agent/threads?offset=10")
+        assert response.status_code == 200
+        assert mock_list.call_args[1]["offset"] == 10

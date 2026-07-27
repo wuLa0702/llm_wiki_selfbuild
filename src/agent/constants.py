@@ -30,6 +30,10 @@ LLM_MAX_RETRIES = 1
 # 硬窗口保护：超出此轮数的历史被丢弃，P2 用 ConversationSummaryMemory 替代
 MAX_MESSAGE_TURNS = 20
 
+# Agent Checkpointer 持久化数据库路径（MemorySaver 纯内存不持久）
+# 持久化由 persistence.py 的 SQLite 层负责
+PERSISTENCE_DB_PATH = "agent_persistence.db"
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LangGraph 图结构
@@ -152,6 +156,7 @@ LOG_STREAM_FAILED = "Agent 流式调用失败 | error=%s"
 LOG_SESSION_FAILED = "Agent 会话流式调用失败 | thread=%s error=%s"
 LOG_SESSION_FIRST_TURN = "会话首轮 | thread=%s 注入 SYSTEM_PROMPT"
 LOG_SESSION_CONTINUE = "会话续轮 | thread=%s 已有 %d 条历史消息"
+LOG_SESSION_COLD_RECOVER = "会话冷启动恢复 | thread=%s messages=%d"
 LOG_WINDOW_EXCEEDED = "消息超窗口 | total=%d keeping=%d"
 
 # Tools

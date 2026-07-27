@@ -27,12 +27,12 @@ interface SseDone { type: 'done'; sources: string[] }
 interface SseError { type: 'error'; message: string }
 type SseEvent = SseToken | SseToolStart | SseToolEnd | SseDone | SseError;
 
-/** 调用后端 Agent，通过 fetch + ReadableStream 读取 SSE */
-async function* agentChatStream(messages: { role: string; content: string }[]): AsyncGenerator<SseEvent> {
-  const res = await fetch('/v1/agent/chat', {
+/** 调用后端 Agent 会话版（/session 端点），通过 fetch + ReadableStream 读取 SSE */
+async function* agentChatStreamSession(content: string, threadId: string): AsyncGenerator<SseEvent> {
+  const res = await fetch('/v1/agent/chat/session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({ content, thread_id: threadId }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -108,16 +108,12 @@ export default function ChatPage() {
     ));
     setStreaming(true);
 
-    // 构造对话历史：当前 session 的所有消息 + 新用户消息
-    const active = sessions.find(s => s.id === sid);
-    const history = active
-      ? [...active.messages.map(m => ({ role: m.role, content: m.content })), { role: 'user', content: text }]
-      : [{ role: 'user', content: text }];
-
+    // 由后端 /session 端点管理历史（持久化 SQLite），
+    // 前端只需传本轮 text + session.id 作为 thread_id
     let accumulated = '';
 
     try {
-      for await (const event of agentChatStream(history)) {
+      for await (const event of agentChatStreamSession(text, sid)) {
         switch (event.type) {
           case 'token':
             accumulated += event.content;

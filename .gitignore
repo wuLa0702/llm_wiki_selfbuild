@@ -261,4 +261,8 @@ static/
 
 # LangGraph API/Studio cache (auto-generated)
 .langgraph_api/
+
+# Agent 持久化数据库（SQLite, 自动生成）
+agent_persistence.db*
+checkpoints.db*
 test_checkpoints.db*

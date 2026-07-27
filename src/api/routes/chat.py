@@ -2,16 +2,18 @@
 路由: Chat Agent — SSE 流式对话端点
 
 接口:
-  POST /v1/agent/chat       — 无状态版（前端管理全量消息）
-  POST /v1/agent/chat/session — 多轮会话隔离版（后端 Checkpointer 管理历史）
+  GET  /v1/agent/threads         — 列出所有持久化会话
+  POST /v1/agent/chat            — 无状态版（前端管理全量消息）
+  POST /v1/agent/chat/session    — 多轮会话隔离版（后端持久化管理历史）
 """
 import json
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from src.agent import persistence as P
 from src.agent.agent import build_agent, chat_stream, chat_stream_session
 
 logger = logging.getLogger("api.routes.chat")
@@ -42,6 +44,18 @@ class ChatSessionRequest(BaseModel):
         description="会话 ID，由前端生成 UUID 并在后续请求中复用",
         examples=["a1b2c3d4-e5f6-7890-abcd-ef1234567890"],
     )
+
+
+@router.get("/v1/agent/threads")
+async def list_threads(
+    limit: int = Query(20, description="最多返回条数"),
+    offset: int = Query(0, description="偏移量"),
+):
+    """列出所有持久化的会话
+
+    返回按最后更新时间倒序的会话列表，包含 thread_id / title / 消息数。
+    """
+    return {"threads": P.list_threads(limit=limit, offset=offset)}
 
 
 @router.post("/v1/agent/chat/session")
