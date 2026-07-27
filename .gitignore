@@ -266,3 +266,6 @@ static/
 agent_persistence.db*
 checkpoints.db*
 test_checkpoints.db*
+
+# Temp debug files
+.claude/tmp_*
