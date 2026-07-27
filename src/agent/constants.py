@@ -30,6 +30,11 @@ LLM_MAX_RETRIES = 1
 # 硬窗口保护：超出此轮数的历史被丢弃，P2 用 ConversationSummaryMemory 替代
 MAX_MESSAGE_TURNS = 20
 
+# 对话摘要压缩：当非 SystemMessage 数量超过此值时触发 summarizer 节点
+SUMMARIZE_THRESHOLD = 40
+# 摘要后保留的最新对话轮数（1 轮 = user + assistant 共 2 条消息）
+SUMMARIZE_KEEP_LATEST_TURNS = 10
+
 # Agent Checkpointer 持久化数据库路径（MemorySaver 纯内存不持久）
 # 持久化由 persistence.py 的 SQLite 层负责
 PERSISTENCE_DB_PATH = "agent_persistence.db"
@@ -43,6 +48,7 @@ PERSISTENCE_DB_PATH = "agent_persistence.db"
 NODE_AGENT = "agent"
 NODE_TOOLS = "tools"
 NODE_APPROVE = "approve"
+NODE_SUMMARIZER = "summarizer"
 
 # 状态键
 STATE_MESSAGES = "messages"
@@ -86,6 +92,43 @@ FIELD_RUN_ID = "run_id"
 
 # 工具输出截断长度
 TOOL_OUTPUT_DISPLAY_CHARS = 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 对话摘要压缩
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 摘要消息前缀（SystemMessage.content 以此开头标记为摘要）
+SUMMARIZE_PREFIX = "[对话摘要] "
+
+# 摘要 LLM 系统提示
+SUMMARIZE_SYSTEM_PROMPT = """你是对话摘要助手。将以下一段对话历史压缩为一段精炼的中文摘要。
+
+规则：
+1. 保留用户询问的核心问题和意图
+2. 保留助手回答中的关键知识点、已查询的 Wiki 页面等信息
+3. 按时间顺序组织，保持逻辑连贯
+4. 如果已存在摘要，将其与新增对话合并生成新的完整摘要
+5. 摘要 300 字以内，只输出摘要内容，不要加引导语"""
+
+# 摘要事件类型（SSE 通知前端摘要已执行）
+EVENT_SUMMARIZE = "summarize"
+
+# 摘要字段名
+FIELD_SUMMARY = "summary"
+FIELD_KEY_TOPICS = "key_topics"
+FIELD_COMPRESSED_COUNT = "compressed_count"
+FIELD_REMAINING_COUNT = "remaining_count"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 结构化输出
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Agent 响应结构化字段
+FIELD_ANSWER = "answer"
+FIELD_CITED_PAGES = "cited_pages"
+FIELD_FOLLOW_UP_QUESTIONS = "follow_up_questions"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -139,6 +182,7 @@ WIKI_PATH_REGEX = r'`([^`]+\.md)`'
 
 ERROR_AGENT_FAILED = "Agent 调用失败: {}"
 ERROR_APPROVAL_REQUIRED = "图已暂停等待审批，但请求未包含审批决策"
+ERROR_APPROVAL_FORMAT = "审批决策格式错误，需要 dict"
 ERROR_EMPTY_MESSAGES = "消息列表为空"
 ERROR_SEARCH_FAILED = "搜索失败：{}"
 ERROR_PATH_UNAUTHORIZED = "路径越权：{}"
@@ -149,6 +193,7 @@ ERROR_NO_ENTITIES = "未找到相关实体。知识库共有 {} 个页面。"
 ERROR_NO_ENTITIES_WITH_COMMUNITIES = (
     "未找到与问题直接相关的实体。知识库共有 {} 个页面。\n\n社区分布：\n{}"
 )
+ERROR_SUMMARIZE_FAILED = "对话摘要压缩失败: {}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -165,6 +210,12 @@ LOG_SESSION_COLD_RECOVER = "会话冷启动恢复 | thread=%s messages=%d"
 LOG_WINDOW_EXCEEDED = "消息超窗口 | total=%d keeping=%d"
 LOG_APPROVAL_NEEDED = "工具调用等待审批 | thread=%s tools=%s"
 LOG_APPROVAL_RESUMED = "工具调用审批结果 | thread=%s decision=%s"
+
+# Summarizer
+LOG_SUMMARIZE_SKIP = "摘要压缩跳过 | 消息数=%d 低于阈值=%d"
+LOG_SUMMARIZE_START = "摘要压缩开始 | 压缩前 messages=%d (system=%d + conversation=%d)"
+LOG_SUMMARIZE_DONE = "摘要压缩完成 | 压缩了 %d 条旧消息, 保留最新 %d 轮, 压缩后 messages=%d"
+LOG_SUMMARIZE_FAILED = "摘要压缩失败 | error=%s"
 
 # Tools
 LOG_TOOL_SEARCH = "tool:search_wiki | query=%s"

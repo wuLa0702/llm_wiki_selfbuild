@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated, Literal, TypedDict
 
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -25,9 +25,11 @@ from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Command, interrupt
+from pydantic import BaseModel, Field
 
 from src.agent import constants as C
 from src.agent import persistence as P
+from src.agent.summarizer import condense_history
 from src.agent.tools import read_page, search_wiki
 
 load_dotenv()
@@ -65,6 +67,20 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 
+# ── 结构化输出模型 ────────────────────────────────────────────────────────────
+
+
+class AgentResponse(BaseModel):
+    """Agent 最终回答的结构化输出
+
+    当 LLM 不调用工具、直接回答时，
+    用 with_structured_output 提取引用页面和追问建议。
+    """
+    answer: str = Field(description="Agent 的回答正文")
+    cited_pages: list[str] = Field(description="回答中引用的 Wiki 页面路径列表", default=[])
+    follow_up_questions: list[str] = Field(description="基于当前回答建议的追问话题", default=[])
+
+
 # ── LLM 初始化 ────────────────────────────────────────────────────────────────
 
 llm = ChatOpenAI(
@@ -88,12 +104,17 @@ def call_model(state: AgentState) -> dict:
 tool_node = ToolNode(P1_TOOLS)
 
 
-def should_continue(state: AgentState) -> Literal["approve", "__end__"]:
-    """判断 LLM 输出是否需要执行工具——图分支路由函数"""
+def should_continue(state: AgentState) -> Literal["approve", "summarizer"]:
+    """判断 LLM 输出是否需要执行工具——图分支路由函数
+
+    路由规则：
+      - 有 tool_calls → approve 节点（人工审批）
+      - 无 tool_calls → summarizer 节点（压缩后结束）
+    """
     last_msg = state[C.STATE_MESSAGES][-1]
     if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
         return C.NODE_APPROVE
-    return "__end__"
+    return C.NODE_SUMMARIZER
 
 
 def human_approval_node(state: AgentState) -> dict:
@@ -145,14 +166,73 @@ def should_after_approval(state: AgentState) -> Literal["tools", "agent"]:
     return C.NODE_AGENT  # 拒绝 → 返回 agent 让 LLM 处理拒绝结果
 
 
+def summarizer_node(state: AgentState) -> dict:
+    """对话摘要压缩节点
+
+    在 agent 返回回答（无 tool_calls）后执行。
+    当对话历史超过 SUMMARIZE_THRESHOLD 时，将早期对话压缩为 LLM 生成的摘要，
+    用 RemoveMessage 移除旧消息并用一条 SystemMessage 摘要取代。
+    低于阈值时无操作，直接返回空 dict。
+
+    Returns:
+        {"messages": [RemoveMessage(id=...), SystemMessage(摘要)]} 或 {}
+    """
+    remove_ops, summary_msg = condense_history(state[C.STATE_MESSAGES], llm)
+    if not remove_ops:
+        return {}  # 无需压缩
+
+    # add_messages 处理: RemoveMessage 移除旧消息 → 新摘要 SystemMessage 加入
+    return {C.STATE_MESSAGES: remove_ops + [summary_msg]}
+
+
+# ── 结构化 LLM 实例 ──────────────────────────────────────────────────────────
+# 专用于结构化输出（with_structured_output），与工具绑定的 llm_with_tools 分开
+
+STRUCTURED_EXTRACTION_SYSTEM_PROMPT = (
+    "从以下 Agent 回答中提取：\n"
+    "1. 引用的 Wiki 页面路径（格式如 entities/python.md）\n"
+    "2. 建议的追问问题\n\n"
+    "如果回答中没有引用任何页面，cited_pages 返回空列表。"
+    "如果没有明显的追问方向，follow_up_questions 返回空列表。"
+)
+
+
+def format_response(content: str) -> AgentResponse:
+    """对 Agent 的文本回答做结构化提取
+
+    在 agent 回答后用 with_structured_output 提取 cited_pages 和 follow_up_questions。
+    提取失败时降级为仅保留 answer 文本。
+
+    Args:
+        content: Agent 的 AIMessage.content
+
+    Returns:
+        AgentResponse(answer, cited_pages, follow_up_questions)
+    """
+    from langchain_core.messages import HumanMessage, SystemMessage as SysMsg
+
+    try:
+        structured_llm = llm.with_structured_output(AgentResponse)
+        result = structured_llm.invoke([
+            SysMsg(content=STRUCTURED_EXTRACTION_SYSTEM_PROMPT),
+            HumanMessage(content=content),
+        ])
+        return result
+    except Exception as e:
+        logger.warning("Agent 响应结构化提取失败 | error=%s", e)
+        return AgentResponse(answer=content, cited_pages=[], follow_up_questions=[])
+
+
 # ── 图构建 ────────────────────────────────────────────────────────────────────
 
 builder = StateGraph(AgentState)
 builder.add_node(C.NODE_AGENT, call_model)
 builder.add_node(C.NODE_APPROVE, human_approval_node)
 builder.add_node(C.NODE_TOOLS, tool_node)
+builder.add_node(C.NODE_SUMMARIZER, summarizer_node)
 builder.set_entry_point(C.NODE_AGENT)
 builder.add_edge(C.NODE_TOOLS, C.NODE_AGENT)
+builder.add_edge(C.NODE_SUMMARIZER, END)
 builder.add_conditional_edges(C.NODE_AGENT, should_continue)
 builder.add_conditional_edges(C.NODE_APPROVE, should_after_approval)
 
@@ -363,6 +443,12 @@ async def chat_stream_session(
             yield {C.FIELD_TYPE: C.EVENT_ERROR, C.FIELD_MESSAGE: C.ERROR_APPROVAL_REQUIRED}
             return
 
+        # 校验 approval 格式（必须是 dict）
+        if not isinstance(approval, dict):
+            logger.error("审批决策格式错误 | thread=%s type=%s", thread_id, type(approval).__name__)
+            yield {C.FIELD_TYPE: C.EVENT_ERROR, C.FIELD_MESSAGE: C.ERROR_APPROVAL_FORMAT}
+            return
+
         # 用 Command(resume=approval) 恢复图执行
         logger.info(C.LOG_APPROVAL_RESUMED, thread_id, "approved" if approval.get(C.FIELD_APPROVAL) else "rejected")
         stream_input = Command(resume=approval)
@@ -443,11 +529,25 @@ async def chat_stream_session(
         }
         return  # 不持久化，不 yield done
 
-    # ── Step 5: 流正常结束 → 持久化到 SQLite ───────────────────────────────
+    # ── Step 5: 结构化提取最终回答 ───────────────────────────────────────────
+    structured: AgentResponse | None = None
     final_state = agent.get_state(config)
     final_messages = final_state.values.get(C.STATE_MESSAGES, [])
+    for m in reversed(final_messages):
+        if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
+            structured = format_response(str(m.content))
+            break
+
+    # ── Step 6: 持久化到 SQLite ─────────────────────────────────────────────
     serialized = _serialize_messages(final_messages)
     P.save_thread(thread_id, serialized)
     logger.info("会话已持久化 | thread=%s messages=%d", thread_id, len(serialized))
 
-    yield {C.FIELD_TYPE: C.EVENT_DONE, C.FIELD_SOURCES: list(dict.fromkeys(wiki_path_source))}
+    done_event: dict = {
+        C.FIELD_TYPE: C.EVENT_DONE,
+        C.FIELD_SOURCES: list(dict.fromkeys(wiki_path_source)),
+    }
+    if structured:
+        done_event[C.FIELD_CITED_PAGES] = structured.cited_pages
+        done_event[C.FIELD_FOLLOW_UP_QUESTIONS] = structured.follow_up_questions
+    yield done_event
