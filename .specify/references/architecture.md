@@ -70,28 +70,70 @@ llm-wiki/
 
 ## 4. 三层架构
 
-```
-┌─────────────────────────────────────┐
-│  Wiki 层 — LLM 维护的结构化知识     │
-│  entities/ concepts/ summaries/     │
-├─────────────────────────────────────┤
-│  Raw 层 — 原始资料（人类维护，只读）│
-├─────────────────────────────────────┤
-│  Schema 层 — 行为契约（AGENTS.md）  │
-└─────────────────────────────────────┘
+```mermaid
+graph BT
+    subgraph SC["Schema 层 — 行为契约"]
+        direction LR
+        purpose["purpose.md 项目目标与核心问题"]
+        agents["AGENTS.md AI 行为规则"]
+    end
+    subgraph RAW["Raw 层 — 原始资料（人类维护，只读）"]
+        raw_sources["raw/sources/ 原始素材"]
+    end
+    subgraph WIKI["Wiki 层 — LLM 维护的结构化知识"]
+        direction LR
+        entities["entities/ 实体页"]
+        concepts["concepts/ 概念页"]
+        sum["sources/ 源文档摘要"]
+    end
+
+    SC -.->|定义行为边界| RAW
+    RAW -->|LLM 编译| WIKI
 ```
 
 ### 三大操作
 
-| 操作 | 说明 |
-|------|------|
-| **Ingest** | 用户丢入 raw/ → LLM 提取实体/概念 → 生成 Wiki 页面 + 双向链接 |
-| **Query** | 用户提问 → 搜索 Wiki → 组装上下文 → 带引用回答 → 归档 |
-| **Lint** | 检查断链、孤儿页、过时内容 → 输出健康报告 |
+```mermaid
+flowchart LR
+    subgraph INGEST["🔄 Ingest"]
+        direction LR
+        I1["用户丢入 raw/"] --> I2["LLM 提取实体/概念"] --> I3["生成 Wiki 页面"] --> I4["建立双向链接"]
+    end
+    subgraph QUERY["🔍 Query"]
+        direction LR
+        Q1["用户提问"] --> Q2["搜索 Wiki"] --> Q3["组装上下文"] --> Q4["带引用回答"] --> Q5["归档到 queries/"]
+    end
+    subgraph LINT["✅ Lint"]
+        direction LR
+        L1["扫描 Wiki 页面"] --> L2["检查断链/孤儿页"] --> L3["输出健康报告"]
+    end
+```
 
 ---
 
 ## 5. 演进路线
+
+```mermaid
+gantt
+    title LLM Wiki 演进路线
+    dateFormat  YYYY-MM
+    axisFormat  %m月
+
+    section Phase 1 🏗️ MVP
+    纯 API, Ingest 跑通           :p1, 2026-06, 2026-07
+    Markdown + SQLite 元数据       :2026-06, 2026-07
+    POST /ingest + GET /query     :2026-07, 30d
+
+    section Phase 2 🔧 单 Agent
+    Query + Lint 完善              :p2, after p1, 2026-08
+    purpose.md + 增量缓存          :2026-08, 30d
+    两步 CoT Ingest                :2026-08, 30d
+
+    section Phase 3 🚀 多 Agent
+    Reader→Extractor→Writer→Reviewer :p3, after p2, 2026-09
+    Chroma 向量语义搜索             :2026-09, 30d
+    质量闭环 + 反馈回路             :2026-09, 30d
+```
 
 ### Phase 1：跑起来（MVP）
 - 纯 API，一个文件 Ingest 跑通

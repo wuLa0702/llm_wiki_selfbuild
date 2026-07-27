@@ -8,15 +8,14 @@
 
 ## 一、战略路线
 
-```
-实验入口 sandbox/agent/  ──→  学习 LangChain Agent 体系
-        │
-        │  成熟后迁移
-        ▼
-src/agent/ + src/tools/  ──→  替换现有 /v1/query
-        │                    增强 WikiCompiler.ingest()
-        ▼
-主线项目获得 Agent 能力
+```mermaid
+flowchart LR
+    A["🧪 实验入口 sandbox/agent/"] -->|学习 LangChain Agent 体系| B["学习阶段"]
+    B -->|成熟后迁移| C["🔧 src/agent/ + src/tools/"]
+    C --> D["替换现有 /v1/query"]
+    C --> E["增强 WikiCompiler.ingest()"]
+    D --> F["✅ 主线项目获得 Agent 能力"]
+    E --> F
 ```
 
 ### 实验与集成的边界
@@ -215,25 +214,19 @@ app.include_router(agent_router)
 
 **Agentic Ingest 流程**：
 
-```
-用户给一个 URL 或文件路径
-    │
-    ▼
-Agent 读取源文件
-    │
-    ▼
-Agent 判断：需要补充哪些外部知识？
-    ├── 已有足够上下文 → 生成 Wiki 页面
-    └── 知识不足 → 搜索网页补充 → 再生成
-    │
-    ▼
-Agent 决定页面结构 + 链接关系
-    │
-    ▼
-Agent 写入 wiki/（WriteTool 带确认钩子）
-    │
-    ▼
-Agent 更新 index/overview/log
+```mermaid
+flowchart TD
+    A["用户给一个 URL 或文件路径"] --> B["Agent 读取源文件"]
+    B --> C{"Agent 判断：需要补充哪些外部知识？"}
+    C -->|已有足够上下文| D["生成 Wiki 页面"]
+    C -->|知识不足| E["搜索网页补充"]
+    E --> D
+    D --> F["Agent 决定页面结构 + 链接关系"]
+    F --> G["Agent 写入 wiki/（WriteTool 带确认钩子）"]
+    G --> H["Agent 更新 index / overview / log"]
+    
+    style G fill:#fff3cd,stroke:#ffc107,color:#000
+    style C fill:#e8f5e9,stroke:#4caf50,color:#000
 ```
 
 **安全护栏**：
@@ -267,11 +260,28 @@ LangChain Agent 快速入门
 
 建议的学习节奏：
 
-```
-Day 1-2:   通读 LangChain Agent 概念文档 → 跑 Phase 1 脚本
-Day 3-4:   学 Memory 文档 → 跑 Phase 2 脚本
-Day 5-8:   学 Custom Tool 文档 → 跑 Phase 3 脚本 → 集成回 API
-Day 9-12:  学 Plan-and-Execute → 跑 Phase 4 脚本
+```mermaid
+gantt
+    title LangChain Agent 学习路线
+    dateFormat  D
+    axisFormat  第%D天
+
+    section Phase 1 🧪 基础 Agent
+    通读 Agent 概念文档     :p1, 0, 2d
+    跑 Phase 1 实验脚本     :1, 2d
+
+    section Phase 2 💾 对话记忆
+    学 Memory 文档          :p2, after p1, 2d
+    跑 Phase 2 实验脚本     :2, 2d
+
+    section Phase 3 🔧 Wiki 集成
+    学 Custom Tool 文档     :p3, after p2, 2d
+    跑 Phase 3 脚本         :3, 2d
+    集成回 API              :4, 2d
+
+    section Phase 4 🤖 Agentic Ingest
+    学 Plan-and-Execute     :p4, after p3, 2d
+    跑 Phase 4 脚本         :5, 2d
 ```
 
 ---

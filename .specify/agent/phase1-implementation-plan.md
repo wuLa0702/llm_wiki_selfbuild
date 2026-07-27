@@ -53,9 +53,16 @@ mkdir -p sandbox/agent/phase1_basic_agent
 
 ## 学习路线
 
-```
-Phase 1: 基础 Agent  ──→  Phase 2: 对话记忆  ──→  Phase 3: Wiki 集成  ──→  Phase 4: Agentic Ingest
-(当前)                   (下一个)                  (未来)                  (未来)
+```mermaid
+flowchart LR
+    P1["Phase 1: 基础 Agent 🧪"] -->|当前| P2["Phase 2: 对话记忆 💾"]
+    P2 -->|下一个| P3["Phase 3: Wiki 集成 🔧"]
+    P3 -->|未来| P4["Phase 4: Agentic Ingest 🤖"]
+    
+    style P1 fill:#e3f2fd,stroke:#1976d2,color:#000
+    style P2 fill:#e8f5e9,stroke:#388e3c,color:#000
+    style P3 fill:#fff3e0,stroke:#f57c00,color:#000
+    style P4 fill:#fce4ec,stroke:#d32f2f,color:#000
 ```
 
 ## Phase 1: 基础 Agent

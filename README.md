@@ -6,9 +6,18 @@
 
 **不是 RAG** — RAG 每次都重新检索推理，LLM Wiki 一次编译多次查询，知识越用越厚。
 
-```
-传统 RAG：文档 → 分块 → Embedding → 向量数据库 → 每次都重新检索
-LLM Wiki：文档 → LLM 一次性编译 → 结构化 Wiki → 知识累积、越用越厚
+```mermaid
+flowchart LR
+    subgraph RAG["传统 RAG"]
+        direction TB
+        r1["文档 → 分块 → Embedding"]
+        r2["→ 向量数据库 → 每次都重新检索"]
+    end
+    subgraph LLMW["LLM Wiki"]
+        direction TB
+        l1["文档 → LLM 一次性编译"]
+        l2["→ 结构化 Wiki → 知识累积、越用越厚"]
+    end
 ```
 
 ## 项目状态
@@ -36,6 +45,22 @@ uvicorn src.main:app --reload
 - SQLite
 
 ## 演进路线
+
+```mermaid
+gantt
+    title 项目演进
+    dateFormat  YYYY-MM
+    axisFormat  YYYY-MM
+
+    section Phase 1 🏗️ MVP
+    纯 API, Ingest 跑通         :p1, 2026-06, 2026-07
+
+    section Phase 2 🔧 单 Agent
+    Query + Lint 完整闭环       :p2, after p1, 2026-08
+
+    section Phase 3 🚀 多 Agent
+    分工协作 + 向量搜索         :p3, after p2, 2026-09
+```
 
 | Phase | 阶段 | 目标 |
 |-------|------|------|
