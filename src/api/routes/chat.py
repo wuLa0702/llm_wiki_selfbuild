@@ -13,8 +13,8 @@ from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from src.agent import persistence as P
-from src.agent.agent import build_agent, chat_stream, chat_stream_session
+from src.agent import build_agent, chat_stream, chat_stream_session
+from src.agent.memory import store as P
 
 logger = logging.getLogger("api.routes.chat")
 router = APIRouter(tags=["agent"])

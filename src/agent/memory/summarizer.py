@@ -12,8 +12,8 @@
   summarizer 节点在 call_model 之后、图结束之前运行。
   当非 SystemMessage 数量超过 SUMMARIZE_THRESHOLD 时触发。
 
-使用:
-  from src.agent.summarizer import condense_history
+使用方法:
+  from src.agent.memory.summarizer import condense_history
   compressed = condense_history(state["messages"], llm)
 """
 
@@ -43,6 +43,7 @@ class SummaryResult(BaseModel):
     """
     summary: str = Field(description="对话摘要，300字以内，保留核心问题和知识点")
     key_topics: list[str] = Field(description="涉及的核心话题列表", default=[])
+
 
 logger = logging.getLogger("agent.summarizer")
 
@@ -158,6 +159,7 @@ def _extract_existing_summary(messages: list[BaseMessage]) -> tuple[str | None, 
 def condense_history(
     messages: list[BaseMessage],
     llm: "BaseChatModel",
+    sink_context: str = "",
 ) -> tuple[list["RemoveMessage"], "SystemMessage | None"]:
     """将早期对话历史压缩为摘要
 
@@ -167,11 +169,11 @@ def condense_history(
       3. 调用 LLM 生成新摘要
       4. 返回 RemoveMessage 列表（移除旧消息）和新摘要 SystemMessage
 
-    当无需压缩时返回 (空列表, None)。
-
     Args:
         messages: 当前状态的全部消息
         llm: LLM 实例（不绑定工具的 plain 实例）
+        sink_context: Attention Sink 提取的关键信息文本，注入摘要 prompt
+          让 LLM 在生成摘要时保留这些被锚定的内容
 
     Returns:
         (remove_ops, summary_msg)
@@ -209,9 +211,12 @@ def condense_history(
     # 5. 过滤掉 ToolMessage（内部细节，不需要编入摘要）
     compress_text = [m for m in to_compress if getattr(m, "type", "") != "tool"]
 
-    # 6. 调用 LLM 生成摘要（结构化输出）
+    # 6. 调用 LLM 生成摘要（结构化输出），注入 sink_context
     try:
         formatted = _format_conversation(compress_text, existing_summary)
+        # 如果有 sink context，追加到格式化文本末尾
+        if sink_context:
+            formatted += f"\n\n[已锚定的关键信息（需在摘要中保留）]\n{sink_context}"
         result = _call_summarize_llm(formatted, llm)
         summary_text = result.summary
         summary_topics = result.key_topics

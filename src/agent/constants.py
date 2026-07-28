@@ -22,6 +22,20 @@ DEFAULT_API_BASE = "https://api.deepseek.com/v1"
 LLM_TIMEOUT = 15
 LLM_MAX_RETRIES = 1
 
+# Summarizer LLM 配置（单独的小模型实例）
+ENV_SUMMARIZER_MODEL = "SUMMARIZER_MODEL"
+ENV_SUMMARIZER_API_KEY = "SUMMARIZER_API_KEY"
+ENV_SUMMARIZER_API_BASE = "SUMMARIZER_API_BASE"
+ENV_SUMMARIZER_TIMEOUT = "SUMMARIZER_TIMEOUT"
+ENV_SUMMARIZER_MAX_RETRIES = "SUMMARIZER_MAX_RETRIES"
+
+# 固定 DeepSeek v4 Flash 作为摘要压缩专用模型
+DEFAULT_SUMMARIZER_MODEL = "deepseek-v4-flash"
+# 未单独配置时，复用主 LLM 的 API Key 和 Base URL
+# timeout 略高于主模型（摘要需处理更多文本）
+DEFAULT_SUMMARIZER_TIMEOUT = 30
+DEFAULT_SUMMARIZER_MAX_RETRIES = 2
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 对话窗口
@@ -141,7 +155,131 @@ KIND_TOOL_END = "on_tool_end"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 工作记忆（Working Memory）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 状态键
+STATE_WORKING_MEMORY = "working_memory"
+
+# 工作记忆槽位名
+WM_SLOT_USER_IDENTITY = "user_identity"
+WM_SLOT_CURRENT_GOAL = "current_goal"
+WM_SLOT_KEY_FACTS = "key_facts"
+WM_SLOT_TOOL_CACHE = "tool_cache"
+WM_SLOT_ENTITIES = "entities_mentioned"
+
+# 槽优先级（内置槽位隐式优先级: goal=3, identity=3, facts=2, entities=1, cache=1）
+WM_SLOT_CRITICAL = {WM_SLOT_CURRENT_GOAL, WM_SLOT_USER_IDENTITY}  # 永不降级
+WM_SLOT_HIGH = {WM_SLOT_KEY_FACTS}
+WM_SLOT_MEDIUM = {WM_SLOT_ENTITIES}
+WM_SLOT_LOW = {WM_SLOT_TOOL_CACHE}
+
+# 槽大小上限
+WM_MAX_FACTS = 20
+WM_MAX_ENTITIES = 50
+WM_MAX_TOOL_CACHE_ENTRIES = 5
+
+# 图节点
+NODE_EXTRACT_WM = "extract_wm"
+NODE_WM_EVICTION = "wm_eviction"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 索引表
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 实体索引：消息中出现 ≥ N 次的词/短语自动纳入索引
+THREAD_ENTITY_MIN_FREQ = 2
+
+# 搜索默认值
+SEARCH_CONVERSATIONS_LIMIT = 20
+GLOBAL_ENTITIES_LIMIT = 50
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Attention Sink（关键信息锚定）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# AgentState 中 attention_sinks 字段名
+STATE_ATTENTION_SINKS = "attention_sinks"
+
+# 检测模式：用户消息中含以下关键词时触发自动锚定
+SINK_PATTERNS = (
+    # 显式记忆指令
+    "记住", "请记住", "别忘记", "不要忘记", "牢记",
+    # 自我介绍
+    "我叫", "我的名字", "我是", "我是一名",
+    # 偏好和习惯
+    "我喜欢", "我不喜欢", "我习惯", "我想要", "我希望",
+    # 重要上下文
+    "重要的是", "关键是", "请注意", "注意", "务必",
+    "我的项目", "我目前", "我正在",
+    # 事实性信息
+    "我的邮箱", "我的电话", "我住在", "我的公司",
+    "我的团队", "我负责",
+)
+
+# Attention Sink 常量
+ATTENTION_SINK_MAX = 15                # 最多保留多少个锚定
+ATTENTION_SINK_MIN_CONFIDENCE = 0.3    # 置信度低于此值自动清理
+SINK_CONFIDENCE_NEW = 0.8              # 新检测到的锚定初始置信度
+SINK_CONFIDENCE_REINFORCE = 0.9        # 被再次提及时重置的置信度
+SINK_DECAY_PER_TURN = 0.05             # 每轮衰减量
+SINK_REINFORCE_TURNS = 5               # 多少轮未强化则开始衰减
+SINK_PATTERN_MIN_LENGTH = 2            # 模式匹配后内容至少2个字
+FREQUENCY_SINK_THRESHOLD = 3           # 实体出现≥N次自动锚定
+SINK_CONTENT_MAX_CHARS = 200           # 单条锚定内容最大长度
+
+# 置信度持续低于阈值的轮数上限，超出则移出
+SINK_MAX_IDLE_TURNS = 20
+
+# 锚定信息注入 LLM 的 SystemMessage 模板
+SINK_SYSTEM_PROMPT = """以下是对话中用户明确要求记住或反复提及的重要信息（每条包含置信度）：
+
+{sink_lines}
+
+请在日常回答中参考这些信息。如果问题与这些信息无关，忽略即可。"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 记忆降级归档 — Memory Degradation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 默认归档天数：会话最后更新超过此天数后进入"已归档"状态
+ARCHIVE_DAYS = 30
+
+# 归档后消息的前缀标记（与 SUMMARIZE_PREFIX 区分，表示完整对话归档）
+ARCHIVE_PREFIX = "[归档摘要] "
+
+# 恢复归档会话时的提示 SystemMessage 模板
+ARCHIVE_RESTORE_NOTICE = (
+    "注意：以下对话是从归档状态恢复的。"
+    "之前的内容已被压缩为摘要，你可能需要重新提供更具体的上下文。\n\n"
+    "【对话摘要】\n{summary}\n\n"
+    "请继续提问，我会在已有上下文的基础上回答。"
+)
+
+# 日志模板
+LOG_ARCHIVE_START = "会话归档检查 | thread=%s 已闲置 %.1f 天"
+LOG_ARCHIVE_DONE = "会话归档完成 | thread=%s 压缩前=%d 条 → 摘要后=%d 条"
+LOG_ARCHIVE_SKIP = "会话归档跳过 | thread=%s 原因=%s"
+LOG_ARCHIVE_ERROR = "会话归档失败 | thread=%s error=%s"
+
+# 归档系统提示（复用对话摘要的 prompt 结构，但说明是完整对话归档）
+ARCHIVE_SYSTEM_PROMPT = """你是对话归档助手。将以下一段完整对话压缩为一段精炼的中文摘要。
+
+规则：
+1. 保留用户询问的核心问题、意图和已解决的问题
+2. 保留助手回答中的关键知识点和结论
+3. 保留对话中出现的 Wiki 页面引用、工具调用结果等上下文
+4. 按时间顺序组织，保持逻辑连贯
+5. 摘要 300 字以内，只输出摘要内容，不要加引导语
+6. 这是归档摘要，将永久替代原始对话——请确保不遗漏重要信息"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Agent 消息角色
+# ═══════════════════════════════════════════════════════════════════════════════
 # ═══════════════════════════════════════════════════════════════════════════════
 
 ROLE_USER = "user"
