@@ -229,6 +229,8 @@ SINK_REINFORCE_TURNS = 5               # 多少轮未强化则开始衰减
 SINK_PATTERN_MIN_LENGTH = 2            # 模式匹配后内容至少2个字
 FREQUENCY_SINK_THRESHOLD = 3           # 实体出现≥N次自动锚定
 SINK_CONTENT_MAX_CHARS = 200           # 单条锚定内容最大长度
+SINK_NEW_BATCH_MAX = 10               # merge_sinks 单次接受的新锚定最大数（输入截断）
+SINK_OUTPUT_MAX_CHARS = 3000          # 合并后所有 content 总字符上限，超出则丢弃低置信度锚定
 
 # 置信度持续低于阈值的轮数上限，超出则移出
 SINK_MAX_IDLE_TURNS = 20

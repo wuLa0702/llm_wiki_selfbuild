@@ -23,7 +23,7 @@ from langgraph.types import Command
 from src.agent import constants as C
 from src.agent.action.response import AgentResponse, format_response
 from src.agent.action.stream import emit_token
-from src.agent.memory import store as P
+from src.agent.memory import store as M
 from src.agent.perception.handler import deserialize_messages, extract_event, extract_sources, serialize_messages
 from src.agent.planning.graph import app, summarizer_llm  # noqa: F401 — also used by _archive_stale_thread
 from src.agent.planning.prompt import SYSTEM_PROMPT
@@ -42,17 +42,17 @@ def _archive_stale_thread(thread_id: str) -> None:
       - 消息数 ≥ 3（至少有意义的对话）
       - 闲置天数 ≥ ARCHIVE_DAYS
 
-    归档后 messages 只剩一条 SystemMessage（摘要），
-    attention_sinks 和 working_memory 保留。
+    归档说明：原始对话完整保留在 SQLite 中（messages 列不变），
+    仅向 archive_summary 列写入摘要文本，供恢复时注入 LLM 上下文。
     归档失败不阻断主流程（catch 所有异常）。
     """
     # 已归档？跳过
-    if P.is_thread_archived(thread_id):
+    if M.is_thread_archived(thread_id):
         logger.info(C.LOG_ARCHIVE_SKIP, thread_id, "已归档")
         return
 
     # 加载数据
-    loaded = P.load_thread(thread_id)
+    loaded = M.load_thread(thread_id)
     if loaded is None:
         logger.info(C.LOG_ARCHIVE_SKIP, thread_id, "thread 不存在")
         return
@@ -64,7 +64,7 @@ def _archive_stale_thread(thread_id: str) -> None:
         return
 
     # 够旧？
-    age_days = P.get_thread_age_days(thread_id)
+    age_days = M.get_thread_age_days(thread_id)
     if age_days is None or age_days < C.ARCHIVE_DAYS:
         logger.info(C.LOG_ARCHIVE_SKIP, thread_id,
                     f"最近活跃 age={age_days:.1f}d < {C.ARCHIVE_DAYS}d")
@@ -98,28 +98,14 @@ def _archive_stale_thread(thread_id: str) -> None:
             logger.warning(C.LOG_ARCHIVE_ERROR, thread_id, "LLM 返回空摘要")
             return
 
-        # 构建归档摘要消息
-        archive_msg = {
-            "role": "system",
-            "content": f"{C.ARCHIVE_PREFIX}{result.summary}",
-        }
-
-        # 写回（替换全部 messages，保留 sinks 和 wm）
-        P.archive_thread(thread_id, [archive_msg], sinks, wm)
+        # 写回（仅存储摘要列，不修改原始 messages）
+        M.store_archive_summary(thread_id, result.summary)
         logger.info(C.LOG_ARCHIVE_DONE, thread_id, len(messages), 1)
 
     except Exception as e:
         logger.warning(C.LOG_ARCHIVE_ERROR, thread_id, e)
         # 归档失败不阻断主流程
 
-
-def _is_archived_messages(messages: list[dict]) -> bool:
-    """判断消息列表是否已被归档"""
-    if not messages:
-        return False
-    first = messages[0]
-    content = first.get("content", "") if isinstance(first, dict) else ""
-    return content.startswith(C.ARCHIVE_PREFIX)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -198,7 +184,7 @@ async def chat_stream_session(
             _archive_stale_thread(thread_id)
 
             # ── Step 3: 查 SQLite（冷启动恢复） ──────────────────────────
-            persisted = P.load_thread(thread_id)
+            persisted = M.load_thread(thread_id)
             if persisted is None:
                 logger.info(C.LOG_SESSION_FIRST_TURN, thread_id)
                 input_messages = [
@@ -207,15 +193,16 @@ async def chat_stream_session(
                 ]
             else:
                 persisted_msgs, cold_sinks, cold_wm = persisted
-                # 检测是否从归档恢复
-                if _is_archived_messages(persisted_msgs):
-                    summary_text = persisted_msgs[0]["content"][len(C.ARCHIVE_PREFIX):]
-                    logger.info("会话从归档恢复 | thread=%s summary_len=%d",
-                                thread_id, len(summary_text))
-                    input_messages = [
-                        SystemMessage(content=C.ARCHIVE_RESTORE_NOTICE.format(summary=summary_text)),
-                        HumanMessage(content=content),
-                    ]
+                # 检测是否从归档恢复（原始消息完整保留，摘要注入 LLM 上下文）
+                if M.is_thread_archived(thread_id):
+                    summary_text = M.get_archive_summary(thread_id) or ""
+                    logger.info("会话从归档恢复 | thread=%s summary_len=%d messages=%d",
+                                thread_id, len(summary_text), len(persisted_msgs))
+                    # 注入归档摘要提示 + 仍保留原始消息供 LLM 参考
+                    notice = SystemMessage(content=C.ARCHIVE_RESTORE_NOTICE.format(summary=summary_text))
+                    input_messages = deserialize_messages(persisted_msgs)
+                    input_messages.insert(0, notice)
+                    input_messages.append(HumanMessage(content=content))
                     # 归档恢复后 sinks 和 wm 仍然可用，但不再注入（简化处理）
                     cold_sinks = []
                     cold_wm = {}
@@ -295,14 +282,14 @@ async def chat_stream_session(
     serialized = serialize_messages(final_messages)
     final_sinks = final_state.values.get(C.STATE_ATTENTION_SINKS, [])
     final_wm = final_state.values.get(C.STATE_WORKING_MEMORY, {})
-    P.save_thread(thread_id, serialized, attention_sinks=final_sinks, working_memory=final_wm)
+    M.save_thread(thread_id, serialized, attention_sinks=final_sinks, working_memory=final_wm)
     logger.info("会话已持久化 | thread=%s messages=%d sinks=%d wm=%s",
                 thread_id, len(serialized), len(final_sinks), list(final_wm.keys()))
 
     # ── Step 7: 构建索引（异步不阻塞） ──────────────────────────────────────
     try:
-        P.index_thread_messages(thread_id, serialized)
-        P.extract_thread_entities(thread_id, serialized)
+        M.index_thread_messages(thread_id, serialized)
+        M.extract_thread_entities(thread_id, serialized)
     except Exception as e:
         logger.warning("索引构建失败（非阻断）| thread=%s error=%s", thread_id, e)
 

@@ -59,9 +59,10 @@ def _ensure_table():
         )
     """)
     conn.commit()
-    # 幂等迁移：旧表可能缺少 attention_sinks 或 working_memory 列
+    # 幂等迁移：旧表可能缺少 attention_sinks、working_memory 或 archive_summary 列
     _migrate_add_column(conn, "attention_sinks", "TEXT", "'[]'")
     _migrate_add_column(conn, "working_memory", "TEXT", "'{}'")
+    _migrate_add_column(conn, "archive_summary", "TEXT", "NULL")
     _ENSURED = True
 
 
@@ -588,7 +589,7 @@ def get_thread_age_days(thread_id: str) -> float | None:
 
 
 def is_thread_archived(thread_id: str) -> bool:
-    """检查会话是否已归档（首条消息以 ARCHIVE_PREFIX 开头）
+    """检查会话是否已归档（archive_summary 列不为空）
 
     Args:
         thread_id: 会话 ID
@@ -598,20 +599,53 @@ def is_thread_archived(thread_id: str) -> bool:
     """
     _ensure_table()
     row = _get_conn().execute(
-        "SELECT messages FROM agent_threads WHERE thread_id = ?",
+        "SELECT archive_summary FROM agent_threads WHERE thread_id = ?",
         (thread_id,),
     ).fetchone()
     if row is None:
         return False
-    try:
-        msgs = json.loads(row["messages"])
-    except (json.JSONDecodeError, TypeError):
-        return False
-    if not msgs or not isinstance(msgs, list):
-        return False
-    first = msgs[0]
-    content = first.get("content", "") if isinstance(first, dict) else ""
-    return content.startswith(C.ARCHIVE_PREFIX)
+    return bool(row["archive_summary"])
+
+
+def get_archive_summary(thread_id: str) -> str | None:
+    """获取归档摘要文本
+
+    Args:
+        thread_id: 会话 ID
+
+    Returns:
+        摘要文本，未归档或不存在时返回 None
+    """
+    _ensure_table()
+    row = _get_conn().execute(
+        "SELECT archive_summary FROM agent_threads WHERE thread_id = ?",
+        (thread_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return row["archive_summary"] if row["archive_summary"] else None
+
+
+def store_archive_summary(thread_id: str, summary_text: str) -> None:
+    """存储归档摘要（不修改 messages 列）
+
+    归档只追加摘要信息，原始对话完整保留。
+    用户可随时通过 load_thread() 查看完整聊天记录。
+
+    Args:
+        thread_id: 会话 ID
+        summary_text: LLM 生成的对话摘要文本
+    """
+    _ensure_table()
+    now = time.time()
+    conn = _get_conn()
+    conn.execute(
+        """UPDATE agent_threads
+           SET archive_summary = ?, updated_at = ?
+           WHERE thread_id = ?""",
+        (summary_text, now, thread_id),
+    )
+    conn.commit()
 
 
 def list_stale_threads(days: int = 30, limit: int = 50) -> list[dict[str, Any]]:
@@ -641,40 +675,3 @@ def list_stale_threads(days: int = 30, limit: int = 50) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def archive_thread(
-    thread_id: str,
-    summary_messages: list[dict],
-    attention_sinks: list[dict] | None = None,
-    working_memory: dict | None = None,
-) -> None:
-    """将会话归档：消息替换为摘要版本，保留 sinks 和 working_memory
-
-    归档后 messages 只剩摘要 SystemMessage，
-    attention_sinks 和 working_memory 保留不变（供恢复后使用）。
-
-    Args:
-        thread_id: 会话 ID
-        summary_messages: 归档后的摘要消息列表（通常只有 1 条 SystemMessage）
-        attention_sinks: 保留的 Attention Sink（不变）
-        working_memory: 保留的工作记忆（不变）
-    """
-    _ensure_table()
-    now = time.time()
-    sinks_json = json.dumps(attention_sinks or [], ensure_ascii=False)
-    wm_json = json.dumps(working_memory or {}, ensure_ascii=False)
-    conn = _get_conn()
-    conn.execute(
-        """
-        UPDATE agent_threads
-        SET messages = ?,
-            attention_sinks = ?,
-            working_memory = ?,
-            updated_at = ?
-        WHERE thread_id = ?
-        """,
-        (
-            json.dumps(summary_messages, ensure_ascii=False),
-            sinks_json, wm_json, now, thread_id,
-        ),
-    )
-    conn.commit()

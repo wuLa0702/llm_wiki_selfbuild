@@ -165,10 +165,35 @@ def merge_sinks(
 ) -> list[dict]:
     """合并新旧锚定，应用衰减
 
-    流程：
-      1. 已有锚定：未强化 → 衰减 confidence；已强化 → 恢复
-      2. 新增锚定：追加
-      3. 清理：confidence < 阈值 || idle_turns > 上限 → 移除
+    ═══════════════════════════════════════════════════════════════
+    容量、长度与置信度规则（定义见 constants.py）
+    ═══════════════════════════════════════════════════════════════
+
+    输入长度保护：
+      - 单条 content 上限 SINK_CONTENT_MAX_CHARS = 200
+        （超长截断，防御性安全网，上游也截断）
+      - 新锚定（new_sinks + frequency_sinks）批量上限 SINK_NEW_BATCH_MAX = 10
+        （防止单次合并处理过多新增条目）
+
+    输出长度保护：
+      - 条目数上限：ATTENTION_SINK_MAX = 15
+      - 所有 content 总字符上限：SINK_OUTPUT_MAX_CHARS = 3000
+        （超出时丢弃最低置信度锚定，直至总字符达标）
+
+    置信度衰减规则：
+      - 新锚定初始 confidence = SINK_CONFIDENCE_NEW = 0.8
+      - 被强化（用户再次提及）→ 重置为 SINK_CONFIDENCE_REINFORCE = 0.9
+      - 未强化 → idle_turns += 1
+      - idle_turns >= SINK_REINFORCE_TURNS = 5 后开始衰减
+      - 每轮衰减 SINK_DECAY_PER_TURN = 0.05（朝 0 递减，不下负）
+
+    移除条件（任一满足即移除）：
+      ① confidence < ATTENTION_SINK_MIN_CONFIDENCE = 0.3
+      ② idle_turns > SINK_MAX_IDLE_TURNS = 20
+
+    排序：返回列表按 confidence 降序排列，高置信度锚定优先。
+
+    ═══════════════════════════════════════════════════════════════
 
     Args:
         existing_sinks: 已有的锚定列表
@@ -177,17 +202,29 @@ def merge_sinks(
         frequency_sinks: 频次触发的锚定
 
     Returns:
-        合并后的锚定列表（已排序：高置信度优先）
+        合并后的锚定列表（ATTENTION_SINK_MAX 上限 + SINK_OUTPUT_MAX_CHARS 上限，已排序）
     """
     turn = _now()
     merged: list[dict] = []
     seen_ids: set[str] = set()
+
+    # 0a. 防御性：截断每项 content 超长文本
+    def _truncate_content(sink: dict) -> dict:
+        content = sink.get("content", "")
+        if isinstance(content, str) and len(content) > C.SINK_CONTENT_MAX_CHARS:
+            sink["content"] = content[:C.SINK_CONTENT_MAX_CHARS]
+        return sink
+
+    # 0b. 防御性：截断新增锚定批量上限，防止调用方传超大列表
+    input_new_sinks = (new_sinks or [])[:C.SINK_NEW_BATCH_MAX]
+    input_freq_sinks = (frequency_sinks or [])[:C.SINK_NEW_BATCH_MAX]
 
     # 1. 处理已有锚定（受容量限制）
     for sink in existing_sinks:
         if len(merged) >= C.ATTENTION_SINK_MAX:
             logger.debug("Attention Sink 容量已达上限 | count=%d", len(merged))
             break
+        _truncate_content(sink)
         sid = sink.get("id", "")
         if sid in reinforced_ids:
             # 被强化 → 恢复置信度
@@ -213,8 +250,9 @@ def merge_sinks(
         merged.append(sink)
         seen_ids.add(sid)
 
-    # 2. 追加新锚定（容量上限）
-    for sink in new_sinks + frequency_sinks:
+    # 2. 追加新锚定（容量上限 + 输入批量上限已截断）
+    for sink in input_new_sinks + input_freq_sinks:
+        _truncate_content(sink)
         sid = sink.get("id", "")
         if sid not in seen_ids and len(merged) < C.ATTENTION_SINK_MAX:
             merged.append(sink)
@@ -222,6 +260,18 @@ def merge_sinks(
 
     # 3. 按置信度降序排序
     merged.sort(key=lambda s: s.get("confidence", 0), reverse=True)
+
+    # 4. 输出总长度保护：如果所有 content 总字符超出上限，从尾部（低置信度）开始丢弃
+    total_chars = sum(len(s.get("content", "")) for s in merged)
+    if total_chars > C.SINK_OUTPUT_MAX_CHARS:
+        logger.info("Attention Sink 输出超长 | 总字符=%d 上限=%d 丢弃低置信度锚定",
+                     total_chars, C.SINK_OUTPUT_MAX_CHARS)
+        # 已按 confidence 降序排列，从尾部逆向丢弃
+        while merged and sum(len(s.get("content", "")) for s in merged) > C.SINK_OUTPUT_MAX_CHARS:
+            dropped = merged.pop()
+            logger.debug("Attention Sink 因输出长度限制丢弃 | content=%s confidence=%.2f",
+                         dropped.get("content", "")[:30], dropped.get("confidence", 0))
+
     return merged
 
 
