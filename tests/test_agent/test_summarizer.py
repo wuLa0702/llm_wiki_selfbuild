@@ -14,7 +14,7 @@ import pytest
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from src.agent import constants as C
-from src.agent.summarizer import (
+from src.agent.memory.summarizer import (
     SummaryResult,
     _extract_existing_summary,
     _format_conversation,

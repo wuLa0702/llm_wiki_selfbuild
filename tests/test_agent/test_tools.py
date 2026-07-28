@@ -13,7 +13,7 @@ import os
 import pytest
 
 from src.agent import constants as C
-from src.agent.tools import (
+from src.agent.action.tools import (
     _get_search_tool,
     query_graph,
     read_page,
@@ -29,7 +29,7 @@ from src.agent.tools import (
 @pytest.fixture(autouse=True)
 def _reset_singletons():
     """每个测试前重置 _search_tool 和 _graph_instance 单例"""
-    import src.agent.tools as tools_mod
+    import src.agent.action.tools as tools_mod
     tools_mod._search_tool = None
     tools_mod._graph_instance = None
     yield
@@ -45,7 +45,7 @@ class TestSearchWiki:
 
     def test_search_returns_formatted_results(self, mocker):
         """搜索成功返回格式化的 Markdown 列表"""
-        mock_search = mocker.patch("src.agent.tools.SearchTool")
+        mock_search = mocker.patch("src.agent.action.tools.SearchTool")
         mock_instance = mock_search.return_value
         mock_instance.search.return_value = [
             {
@@ -74,7 +74,7 @@ class TestSearchWiki:
 
     def test_search_calls_search_tool(self, mocker):
         """search_wiki 使用 SearchTool 搜索，limit 使用 C.SEARCH_LIMIT 常量"""
-        mock_search = mocker.patch("src.agent.tools.SearchTool")
+        mock_search = mocker.patch("src.agent.action.tools.SearchTool")
         mock_instance = mock_search.return_value
         mock_instance.search.return_value = []
 
@@ -85,7 +85,7 @@ class TestSearchWiki:
 
     def test_search_empty_results(self, mocker):
         """无匹配时返回友好提示"""
-        mock_search = mocker.patch("src.agent.tools.SearchTool")
+        mock_search = mocker.patch("src.agent.action.tools.SearchTool")
         mock_instance = mock_search.return_value
         mock_instance.search.return_value = []
 
@@ -96,7 +96,7 @@ class TestSearchWiki:
 
     def test_search_tool_error(self, mocker):
         """SearchTool 异常时返回错误信息"""
-        mock_search = mocker.patch("src.agent.tools.SearchTool")
+        mock_search = mocker.patch("src.agent.action.tools.SearchTool")
         mock_instance = mock_search.return_value
         mock_instance.search.side_effect = Exception("搜索服务不可用")
 
@@ -106,10 +106,10 @@ class TestSearchWiki:
 
     def test_search_tool_singleton(self, mocker):
         """_get_search_tool 返回同一个实例"""
-        mock_search = mocker.patch("src.agent.tools.SearchTool")
+        mock_search = mocker.patch("src.agent.action.tools.SearchTool")
         mock_search.return_value = mocker.MagicMock()
         # 重置单例状态
-        import src.agent.tools as tools_mod
+        import src.agent.action.tools as tools_mod
         tools_mod._search_tool = None
 
         instance1 = _get_search_tool()
@@ -278,7 +278,7 @@ class TestQueryGraph:
         mock_graph_class = mocker.patch("src.core.graph.graph.WikiGraph")
         mock_graph_class.return_value = mocker.MagicMock()
         # 重置单例状态
-        import src.agent.tools as tools_mod
+        import src.agent.action.tools as tools_mod
         tools_mod._graph_instance = None
 
         instance1 = tools_mod._get_graph()

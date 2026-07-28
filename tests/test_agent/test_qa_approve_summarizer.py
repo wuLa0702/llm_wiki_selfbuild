@@ -23,15 +23,14 @@ from langchain_core.messages import (
 from langgraph.graph.message import add_messages
 
 from src.agent import constants as C
-from src.agent.agent import (
-    build_agent,
-    chat_stream_session,
+from src.agent import build_agent, chat_stream_session
+from src.agent.planning.graph import (
     human_approval_node,
     should_after_approval,
     should_continue,
     summarizer_node,
 )
-from src.agent.summarizer import (
+from src.agent.memory.summarizer import (
     SummaryResult,
     _extract_existing_summary,
     condense_history,
@@ -93,8 +92,8 @@ class TestApprovalQA:
             }
 
         agent.astream_events = stream_events
-        mocker.patch("src.agent.persistence.load_thread", return_value=None)
-        mocker.patch("src.agent.persistence.save_thread")
+        mocker.patch("src.agent.memory.store.load_thread", return_value=None)
+        mocker.patch("src.agent.memory.store.save_thread")
 
         events = [e async for e in chat_stream_session(agent, "查多个", "multi-tc-test")]
 
@@ -138,7 +137,7 @@ class TestApprovalQA:
             }
 
         agent.astream_events = event_generator
-        mocker.patch("src.agent.persistence.save_thread")
+        mocker.patch("src.agent.memory.store.save_thread")
 
         events = [e async for e in chat_stream_session(agent, "", "empty-approval", approval={})]
 
@@ -154,7 +153,7 @@ class TestApprovalQA:
         agent = mocker.MagicMock()
         agent.get_state.return_value = self._make_interrupt_snapshot(mocker)
 
-        mocker.patch("src.agent.persistence.save_thread")
+        mocker.patch("src.agent.memory.store.save_thread")
 
         events = [e async for e in chat_stream_session(agent, "", "bad-approval", approval="not-a-dict")]
 
@@ -362,7 +361,7 @@ class TestSummarizerQA:
 
     def test_tool_message_without_tool_call_id(self):
         """ToolMessage 没有 tool_call_id → 格式化时不应崩溃"""
-        from src.agent.summarizer import _format_conversation
+        from src.agent.memory.summarizer import _format_conversation
 
         # 直接构造一个缺失 tool_call_id 的 ToolMessage
         msgs: list[BaseMessage] = [
@@ -386,7 +385,7 @@ class TestSummarizerQA:
             ]
         }
         # 直接调用 summarizer_node（不经过 graph）
-        from src.agent.agent import summarizer_node as node_fn
+        from src.agent.planning.graph import summarizer_node as node_fn
         # summarizer_node 需要 agent 模块级别的 llm
         # 但 llm 不通过参数传进来，而是从内部导入 concense_history
         # 实际上 summarizer_node 内部调用 condense_history(state["messages"], llm)
@@ -441,7 +440,7 @@ class TestApproveSummarizerIntegration:
             }
 
         agent.astream_events = event_generator
-        mocker.patch("src.agent.persistence.save_thread")
+        mocker.patch("src.agent.memory.store.save_thread")
 
         events = [e async for e in chat_stream_session(
             agent, "", "reject-then-summarize", approval={"approved": False},
@@ -492,7 +491,7 @@ class TestApproveSummarizerIntegration:
             }
 
         agent.astream_events = event_generator
-        mocker.patch("src.agent.persistence.save_thread")
+        mocker.patch("src.agent.memory.store.save_thread")
 
         events = [e async for e in chat_stream_session(
             agent, "", "approve-then-tools", approval={"approved": True},
@@ -512,7 +511,7 @@ class TestApproveSummarizerIntegration:
         """验证编译后的图包含所有节点和正确连接
 
         图结构：
-          agent → (有 tool_calls → approve, 无 → summarizer)
+          agent → extract_wm → wm_eviction → (有 tool_calls → approve, 无 → summarizer)
           approve → (批准 → tools, 拒绝 → agent)
           tools → agent
           summarizer → __end__
@@ -529,12 +528,17 @@ class TestApproveSummarizerIntegration:
         assert "tools" in node_names
         assert "approve" in node_names
         assert "summarizer" in node_names
+        assert "extract_wm" in node_names
+        assert "wm_eviction" in node_names
 
         # graph.edges 是 Edge(source, target, data, conditional) 列表
         edge_pairs = {(e.source, e.target) for e in graph.edges}
 
-        assert ("agent", "approve") in edge_pairs, "agent → approve 边缺失"
-        assert ("agent", "summarizer") in edge_pairs, "agent → summarizer 边缺失"
+        # agent → extract_wm → wm_eviction → should_continue 链路
+        assert ("agent", "extract_wm") in edge_pairs, "agent → extract_wm 边缺失"
+        assert ("extract_wm", "wm_eviction") in edge_pairs, "extract_wm → wm_eviction 边缺失"
+        assert ("wm_eviction", "approve") in edge_pairs, "wm_eviction → approve 边缺失"
+        assert ("wm_eviction", "summarizer") in edge_pairs, "wm_eviction → summarizer 边缺失"
         assert ("approve", "tools") in edge_pairs, "approve → tools 边缺失"
         assert ("approve", "agent") in edge_pairs, "approve → agent 边缺失"
         assert ("tools", "agent") in edge_pairs, "tools → agent 边缺失"
@@ -547,7 +551,7 @@ class TestApproveSummarizerIntegration:
         mocker.patch("src.llm.adapter.ChatOpenAI", return_value=mocker.MagicMock())
         mocker.patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"})
 
-        from src.agent.agent import build_agent
+        from src.agent import build_agent
 
         agent = build_agent()
         graph = agent.get_graph()

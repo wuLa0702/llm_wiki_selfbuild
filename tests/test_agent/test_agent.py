@@ -13,7 +13,7 @@ import pytest
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from src.agent.agent import build_agent, chat_stream, chat_stream_session
+from src.agent import build_agent, chat_stream, chat_stream_session
 from src.agent.constants import MAX_MESSAGE_TURNS
 
 
@@ -44,7 +44,7 @@ class TestBuildAgent:
         mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
 
         # 手写 LangGraph 图：直接验证 P1_TOOLS 和 graph 结构
-        from src.agent.agent import P1_TOOLS
+        from src.agent.planning.graph import P1_TOOLS
 
         agent = build_agent()
         assert agent is not None
@@ -349,14 +349,14 @@ class TestChatStreamSession:
         agent.get_state.return_value = _make_snapshot(mocker)
 
         # SQLite 无数据（冷启动也查不到）
-        mocker.patch("src.agent.persistence.load_thread", return_value=None)
+        mocker.patch("src.agent.memory.store.load_thread", return_value=None)
 
         return agent
 
     @pytest.mark.asyncio
     async def test_session_first_turn_injects_system_prompt(self, mocker):
         """首轮自动注入 SYSTEM_PROMPT"""
-        from src.agent.agent import SYSTEM_PROMPT
+        from src.agent.planning.prompt import SYSTEM_PROMPT
 
         agent = self._mock_first_turn(mocker)
 
@@ -493,7 +493,7 @@ class TestChatStreamSession:
     @pytest.mark.asyncio
     async def test_session_cold_start_recovery(self, mocker):
         """冷启动恢复：MemorySaver 空 + SQLite 有数据 → 从持久化加载历史"""
-        from src.agent.agent import SYSTEM_PROMPT
+        from src.agent.planning.prompt import SYSTEM_PROMPT
 
         agent = mocker.MagicMock()
 
@@ -502,12 +502,16 @@ class TestChatStreamSession:
         agent.get_state.return_value = snapshot
 
         # SQLite 有持久化数据（历史消息）
-        persisted_data = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": "第一轮问题"},
-            {"role": "assistant", "content": "第一轮回答"},
-        ]
-        mocker.patch("src.agent.persistence.load_thread", return_value=persisted_data)
+        persisted_data = (
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "第一轮问题"},
+                {"role": "assistant", "content": "第一轮回答"},
+            ],
+            [],   # attention_sinks
+            {},   # working_memory
+        )
+        mocker.patch("src.agent.memory.store.load_thread", return_value=persisted_data)
 
         captured_inputs = []
 
@@ -545,7 +549,7 @@ class TestChatStreamSession:
     @pytest.mark.asyncio
     async def test_session_persists_after_stream(self, mocker):
         """流结束后将最终状态保存到 SQLite（save_thread 被调用）"""
-        from src.agent.agent import SYSTEM_PROMPT
+        from src.agent.planning.prompt import SYSTEM_PROMPT
 
         agent = mocker.MagicMock()
 
@@ -586,7 +590,7 @@ class TestChatStreamSession:
         agent.astream_events = event_generator
 
         # mock save_thread
-        mock_save = mocker.patch("src.agent.persistence.save_thread")
+        mock_save = mocker.patch("src.agent.memory.store.save_thread")
 
         _ = [e async for e in chat_stream_session(agent, "hi", "persist-thread")]
 
@@ -656,8 +660,8 @@ class TestHumanApproval:
         agent.astream_events = stream_events
 
         # Mock SQLite 无数据
-        mocker.patch("src.agent.persistence.load_thread", return_value=None)
-        mock_save = mocker.patch("src.agent.persistence.save_thread")
+        mocker.patch("src.agent.memory.store.load_thread", return_value=None)
+        mock_save = mocker.patch("src.agent.memory.store.save_thread")
 
         events = [e async for e in chat_stream_session(agent, "查 Python", "interrupt-test")]
 
@@ -720,7 +724,7 @@ class TestHumanApproval:
 
         agent.astream_events = event_generator
 
-        mock_save = mocker.patch("src.agent.persistence.save_thread")
+        mock_save = mocker.patch("src.agent.memory.store.save_thread")
 
         approval = {"approved": True}
         events = [e async for e in chat_stream_session(agent, "", "approve-test", approval=approval)]
@@ -770,7 +774,7 @@ class TestHumanApproval:
 
         agent.astream_events = event_generator
 
-        mock_save = mocker.patch("src.agent.persistence.save_thread")
+        mock_save = mocker.patch("src.agent.memory.store.save_thread")
 
         approval = {"approved": False}
         events = [e async for e in chat_stream_session(agent, "", "reject-test", approval=approval)]
@@ -810,8 +814,8 @@ class TestHumanApproval:
 
         agent.astream_events = event_generator
 
-        mocker.patch("src.agent.persistence.load_thread", return_value=None)
-        mock_save = mocker.patch("src.agent.persistence.save_thread")
+        mocker.patch("src.agent.memory.store.load_thread", return_value=None)
+        mock_save = mocker.patch("src.agent.memory.store.save_thread")
 
         events = [e async for e in chat_stream_session(agent, "你好", "direct-answer")]
 

@@ -8,11 +8,12 @@ Agent 持久化层测试 — SQLite 对话记忆存储
 """
 import json
 import os
+import time
 from pathlib import Path
 
 import pytest
 
-from src.agent import persistence as P
+from src.agent.memory import store as P
 from src.agent import constants as C
 
 
@@ -29,9 +30,10 @@ def _fresh_db(mocker, tmp_path):
     # Mock 持久化路径
     mocker.patch.object(C, "PERSISTENCE_DB_PATH", str(db_path))
 
-    # 重置全局连接
+    # 重置全局连接和表存在标志
     P._conn = None  # type: ignore[attr-defined]
     P._ENSURED = False  # type: ignore[attr-defined]
+    P._INDEX_ENSURED = False  # type: ignore[attr-defined]
 
 
 # ============================================================================
@@ -42,6 +44,13 @@ def _fresh_db(mocker, tmp_path):
 class TestSaveLoad:
     """save_thread + load_thread 读写测试"""
 
+    def _load_msgs(self, thread_id: str) -> list[dict]:
+        """Helper: load thread and return just messages"""
+        result = P.load_thread(thread_id)
+        assert result is not None
+        msgs, _, _ = result
+        return msgs
+
     def test_save_and_load_roundtrip(self, _fresh_db):
         """写入后再读取，数据一致"""
         messages = [
@@ -49,7 +58,7 @@ class TestSaveLoad:
             {"role": "user", "content": "你好"},
         ]
         P.save_thread("test-roundtrip", messages)
-        loaded = P.load_thread("test-roundtrip")
+        loaded = self._load_msgs("test-roundtrip")
         assert loaded == messages
 
     def test_load_unknown_thread_returns_none(self, _fresh_db):
@@ -60,7 +69,7 @@ class TestSaveLoad:
         """同一 thread_id 多次保存覆盖旧数据"""
         P.save_thread("overwrite-test", [{"role": "user", "content": "第一版"}])
         P.save_thread("overwrite-test", [{"role": "user", "content": "第二版"}])
-        loaded = P.load_thread("overwrite-test")
+        loaded = self._load_msgs("overwrite-test")
         assert len(loaded) == 1
         assert loaded[0]["content"] == "第二版"
 
@@ -69,22 +78,23 @@ class TestSaveLoad:
         P.save_thread("thread-a", [{"role": "user", "content": "A"}])
         P.save_thread("thread-b", [{"role": "user", "content": "B"}])
 
-        assert len(P.load_thread("thread-a")) == 1
-        assert P.load_thread("thread-a")[0]["content"] == "A"
-        assert P.load_thread("thread-b")[0]["content"] == "B"
+        assert len(self._load_msgs("thread-a")) == 1
+        assert self._load_msgs("thread-a")[0]["content"] == "A"
+        assert self._load_msgs("thread-b")[0]["content"] == "B"
 
     def test_empty_messages_list(self, _fresh_db):
         """空消息列表也可以保存（可能用于临时占位）"""
         P.save_thread("empty-test", [])
         loaded = P.load_thread("empty-test")
         assert loaded is not None
-        assert loaded == []
+        loaded_msgs, _, _ = loaded
+        assert loaded_msgs == []
 
     def test_special_characters_in_content(self, _fresh_db):
         """特殊字符（引号、换行、Emoji、中文）正确序列化"""
         content = '他说："你好"\n新行\n🔥 中文 Emoji 🎉'
         P.save_thread("special-chars", [{"role": "user", "content": content}])
-        loaded = P.load_thread("special-chars")
+        loaded = self._load_msgs("special-chars")
         assert loaded[0]["content"] == content
 
     def test_json_structure(self, _fresh_db):
@@ -288,7 +298,8 @@ class TestConcurrency:
         for tid in threads:
             loaded = P.load_thread(tid)
             assert loaded is not None
-            assert len(loaded) == 1
+            msgs, _, _ = loaded
+            assert len(msgs) == 1
 
     def test_repeated_save_no_leak(self, _fresh_db):
         """同一 thread 反复保存不会泄漏（只增一条记录）"""
@@ -300,3 +311,125 @@ class TestConcurrency:
             ("hot",),
         ).fetchone()
         assert row["cnt"] == 1
+
+
+# ============================================================================
+# 记忆降级归档 — Memory Degradation
+# ============================================================================
+
+
+class TestArchive:
+    """归档相关功能测试"""
+
+    def test_archive_replaces_messages_with_summary(self, _fresh_db):
+        """归档后 messages 只剩一条摘要 SystemMessage"""
+        P.save_thread("archive-me", [
+            {"role": "user", "content": "Python 异步"},
+            {"role": "assistant", "content": "asyncio 是标准库"},
+        ])
+
+        P.archive_thread("archive-me", [
+            {"role": "system", "content": f"{C.ARCHIVE_PREFIX}用户询问 Python 异步编程"},
+        ])
+
+        loaded = P.load_thread("archive-me")
+        assert loaded is not None
+        msgs, sinks, wm = loaded
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "system"
+        assert msgs[0]["content"].startswith(C.ARCHIVE_PREFIX)
+
+    def test_archive_preserves_sinks_and_wm(self, _fresh_db):
+        """归档保留 attention_sinks 和 working_memory"""
+        sinks = [{"key": "name", "value": "张三", "confidence": 0.9}]
+        wm = {"current_goal": "学习 Python"}
+        P.save_thread("preserve-test", [
+            {"role": "user", "content": "我叫张三"},
+            {"role": "assistant", "content": "你好张三"},
+        ], attention_sinks=sinks, working_memory=wm)
+
+        P.archive_thread("preserve-test", [
+            {"role": "system", "content": f"{C.ARCHIVE_PREFIX}用户自我介绍"},
+        ], attention_sinks=sinks, working_memory=wm)
+
+        loaded = P.load_thread("preserve-test")
+        assert loaded is not None
+        _, loaded_sinks, loaded_wm = loaded
+        assert loaded_sinks == sinks
+        assert loaded_wm == wm
+
+    def test_archive_nonexistent_thread_no_error(self, _fresh_db):
+        """归档不存在的 thread 不报错（不操作）"""
+        # 不应该抛异常
+        P.archive_thread("ghost", [{"role": "system", "content": "摘要"}])
+        assert P.load_thread("ghost") is None
+
+    def test_is_thread_archived_true(self, _fresh_db):
+        """归档后 is_thread_archived 返回 True"""
+        P.save_thread("check-archived", [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ])
+        assert not P.is_thread_archived("check-archived")
+
+        P.archive_thread("check-archived", [
+            {"role": "system", "content": f"{C.ARCHIVE_PREFIX}摘要"},
+        ])
+        assert P.is_thread_archived("check-archived")
+
+    def test_is_thread_archived_nonexistent(self, _fresh_db):
+        """不存在的 thread 返回 False"""
+        assert not P.is_thread_archived("no-such-thread")
+
+    def test_is_thread_archived_empty_messages(self, _fresh_db):
+        """空消息 thread 返回 False"""
+        P.save_thread("empty", [])
+        assert not P.is_thread_archived("empty")
+
+    def test_get_thread_age_days_fresh(self, _fresh_db):
+        """刚创建的 thread age ≈ 0 天"""
+        P.save_thread("fresh", [{"role": "user", "content": "test"}])
+        age = P.get_thread_age_days("fresh")
+        assert age is not None
+        assert age < 0.01  # 刚创建，接近 0
+
+    def test_get_thread_age_days_nonexistent(self, _fresh_db):
+        """不存在的 thread 返回 None"""
+        assert P.get_thread_age_days("ghost") is None
+
+    def test_list_stale_threads_empty(self, _fresh_db):
+        """没有过期 thread 时返回空列表"""
+        P.save_thread("fresh", [{"role": "user", "content": "hi"}])
+        stale = P.list_stale_threads(days=30)
+        assert stale == []
+
+    def test_list_stale_threads_returns_old(self, _fresh_db):
+        """超过阈值的 thread 被标为 stale（用 save_thread 再改 updated_at）"""
+        # 先 save_thread 确保表已创建 + 数据格式正确
+        P.save_thread("old-thread", [{"role": "user", "content": "old"}])
+        # 手动改 updated_at 为 60 天前
+        conn = P._get_conn()
+        old_time = time.time() - 60 * 86400
+        conn.execute("UPDATE agent_threads SET updated_at = ? WHERE thread_id = ?",
+                     (old_time, "old-thread"))
+        conn.commit()
+
+        # 再插入一个 fresh
+        P.save_thread("fresh", [{"role": "user", "content": "new"}])
+
+        stale = P.list_stale_threads(days=30)
+        assert len(stale) == 1
+        assert stale[0]["thread_id"] == "old-thread"
+
+    def test_list_stale_threads_limit(self, _fresh_db):
+        """limit 参数控制返回条数"""
+        conn = P._get_conn()
+        old_time = time.time() - 60 * 86400
+        for i in range(5):
+            P.save_thread(f"old-{i}", [{"role": "user", "content": str(i)}])
+            conn.execute("UPDATE agent_threads SET updated_at = ? WHERE thread_id = ?",
+                         (old_time, f"old-{i}"))
+        conn.commit()
+
+        assert len(P.list_stale_threads(days=30, limit=3)) == 3
+        assert len(P.list_stale_threads(days=30, limit=10)) == 5
