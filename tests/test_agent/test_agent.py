@@ -11,7 +11,7 @@ import os
 
 import pytest
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from src.agent import build_agent, chat_stream, chat_stream_session
 from src.agent.constants import MAX_MESSAGE_TURNS
@@ -827,3 +827,320 @@ class TestHumanApproval:
 
         # 持久化
         assert mock_save.called
+
+
+# ============================================================================
+# 自修正机制（Self-Correction）
+# ============================================================================
+
+
+class TestMakeActionKey:
+    """_make_action_key 动作键生成测试"""
+
+    def test_search_wiki_normalization(self):
+        """search_wiki 的 query 转为小写去空格"""
+        from src.agent.planning.graph import _make_action_key
+
+        key1 = _make_action_key("search_wiki", {"query": "异步编程"})
+        key2 = _make_action_key("search_wiki", {"query": "  异步编程  "})
+        key3 = _make_action_key("search_wiki", {"query": "异步编程"})
+
+        assert key1 == key2 == key3
+        assert "search_wiki|" in key1
+
+    def test_read_page_normalization(self):
+        """read_page 的 path 保持一致"""
+        from src.agent.planning.graph import _make_action_key
+
+        key1 = _make_action_key("read_page", {"path": "entities/异步.md"})
+        key2 = _make_action_key("read_page", {"path": "entities/异步.md", "offset": 0})
+        key3 = _make_action_key("read_page", {"path": "  entities/异步.md  "})
+
+        assert key1 == key2
+        assert "read_page|" in key1
+
+    def test_different_tools_different_keys(self):
+        """不同工具生成不同的键"""
+        from src.agent.planning.graph import _make_action_key
+
+        k1 = _make_action_key("search_wiki", {"query": "python"})
+        k2 = _make_action_key("read_page", {"path": "python.md"})
+        assert k1 != k2
+
+    def test_different_queries_different_keys(self):
+        """不同 query 生成不同的键"""
+        from src.agent.planning.graph import _make_action_key
+
+        k1 = _make_action_key("search_wiki", {"query": "异步"})
+        k2 = _make_action_key("search_wiki", {"query": "同步"})
+        assert k1 != k2
+
+
+class TestValidateToolNode:
+    """validate_tool_node 前置校验测试"""
+
+    def test_step_limit_triggers_summarizer(self, mocker):
+        """步数超限时设置 step_limit_reached 标记"""
+        from src.agent.planning.graph import validate_tool_node
+
+        tool_call = mocker.MagicMock()
+        tool_call.tool_calls = [
+            {"name": "search_wiki", "args": {"query": "test"}, "id": "call_1"}
+        ]
+        # 步数超限
+        state = {
+            "messages": [tool_call],
+            "step_count": 15,  # MAX_STEPS = 15
+            "executed_actions": {},
+        }
+        result = validate_tool_node(state)
+        assert result["self_correction"].get("step_limit_reached") is True
+        # 步数超限时注入 ToolMessage
+        assert "messages" in result
+        assert len(result["messages"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_step_limit_routes_to_summarizer(self, mocker):
+        """should_after_validate 在 step_limit 时路由到 summarizer"""
+        from src.agent.planning.graph import should_after_validate
+
+        state = {"self_correction": {"step_limit_reached": True}}
+        assert should_after_validate(state) == "summarizer"
+
+    def test_duplicate_action_detected(self, mocker):
+        """重复动作被拦截并设置 correction_reason"""
+        from src.agent.planning.graph import validate_tool_node
+
+        tool_call = mocker.MagicMock()
+        tool_call.tool_calls = [
+            {"name": "search_wiki", "args": {"query": "python"}, "id": "call_1"}
+        ]
+        state = {
+            "messages": [tool_call],
+            "step_count": 3,
+            "executed_actions": {
+                "search_wiki|python": {
+                    "tool": "search_wiki",
+                    "args": {"query": "python"},
+                    "quality": "poor",
+                }
+            },
+        }
+        result = validate_tool_node(state)
+        assert result["self_correction"].get("correction_reason") == "duplicate"
+        assert "messages" in result  # 注入 ToolMessage 提示
+
+    @pytest.mark.asyncio
+    async def test_duplicate_routes_to_agent(self, mocker):
+        """should_after_validate 在重复时路由到 agent"""
+        from src.agent.planning.graph import should_after_validate
+
+        state = {"self_correction": {"correction_reason": "duplicate"}}
+        assert should_after_validate(state) == "agent"
+
+    def test_duplicate_with_good_result_allows(self, mocker):
+        """如果之前的结果质量好，重复动作不被拦截"""
+        from src.agent.planning.graph import validate_tool_node
+
+        tool_call = mocker.MagicMock()
+        tool_call.tool_calls = [
+            {"name": "search_wiki", "args": {"query": "python"}, "id": "call_1"}
+        ]
+        state = {
+            "messages": [tool_call],
+            "step_count": 3,
+            "executed_actions": {
+                "search_wiki|python": {
+                    "tool": "search_wiki",
+                    "args": {"query": "python"},
+                    "quality": "good",
+                }
+            },
+        }
+        result = validate_tool_node(state)
+        # 结果质量 good，不拦截
+        assert result["self_correction"].get("validated") is True
+        assert "messages" not in result
+
+    def test_valid_tool_call_passes(self, mocker):
+        """有效工具调用通过校验"""
+        from src.agent.planning.graph import validate_tool_node
+
+        tool_call = mocker.MagicMock()
+        tool_call.tool_calls = [
+            {"name": "search_wiki", "args": {"query": "python"}, "id": "call_1"}
+        ]
+        state = {
+            "messages": [tool_call],
+            "step_count": 3,
+            "executed_actions": {},
+        }
+        result = validate_tool_node(state)
+        assert result["self_correction"].get("validated") is True
+        assert "messages" not in result
+
+    @pytest.mark.asyncio
+    async def test_valid_routes_to_approve(self, mocker):
+        """should_after_validate 在 validated 时路由到 approve"""
+        from src.agent.planning.graph import should_after_validate
+
+        state = {"self_correction": {"validated": True}}
+        assert should_after_validate(state) == "approve"
+
+    def test_no_tool_calls_returns_validated(self, mocker):
+        """无 tool_calls 时直接返回 validated=True"""
+        from src.agent.planning.graph import validate_tool_node
+
+        ai_msg = mocker.MagicMock()
+        ai_msg.tool_calls = []
+        state = {
+            "messages": [ai_msg],
+            "step_count": 5,
+            "executed_actions": {},
+        }
+        result = validate_tool_node(state)
+        assert result["self_correction"].get("validated") is True
+
+
+class TestVerifyResultNode:
+    """verify_result_node 后置验证测试"""
+
+    def _make_state(self, tool_name="search_wiki", tool_args=None, output=""):
+        """构造包含工具调用和结果的测试状态"""
+        if tool_args is None:
+            tool_args = {"query": "test"}
+
+        ai_msg = AIMessage(
+            content="让我搜索一下",
+            tool_calls=[
+                {"name": tool_name, "args": tool_args, "id": "call_1", "type": "tool_call"}
+            ],
+        )
+        tool_msg = ToolMessage(content=output, tool_call_id="call_1")
+
+        return {
+            "messages": [ai_msg, tool_msg],
+            "executed_actions": {},
+        }
+
+    def test_detects_poor_result_empty(self):
+        """空结果被标记为 poor"""
+        from src.agent.planning.graph import verify_result_node
+
+        state = self._make_state(output="未找到匹配的页面")
+        result = verify_result_node(state)
+        assert result["self_correction"].get("poor_result") is True
+        assert "search_wiki" in result["self_correction"].get("poor_tools", [])
+
+    def test_detects_poor_result_error(self):
+        """错误结果被标记为 poor"""
+        from src.agent.planning.graph import verify_result_node
+
+        state = self._make_state(output="错误: 搜索失败")
+        result = verify_result_node(state)
+        assert result["self_correction"].get("poor_result") is True
+
+    def test_good_result_passes(self):
+        """正常结果通过验证"""
+        from src.agent.planning.graph import verify_result_node
+
+        state = self._make_state(output="- **Python** (`entities/python.md`) [匹配度 0.85]")
+        result = verify_result_node(state)
+        assert result["self_correction"].get("verified") is True
+        assert result["self_correction"].get("poor_result") is not True
+
+    def test_records_executed_action(self):
+        """工具调用被记录到 executed_actions"""
+        from src.agent.planning.graph import verify_result_node
+
+        state = self._make_state(
+            tool_name="search_wiki",
+            tool_args={"query": "python"},
+            output="- **Python** (`entities/python.md`)",
+        )
+        result = verify_result_node(state)
+        assert "executed_actions" in result
+        assert "search_wiki|python" in result["executed_actions"]
+        assert result["executed_actions"]["search_wiki|python"]["quality"] == "good"
+
+    def test_records_poor_action(self):
+        """差的结果在 executed_actions 中标记为 poor"""
+        from src.agent.planning.graph import verify_result_node
+
+        state = self._make_state(output="未找到匹配的页面")
+        result = verify_result_node(state)
+        action_key = next(k for k in result["executed_actions"].keys() if "test" in k)
+        assert result["executed_actions"][action_key]["quality"] == "poor"
+
+    def test_no_tool_call_messages(self):
+        """无 ToolMessage 时直接通过验证"""
+        from src.agent.planning.graph import verify_result_node
+
+        state = {
+            "messages": [HumanMessage(content="hi")],
+            "executed_actions": {},
+        }
+        result = verify_result_node(state)
+        assert result["self_correction"].get("verified") is True
+
+    @pytest.mark.asyncio
+    async def test_poor_routes_to_reflect(self, mocker):
+        """should_after_verify 在 poor 时路由到 reflect_node"""
+        from src.agent.planning.graph import should_after_verify
+
+        state = {"self_correction": {"poor_result": True, "poor_tools": ["search_wiki"]}}
+        assert should_after_verify(state) == "reflect_node"
+
+    @pytest.mark.asyncio
+    async def test_good_routes_to_agent(self, mocker):
+        """should_after_verify 在 verified 时路由到 agent"""
+        from src.agent.planning.graph import should_after_verify
+
+        state = {"self_correction": {"verified": True}}
+        assert should_after_verify(state) == "agent"
+
+
+class TestReflectNode:
+    """reflect_node 反思节点测试"""
+
+    def test_reflect_fallback_on_error(self, mocker):
+        """LLM 调用失败时默认 proceed，不阻断流程"""
+        from src.agent.planning.graph import reflect_node
+
+        # 模拟 LLM 调用失败
+        mocker.patch.object(
+            type(reflect_node.__globals__["llm"]),
+            "with_structured_output",
+            side_effect=Exception("API Error"),
+        )
+
+        state = {
+            "messages": [HumanMessage(content="test")],
+            "self_correction": {"poor_result": True, "poor_tools": ["search_wiki"]},
+        }
+        result = reflect_node(state)
+        assert result["self_correction"]["reflection_verdict"] == "proceed"
+
+
+class TestGraphStructure:
+    """图结构完整性测试（验证新节点在编译图中）"""
+
+    def test_graph_contains_self_correction_nodes(self, mocker):
+        """编译图中包含 validate_tool, verify_result, reflect_node"""
+        mock_llm = mocker.MagicMock()
+        mock_llm.invoke.return_value = mocker.MagicMock(content="ok")
+        mocker.patch("src.agent.planning.graph.ChatOpenAI", return_value=mock_llm)
+        mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+
+        from src.agent import build_agent
+
+        agent = build_agent()
+        graph = agent.get_graph()
+        node_names = {n for n in graph.nodes.keys() if not n.startswith("__")}
+
+        assert "validate_tool" in node_names
+        assert "verify_result" in node_names
+        assert "reflect_node" in node_names
+        assert "approve" in node_names
+        assert "tools" in node_names
+        assert "agent" in node_names

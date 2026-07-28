@@ -367,3 +367,50 @@ LOG_TOOL_READ_FAILED = "read_page 读取失败 | path=%s error=%s"
 LOG_TOOL_READ_SUCCESS = "tool:read_page 成功 | path=%s chars=%d"
 LOG_TOOL_GRAPH = "tool:query_graph | question=%s"
 LOG_TOOL_GRAPH_FAILED = "query_graph 失败 | error=%s"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 自修正机制 — Self-Correction（ReAct + Self-Correction 架构）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 图节点
+NODE_VALIDATE_TOOL = "validate_tool"
+NODE_VERIFY_RESULT = "verify_result"
+NODE_REFLECT = "reflect_node"
+
+# 状态键
+STATE_STEP_COUNT = "step_count"
+STATE_EXECUTED_ACTIONS = "executed_actions"
+STATE_SELF_CORRECTION = "self_correction"
+
+# 步数熔断器
+MAX_STEPS = 15  # 最大推理步数，超限强制输出当前最优解
+
+# 动作去重：连续相同动作触发阈值
+DEDUP_CONSECUTIVE_THRESHOLD = 3
+
+# 置信度阈值（基于工具输出质量的启发式打分）
+CONFIDENCE_THRESHOLD = 0.4  # 低于此值的工具调用被拦截回 agent 重想
+CONFIDENCE_SCORE_GOOD = 0.8   # 工具返回非空且非错误
+CONFIDENCE_SCORE_EMPTY = 0.1  # 工具返回空结果
+CONFIDENCE_SCORE_ERROR = 0.0  # 工具返回错误
+
+# 自修正节点 self_correction 的字段名
+SC_FIELD_VALIDATED = "validated"
+SC_FIELD_STEP_LIMIT = "step_limit_reached"
+SC_FIELD_CORRECTION_REASON = "correction_reason"
+SC_FIELD_CORRECTION_TYPE_DUP = "duplicate"
+SC_FIELD_POOR_RESULT = "poor_result"
+SC_FIELD_POOR_TOOLS = "poor_tools"
+SC_FIELD_VERIFIED = "verified"
+SC_FIELD_VERDICT = "reflection_verdict"
+SC_FIELD_VERDICT_PROCEED = "proceed"
+SC_FIELD_VERDICT_REVISE = "revise"
+
+# 日志
+LOG_STEP_LIMIT_EXCEEDED = "步数熔断器触发 | step=%d >= max=%d, 强制输出当前最优解"
+LOG_DUPLICATE_ACTION = "重复动作检测 | tool=%s key=%s"
+LOG_VALIDATE_PASS = "工具调用前置校验通过 | tool_calls=%d"
+LOG_VERIFY_POOR_RESULT = "工具结果验证失败 | poor_tools=%s"
+LOG_VERIFY_PASS = "工具结果验证通过 | tools=%d"
+LOG_REFLECTION = "推理反思 | verdict=%s"

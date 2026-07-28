@@ -8,20 +8,34 @@
   - 构建 LangGraph StateGraph（节点、边、条件路由）
   - 提供 build_agent() 接口供编排层调用
 
-节点流程：
-  agent → (有 tool_calls → approve, 无 → summarizer)
-  approve → (批准 → tools, 拒绝 → agent)
-  tools → agent
-  summarizer → __end__
+节点流程（ReAct + Self-Correction 架构）：
+  三层自修正防御：
+    ① 执行前校验（validate_tool）— 步数熔断 + 动作去重 + 置信度评估
+    ② 执行后验证（verify_result）— 工具输出质量检查 + 动作记录
+    ③ 推理反思  （reflect_node）— LLM 评估上一步推理方向并修正策略
+
+  完整链路：
+    agent → extract_wm → wm_eviction
+        → (有 tool_calls → validate_tool)
+            → 步数超限 → summarizer（强制输出）
+            → 重复/低置信 → agent（重新思考）
+            → 校验通过 → approve
+                → 批准 → tools → verify_result
+                    → 结果有效 → agent（继续）
+                    → 结果差 → reflect_node → agent（修正后重试）
+                → 拒绝 → agent（基于已有知识回答）
+        → (无 tool_calls → summarizer → __end__)
 """
 
+import json
 import logging
 import os
 import re
+import time
 from typing import Annotated, Any, Literal, TypedDict
 
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, BaseMessage, RemoveMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -34,7 +48,8 @@ from src.agent import constants as C
 from src.agent.action.tools import read_page, search_wiki
 from src.agent.memory.attention import extract_sink_content, format_sink_knowledge, update_attention_sinks
 from src.agent.memory.summarizer import condense_history
-from src.agent.planning.prompt import SYSTEM_PROMPT
+from src.agent.planning.prompt import REFLECTION_SYSTEM_PROMPT, SYSTEM_PROMPT
+from src.agent.planning.prompt import ReflectionResult
 
 load_dotenv()
 logger = logging.getLogger("agent.graph")
@@ -66,10 +81,28 @@ class AgentState(TypedDict):
       与 attention_sinks 互补——sink 由用户驱动，WM 由系统驱动。
       使用 working_memory_reducer 增量合并而非覆盖。
       字段: {user_identity, current_goal, key_facts, tool_cache, entities_mentioned}
+
+    step_count: 推理步数计数器（Self-Correction）
+      每次 call_model 自动 +1，步数熔断器在 validate_tool 中检查。
+      初始为 0，跨轮次累计。
+
+    executed_actions: 已执行动作的哈希表（防重复）
+      key = f"{tool_name}:{canonical_args}"
+      value = {tool, args, result_truncated, quality}
+      在 verify_result 中记录，validate_tool 中检查。
+
+    self_correction: 自修正机制的临时标记字段
+      各节点通过此字段传递阻断/校验/反思结果，
+      条件路由函数读取后决定下一节点。
+      字段: {validated, step_limit_reached, correction_reason,
+             poor_result, poor_tools, verified, reflection_verdict}
     """
     messages: Annotated[list[BaseMessage], add_messages]
     attention_sinks: list[dict]
     working_memory: Annotated[dict[str, Any], working_memory_reducer]
+    step_count: int
+    executed_actions: dict[str, Any]
+    self_correction: dict[str, Any]
 
 
 # ── 工作记忆 Reducer ─────────────────────────────────────────────────────────
@@ -117,7 +150,64 @@ def working_memory_reducer(old: dict | None, new: dict | None) -> dict:
     return merged
 
 
-# ── LLM 初始化 ────────────────────────────────────────────────────────────────
+# ── 动作去重键生成 ────────────────────────────────────────────────────────────
+
+
+def _make_action_key(tool_name: str, args: dict) -> str:
+    """生成动作的唯一标识键，用于重复检测
+
+    规范化策略：
+      - search_wiki: query 转为小写去除首尾空格
+      - read_page:   path 规范化
+      - query_graph: question 转为小写
+      - 其他: json.dumps sort_keys
+
+    Args:
+        tool_name: 工具名（如 "search_wiki"）
+        args: 工具参数字典
+
+    Returns:
+        规范化后的键字符串
+    """
+    if tool_name == "search_wiki":
+        query = str(args.get("query", "")).lower().strip()
+        return f"search_wiki|{query}"
+    if tool_name == "read_page":
+        path = str(args.get("path", "")).strip()
+        offset = args.get("offset", 0)
+        return f"read_page|{path}|offset={offset}"
+    if tool_name == "query_graph":
+        question = str(args.get("question", "")).lower().strip()
+        return f"query_graph|{question}"
+    return f"{tool_name}|{json.dumps(args, sort_keys=True, default=str)}"
+
+
+# ── 反思上下文构建 ────────────────────────────────────────────────────────────
+
+
+def _format_reflection_context(recent_msgs: list, poor_tools: list[str]) -> str:
+    """构建反思节点的分析上下文文本
+
+    从最近几轮消息中提取工具调用和结果，供 LLM 评估推理方向。
+
+    Args:
+        recent_msgs: 最近的 BaseMessage 列表
+        poor_tools: 质量差的工具名列表
+
+    Returns:
+        格式化后的分析文本
+    """
+    parts: list[str] = []
+    for m in recent_msgs:
+        role = getattr(m, "type", "unknown")
+        content = getattr(m, "content", "") or ""
+        if isinstance(content, str) and content.strip():
+            display = content[:300].replace("\n", " ")
+            parts.append(f"[{role}]: {display}")
+
+    parts.append(f"\n质量差的工具调用: {', '.join(poor_tools) if poor_tools else '无'}")
+
+    return "\n".join(parts)
 
 llm = ChatOpenAI(
     model=os.environ.get(C.ENV_DEEPSEEK_MODEL, C.DEFAULT_MODEL),
@@ -235,10 +325,18 @@ def call_model(state: AgentState) -> dict:
         else:
             llm_messages.insert(0, wm_msg)
 
-    # 3. 调用 LLM
+    # 3. 步数计数（Self-Correction 熔断器）
+    current_step = state.get(C.STATE_STEP_COUNT, 0)
+    result_step = current_step + 1
+    logger.debug("推理步数 | step=%d/%d", result_step, C.MAX_STEPS)
+
+    # 4. 调用 LLM
     response = llm_with_tools.invoke(llm_messages)
 
-    result: dict = {C.STATE_MESSAGES: [response]}
+    result: dict = {
+        C.STATE_MESSAGES: [response],
+        C.STATE_STEP_COUNT: result_step,
+    }
     if updated_sinks:
         result[C.STATE_ATTENTION_SINKS] = updated_sinks
     return result
@@ -247,16 +345,16 @@ def call_model(state: AgentState) -> dict:
 tool_node = ToolNode(P1_TOOLS)
 
 
-def should_continue(state: AgentState) -> Literal["approve", "summarizer"]:
+def should_continue(state: AgentState) -> Literal["validate_tool", "summarizer"]:
     """判断 LLM 输出是否需要执行工具——图分支路由函数
 
-    路由规则：
-      - 有 tool_calls → approve 节点（人工审批）
+    ReAct + Self-Correction 第一层防御入口：
+      - 有 tool_calls → validate_tool 节点（步数熔断 + 去重 + 置信度）
       - 无 tool_calls → summarizer 节点（压缩后结束）
     """
     last_msg = state[C.STATE_MESSAGES][-1]
     if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-        return C.NODE_APPROVE
+        return C.NODE_VALIDATE_TOOL
     return C.NODE_SUMMARIZER
 
 
@@ -309,6 +407,96 @@ def should_after_approval(state: AgentState) -> Literal["tools", "agent"]:
     return C.NODE_AGENT  # 拒绝 → 返回 agent 让 LLM 处理拒绝结果
 
 
+# ── 自修正：前置校验节点（步数熔断 + 动作去重 + 置信度） ─────────────────
+
+
+def should_after_validate(state: AgentState) -> Literal["approve", "agent", "summarizer"]:
+    """校验后路由决策（Self-Correction 第一层）
+
+    从 self_correction 读取校验结果：
+      - step_limit_reached → summarizer（强制输出当前最优解后结束）
+      - correction_reason 存在 → agent（带着校验消息回 agent 重新思考）
+      - validated=True → approve（通过校验，进入人工审批）
+
+    Returns:
+        "approve" — 校验通过，进入人工审批
+        "agent" — 需要重新思考（重复/低置信）
+        "summarizer" — 步数超限，强制结束
+    """
+    sc = state.get(C.STATE_SELF_CORRECTION, {}) or {}
+    if sc.get(C.SC_FIELD_STEP_LIMIT):
+        return C.NODE_SUMMARIZER
+    if sc.get(C.SC_FIELD_CORRECTION_REASON):
+        return C.NODE_AGENT
+    return C.NODE_APPROVE
+
+
+def validate_tool_node(state: AgentState) -> dict:
+    """工具调用前置校验节点——步数熔断 + 动作去重
+
+    ReAct + Self-Correction 第一层防御。
+
+    三种阻断场景：
+      1. 步数超限 → 注入 ToolMessage 告知 LLM 已到达限制，
+         should_after_validate 路由到 summarizer（强制输出当前最优解后结束）
+      2. 重复动作 → 注入 ToolMessage 告知 LLM （工具 + 参数）已执行过且结果不佳，
+         should_after_validate 路由回 agent 重新思考
+      3. 全部通过 → 设置 self_correction.validated=True，
+         should_after_validate 路由到 approve（人工审批）
+
+    Returns:
+        dict: 阻断时注入 ToolMessage + self_correction 标记；
+              放行时仅设 validated=True
+    """
+    messages = state[C.STATE_MESSAGES]
+    step_count = state.get(C.STATE_STEP_COUNT, 0)
+    executed = state.get(C.STATE_EXECUTED_ACTIONS, {}) or {}
+
+    last_msg = messages[-1]
+    tool_calls = getattr(last_msg, "tool_calls", [])
+    if not tool_calls:
+        return {C.STATE_SELF_CORRECTION: {C.SC_FIELD_VALIDATED: True}}
+
+    # ── 1. 步数熔断 ─────────────────────────────────────────────────────
+    if step_count >= C.MAX_STEPS:
+        logger.warning(C.LOG_STEP_LIMIT_EXCEEDED, step_count, C.MAX_STEPS)
+        # 注入 ToolMessage：告知 LLM 已到达限制，应基于已有信息回答
+        first_tc_id = tool_calls[0]["id"]
+        limit_msg = ToolMessage(
+            content=f"【步数限制】已到达最大推理步数限制（{C.MAX_STEPS} 步）。"
+                    "请基于当前已有信息直接回答用户问题，不要再调用新工具。",
+            tool_call_id=first_tc_id,
+        )
+        return {
+            C.STATE_MESSAGES: [limit_msg],
+            C.STATE_SELF_CORRECTION: {C.SC_FIELD_STEP_LIMIT: True},
+        }
+
+    # ── 2. 动作去重 ─────────────────────────────────────────────────────
+    for tc in tool_calls:
+        action_key = _make_action_key(tc["name"], tc.get("args", {}))
+        if action_key in executed:
+            existing = executed[action_key]
+            # 仅当之前的结果质量差时才阻止
+            if existing.get("quality") in ("poor", "error"):
+                logger.warning(C.LOG_DUPLICATE_ACTION, tc["name"], action_key)
+                rejection = ToolMessage(
+                    content=f"【重复检测】工具 {tc['name']} 使用参数 {tc.get('args', {})} "
+                            "在上一步已执行过且未得到有用结果，请换一种搜索策略或关键词。",
+                    tool_call_id=tc["id"],
+                )
+                return {
+                    C.STATE_MESSAGES: [rejection],
+                    C.STATE_SELF_CORRECTION: {
+                        C.SC_FIELD_CORRECTION_REASON: C.SC_FIELD_CORRECTION_TYPE_DUP,
+                    },
+                }
+
+    # ── 3. 全部通过 ─────────────────────────────────────────────────────
+    logger.info(C.LOG_VALIDATE_PASS, len(tool_calls))
+    return {C.STATE_SELF_CORRECTION: {C.SC_FIELD_VALIDATED: True}}
+
+
 def summarizer_node(state: AgentState) -> dict:
     """对话摘要压缩节点
 
@@ -349,6 +537,191 @@ def summarizer_node(state: AgentState) -> dict:
     if working_memory:
         result[C.STATE_WORKING_MEMORY] = working_memory
     return result
+
+
+# ── 自修正：后置验证节点（工具结果质量检查 + 动作记录） ──────────────────
+
+
+def should_after_verify(state: AgentState) -> Literal["agent", "reflect_node"]:
+    """验证后路由决策（Self-Correction 第二层）
+
+    从 self_correction 读取验证结果：
+      - poor_result → reflect_node（结果质量差，需要反思修正）
+      - verified → agent（验证通过，继续下一轮推理）
+
+    Returns:
+        "agent" — 验证通过，继续推理
+        "reflect_node" — 结果质量差，触发反思
+    """
+    sc = state.get(C.STATE_SELF_CORRECTION, {}) or {}
+    if sc.get(C.SC_FIELD_POOR_RESULT):
+        return C.NODE_REFLECT
+    return C.NODE_AGENT
+
+
+def verify_result_node(state: AgentState) -> dict:
+    """工具结果后置验证节点
+
+    ReAct + Self-Correction 第二层防御。
+
+    验证维度：
+      1. 空结果检测（search 返回 "未找到匹配" / read 返回空内容）
+      2. 错误结果检测（返回 "失败" / "Error" 等前缀）
+      3. 动作执行记录写入 executed_actions（供 validate_tool 去重使用）
+
+    质量差时设置 self_correction.poor_result 标记，
+    should_after_verify 路由到 reflect_node 做推理反思。
+
+    Returns:
+        dict: 更新 executed_actions + self_correction
+    """
+    messages = state[C.STATE_MESSAGES]
+    executed = dict(state.get(C.STATE_EXECUTED_ACTIONS, {}) or {})
+
+    # 找最近的含 tool_calls 的 AIMessage（获取工具名和参数）
+    last_tc_ai: AIMessage | None = None
+    last_tc_idx = -1
+    for i, m in enumerate(reversed(messages)):
+        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+            last_tc_ai = m
+            last_tc_idx = len(messages) - 1 - i
+            break
+
+    if last_tc_ai is None:
+        # 没有工具调用，无需验证
+        return {C.STATE_SELF_CORRECTION: {C.SC_FIELD_VERIFIED: True}}
+
+    # 构建 tool_call_id → 工具信息映射
+    tc_map: dict[str, dict] = {}
+    for tc in last_tc_ai.tool_calls:
+        tc_map[tc["id"]] = {"name": tc["name"], "args": tc.get("args", {})}
+
+    # 收集该轮工具调用的 ToolMessage（紧跟 AIMessage 之后）
+    current_tool_msgs = [
+        m for m in messages[last_tc_idx + 1:]
+        if isinstance(m, ToolMessage)
+    ]
+
+    poor_tools: list[str] = []
+
+    for tm in current_tool_msgs:
+        tc_id = tm.tool_call_id
+        tc_info = tc_map.get(tc_id, {})
+        tool_name = tc_info.get("name", "unknown")
+        tool_args = tc_info.get("args", {})
+        content = str(tm.content) if tm.content else ""
+
+        # 质量判断
+        is_empty = (
+            not content
+            or content.strip() in (C.NO_MATCHES_MESSAGE, C.EMPTY_CONTENT_MESSAGE)
+        )
+        is_error = (
+            content.startswith(("错误:", "失败:", "Error:", "error:", "路径越权", "页面不存在"))
+            or "失败" in content[:30]
+        )
+
+        quality = "good"
+        if is_error:
+            quality = "error"
+        elif is_empty:
+            quality = "poor"
+        else:
+            quality = "good"
+
+        if quality != "good":
+            poor_tools.append(tool_name)
+
+        # 记录已执行动作（标准化的 action_key）
+        action_key = _make_action_key(tool_name, tool_args)
+        # 只在尚不存在或之前的质量更差时更新
+        if action_key not in executed or executed[action_key].get("quality") == "error":
+            executed[action_key] = {
+                "tool": tool_name,
+                "args": tool_args,
+                "result_truncated": content[:300],
+                "quality": quality,
+                "timestamp": time.time(),
+            }
+
+    update: dict = {C.STATE_EXECUTED_ACTIONS: executed}
+
+    if poor_tools:
+        update[C.STATE_SELF_CORRECTION] = {
+            C.SC_FIELD_POOR_RESULT: True,
+            C.SC_FIELD_POOR_TOOLS: poor_tools,
+        }
+        logger.warning(C.LOG_VERIFY_POOR_RESULT, poor_tools)
+    else:
+        update[C.STATE_SELF_CORRECTION] = {C.SC_FIELD_VERIFIED: True}
+        logger.info(C.LOG_VERIFY_PASS, len(current_tool_msgs))
+
+    return update
+
+
+# ── 自修正：推理反思节点 ──────────────────────────────────────────────────
+
+
+def reflect_node(state: AgentState) -> dict:
+    """推理反思节点
+
+    ReAct + Self-Correction 第三层防御。
+    当工具返回空/错误结果时触发，用 LLM 评估上一步推理方向并给出修正策略。
+
+    执行流程：
+      1. 提取最近几轮对话作为反思上下文
+      2. 用结构化 LLM 调用得到 verdict（proceed/revise）
+      3. 如果 verdict=revise，注入 AIMessage 作为自我修正后的新计划
+      4. 路由到 agent 节点按修正计划重新推理
+
+    Returns:
+        dict: 注入自我修正 AIMessage（如需）+ self_correction 标记
+    """
+    messages = state[C.STATE_MESSAGES]
+    correction = state.get(C.STATE_SELF_CORRECTION, {}) or {}
+    poor_tools = correction.get(C.SC_FIELD_POOR_TOOLS, [])
+
+    # 提取最近上下文用于反思（最近 6 条消息）
+    recent_msgs = messages[-6:]
+
+    # 构建反思输入
+    reflection_input = _format_reflection_context(recent_msgs, poor_tools)
+
+    try:
+        structured_llm = llm.with_structured_output(ReflectionResult)
+        result = structured_llm.invoke([
+            SystemMessage(content=REFLECTION_SYSTEM_PROMPT),
+            HumanMessage(content=reflection_input),
+        ])
+        logger.info(C.LOG_REFLECTION, result.verdict)
+
+        update: dict = {
+            C.STATE_SELF_CORRECTION: {
+                C.SC_FIELD_VERDICT: result.verdict,
+            },
+        }
+
+        # 修正策略：注入自我修正消息作为下一轮 agent 的输入
+        if result.verdict == C.SC_FIELD_VERDICT_REVISE and result.revised_plan.strip():
+            correction_msg = AIMessage(
+                content=(
+                    f"【自我修正】上一步的搜索策略效果不佳。"
+                    f"我重新评估了情况，修正后的搜索计划如下：\n{result.revised_plan}\n\n"
+                    "我会按新方案继续查找相关信息。"
+                )
+            )
+            update[C.STATE_MESSAGES] = [correction_msg]
+
+        return update
+
+    except Exception as e:
+        logger.warning("反思节点调用失败 | error=%s", e)
+        # 反思失败不阻断流程——默认 proceed，让 agent 继续
+        return {
+            C.STATE_SELF_CORRECTION: {
+                C.SC_FIELD_VERDICT: C.SC_FIELD_VERDICT_PROCEED,
+            },
+        }
 
 
 # ── 工作记忆提取节点 ──────────────────────────────────────────────────────────
@@ -460,22 +833,49 @@ def wm_eviction_node(state: AgentState) -> dict:
     return {C.STATE_WORKING_MEMORY: wm}
 
 
-# ── 图构建 ────────────────────────────────────────────────────────────────────
+# ── 图构建（ReAct + Self-Correction 架构） ──────────────────────────────
+
+# 三层自修正链路：
+#   ① validate_tool  — 执行前：步数熔断 + 动作去重
+#   ② verify_result  — 执行后：工具结果质量检查 + 动作记录
+#   ③ reflect_node   — 推理反思：LLM 评估方向 + 修正策略
 
 builder = StateGraph(AgentState)
 builder.add_node(C.NODE_AGENT, call_model)
 builder.add_node(C.NODE_EXTRACT_WM, extract_wm_node)
 builder.add_node(C.NODE_WM_EVICTION, wm_eviction_node)
+builder.add_node(C.NODE_VALIDATE_TOOL, validate_tool_node)    # ① 前置校验
 builder.add_node(C.NODE_APPROVE, human_approval_node)
 builder.add_node(C.NODE_TOOLS, tool_node)
+builder.add_node(C.NODE_VERIFY_RESULT, verify_result_node)    # ② 后置验证
+builder.add_node(C.NODE_REFLECT, reflect_node)                # ③ 推理反思
 builder.add_node(C.NODE_SUMMARIZER, summarizer_node)
 builder.set_entry_point(C.NODE_AGENT)
-builder.add_edge(C.NODE_AGENT, C.NODE_EXTRACT_WM)       # agent → extract_wm
-builder.add_edge(C.NODE_EXTRACT_WM, C.NODE_WM_EVICTION)  # extract_wm → wm_eviction
-builder.add_conditional_edges(C.NODE_WM_EVICTION, should_continue)  # wm_eviction → (approve | summarizer)
-builder.add_edge(C.NODE_TOOLS, C.NODE_AGENT)
-builder.add_edge(C.NODE_SUMMARIZER, END)
+
+# 推理链路
+builder.add_edge(C.NODE_AGENT, C.NODE_EXTRACT_WM)                # agent → extract_wm
+builder.add_edge(C.NODE_EXTRACT_WM, C.NODE_WM_EVICTION)         # extract_wm → wm_eviction
+
+# ① 第一层防御：wm_eviction → (有 tool_calls → validate_tool | 无 → summarizer)
+builder.add_conditional_edges(C.NODE_WM_EVICTION, should_continue)
+
+# validate_tool → (通过 → approve | 阻断 → agent | 超限 → summarizer)
+builder.add_conditional_edges(C.NODE_VALIDATE_TOOL, should_after_validate)
+
+# approve → (批准 → tools | 拒绝 → agent)
 builder.add_conditional_edges(C.NODE_APPROVE, should_after_approval)
+
+# ② 第二层防御：tools → verify_result (非直接回 agent)
+builder.add_edge(C.NODE_TOOLS, C.NODE_VERIFY_RESULT)
+
+# verify_result → (有效 → agent | 差 → reflect_node)
+builder.add_conditional_edges(C.NODE_VERIFY_RESULT, should_after_verify)
+
+# ③ 第三层防御：reflect_node → agent（修正后重试）
+builder.add_edge(C.NODE_REFLECT, C.NODE_AGENT)
+
+# 结束
+builder.add_edge(C.NODE_SUMMARIZER, END)
 
 # 持久化 checkpointer
 from src.agent.memory.store import migrate_memorysaver_to_sqlite  # noqa: E402

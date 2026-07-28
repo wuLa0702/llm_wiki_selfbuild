@@ -510,11 +510,16 @@ class TestApproveSummarizerIntegration:
     def test_graph_structure_has_all_nodes_and_edges(self, mocker):
         """验证编译后的图包含所有节点和正确连接
 
-        图结构：
-          agent → extract_wm → wm_eviction → (有 tool_calls → approve, 无 → summarizer)
-          approve → (批准 → tools, 拒绝 → agent)
-          tools → agent
-          summarizer → __end__
+        图结构（ReAct + Self-Correction）：
+          agent → extract_wm → wm_eviction
+            → (有 tool_calls → validate_tool)
+                → 步数超限 → summarizer
+                → 重复/低置信 → agent
+                → 校验通过 → approve → (批准 → tools → verify_result)
+                                        → (拒绝 → agent)
+                                          verify_result → (有效 → agent)
+                                                         → (差 → reflect_node → agent)
+            → (无 tool_calls → summarizer → __end__)
         """
         mocker.patch("src.llm.adapter.ChatOpenAI", return_value=mocker.MagicMock())
         mocker.patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"})
@@ -530,18 +535,35 @@ class TestApproveSummarizerIntegration:
         assert "summarizer" in node_names
         assert "extract_wm" in node_names
         assert "wm_eviction" in node_names
+        # Self-Correction 节点
+        assert "validate_tool" in node_names
+        assert "verify_result" in node_names
+        assert "reflect_node" in node_names
 
         # graph.edges 是 Edge(source, target, data, conditional) 列表
         edge_pairs = {(e.source, e.target) for e in graph.edges}
 
-        # agent → extract_wm → wm_eviction → should_continue 链路
+        # agent → extract_wm → wm_eviction 链路
         assert ("agent", "extract_wm") in edge_pairs, "agent → extract_wm 边缺失"
         assert ("extract_wm", "wm_eviction") in edge_pairs, "extract_wm → wm_eviction 边缺失"
-        assert ("wm_eviction", "approve") in edge_pairs, "wm_eviction → approve 边缺失"
+        # should_continue → validate_tool (原 approve)
+        assert ("wm_eviction", "validate_tool") in edge_pairs, "wm_eviction → validate_tool 边缺失"
         assert ("wm_eviction", "summarizer") in edge_pairs, "wm_eviction → summarizer 边缺失"
+        # validate_tool 路由
+        assert ("validate_tool", "approve") in edge_pairs, "validate_tool → approve 边缺失"
+        assert ("validate_tool", "agent") in edge_pairs, "validate_tool → agent 边缺失"
+        assert ("validate_tool", "summarizer") in edge_pairs, "validate_tool → summarizer 边缺失"
+        # approve 路由
         assert ("approve", "tools") in edge_pairs, "approve → tools 边缺失"
         assert ("approve", "agent") in edge_pairs, "approve → agent 边缺失"
-        assert ("tools", "agent") in edge_pairs, "tools → agent 边缺失"
+        # tools → verify_result (原 tools → agent)
+        assert ("tools", "verify_result") in edge_pairs, "tools → verify_result 边缺失"
+        # verify_result 路由
+        assert ("verify_result", "agent") in edge_pairs, "verify_result → agent 边缺失"
+        assert ("verify_result", "reflect_node") in edge_pairs, "verify_result → reflect_node 边缺失"
+        # reflect_node → agent
+        assert ("reflect_node", "agent") in edge_pairs, "reflect_node → agent 边缺失"
+        # summarizer → END
         assert ("summarizer", "__end__") in edge_pairs, "summarizer → __end__ 边缺失"
 
     # ── QA-13: summarizer_node 在完整图中的角色 ────────────────────────
@@ -559,11 +581,11 @@ class TestApproveSummarizerIntegration:
         # summarizer 节点存在于图中
         assert "summarizer" in graph.nodes
 
-        # 验证 should_continue 返回类型包含 'approve' 和 'summarizer'
+        # 验证 should_continue 返回类型包含 'validate_tool' 和 'summarizer'
         from typing import get_args
         return_type = should_continue.__annotations__["return"]
         literal_values = get_args(return_type)
-        assert "approve" in literal_values, f"should_continue 缺少 approve, 有: {literal_values}"
+        assert "validate_tool" in literal_values, f"should_continue 缺少 validate_tool, 有: {literal_values}"
         assert "summarizer" in literal_values, f"should_continue 缺少 summarizer, 有: {literal_values}"
 
     # ── Helper ──────────────────────────────────────────────────────────
