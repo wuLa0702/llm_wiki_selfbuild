@@ -227,8 +227,6 @@ def main():
     except Exception:
         pass
 
-    startup_ok = False
-
     try:
         uvicorn.run(
             app,
