@@ -129,7 +129,7 @@ class TestReadPage:
 
     @pytest.fixture
     def wiki_dir(self, tmp_path, monkeypatch):
-        """创建临时 wiki 目录，chdir 进去使工具读到此目录"""
+        """创建临时 wiki 目录，monkeypatch get_wiki_dir 指向此目录"""
         d = tmp_path / "wiki"
         d.mkdir()
         entities = d / "entities"
@@ -149,11 +149,9 @@ class TestReadPage:
         long_content = "# 长页面\n\n" + "内容内容。" * 2000  # 10000+ 字符
         (entities / "long.md").write_text(long_content, encoding="utf-8")
 
-        # 模拟在项目根目录运行
-        original_cwd = os.getcwd()
-        os.chdir(tmp_path)
+        # 覆盖 get_wiki_dir 使其返回临时目录而非 %APPDATA%
+        monkeypatch.setattr("src.tools.path_utils.get_wiki_dir", lambda: str(d))
         yield d
-        os.chdir(original_cwd)
 
     def test_read_page_with_frontmatter(self, wiki_dir):
         """有 frontmatter 的页面正确去除"""

@@ -10,17 +10,17 @@ import os
 
 from src.utils.path_resolver import get_raw_dir, get_wiki_dir
 
-# 已知目录别名 → 运行时解析函数
-_KNOWN_ALIASES = {
-    "wiki": get_wiki_dir,
-    "raw": get_raw_dir,
-}
-
 
 def _resolve_alias(base_dir: str) -> str:
-    """解析已知目录别名，非别名返回原值"""
-    resolver = _KNOWN_ALIASES.get(base_dir)
-    return resolver() if resolver else base_dir
+    """解析已知目录别名，非别名返回原值
+
+    运行时调用 resolver，支持 pytest monkeypatch 覆盖测试目录。
+    """
+    if base_dir == "wiki":
+        return get_wiki_dir()
+    if base_dir == "raw":
+        return get_raw_dir()
+    return base_dir
 
 
 def safe_path(base_dir: str, user_path: str) -> str:
