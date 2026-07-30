@@ -1,6 +1,9 @@
 @echo off
 title LLM Wiki - Dev Restart
 
+:: -- force UTF-8 for console output (fix garbled Chinese in UTF-8 terminals) --
+@chcp 65001 >nul
+
 echo ========================================
 echo   LLM Wiki - Dev Restart
 echo ========================================
@@ -14,15 +17,15 @@ echo.
 :: -- kill old processes --
 echo [CLEANUP] Killing old processes...
 
-:: backend (port 8766)
+:: uvicorn / app (port 8766)
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8766 " ^| findstr LISTENING') do (
-  echo   kill backend PID: %%p
+  echo   kill app PID: %%p
   taskkill /f /pid %%p >nul 2>&1
 )
 
-:: frontend (port 5176)
+:: Vite dev server (port 5176)
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":5176 " ^| findstr LISTENING') do (
-  echo   kill frontend PID: %%p
+  echo   kill Vite dev server PID: %%p
   taskkill /f /pid %%p >nul 2>&1
 )
 
@@ -35,49 +38,61 @@ timeout /t 1 /nobreak >nul
 echo [CLEANUP] Done
 echo.
 
-:: -- start backend --
-echo [BACKEND] Starting uvicorn (port 8766)...
-start "LLM-Wiki-Backend" cmd /c "python -m uvicorn src.main:app --reload --host 127.0.0.1 --port 8766 --log-level warning"
+:: -- ensure log dir --
+if not exist ".logs" mkdir ".logs"
 
-:: -- start frontend --
-echo [FRONTEND] Starting Vite dev server (port 5176)...
-start "LLM-Wiki-Frontend" cmd /c "cd /d wiki-ui-v2 && npm run dev"
+:: -- start uvicorn (port 8766: serves API + built frontend dist/) --
+echo [APP] Starting uvicorn (port 8766 — API + Frontend)...
+start /b "" cmd /c "chcp 65001 >nul && set PYTHONIOENCODING=utf-8 && python -m uvicorn src.main:app --reload --host 127.0.0.1 --port 8766 --log-level warning > .logs\app.log 2>&1"
 
-:: -- wait for startup --
+:: -- wait for uvicorn to be truly ready --
 echo.
-echo [WAIT] Waiting for services to start...
-timeout /t 4 /nobreak >nul
-
-:: -- check backend --
-echo [CHECK] Checking backend...
-netstat -ano 2>nul | findstr ":8766 " | findstr LISTENING >nul
-if %errorlevel% equ 0 (
-  echo [OK] Backend is running on http://127.0.0.1:8766
+echo [WAIT] Waiting for uvicorn to respond (polling /health)...
+set APP_READY=
+for /l %%i in (1,1,30) do (
+  >nul 2>&1 curl -s http://127.0.0.1:8766/health && (
+    set APP_READY=1
+    goto :app_ok
+  )
+  >nul 2>&1 timeout /t 1 /nobreak
+)
+:app_ok
+if defined APP_READY (
+  echo [OK] App is ready on http://127.0.0.1:8766
 ) else (
-  echo [WARN] Backend may not be ready yet - check the backend window for errors
+  echo [WARN] App health check timed out - check .logs\app.log for errors
+  echo [INFO] Continuing anyway, Vite dev server will retry automatically...
 )
 
-:: -- check frontend --
-echo [CHECK] Checking frontend...
+:: -- wait a beat, then start Vite dev server --
+>nul 2>&1 timeout /t 1 /nobreak
+
+:: -- start Vite dev server (no popup, logs to file, UTF-8) --
+set LOGDIR=%cd%\.logs
+echo [VITE] Starting Vite dev server (port 5176 — hot reload)...
+start /b "" cmd /c "chcp 65001 >nul && cd /d wiki-ui-v2 && npm run dev > %LOGDIR%\vite.log 2>&1"
+
+:: -- check Vite dev server --
+>nul 2>&1 timeout /t 3 /nobreak
 netstat -ano 2>nul | findstr ":5176 " | findstr LISTENING >nul
 if %errorlevel% equ 0 (
-  echo [OK] Frontend is running on http://localhost:5176
+  echo [OK] Vite dev server is running on http://localhost:5176
 ) else (
-  echo [WARN] Frontend may not be ready yet - check the frontend window for errors
+  echo [WARN] Vite dev server not started - check .logs\vite.log for errors
 )
 
 :: -- open browser --
 echo.
-echo [BROWSER] Opening http://localhost:5176
-start http://localhost:5176
+echo [BROWSER] Opening http://localhost:8766
+start http://localhost:8766
 
 echo.
 echo ========================================
 echo   Restart complete
-echo   Backend : http://127.0.0.1:8766
-echo   Frontend: http://localhost:5176
+echo   App (API + Frontend) : http://127.0.0.1:8766
+echo   Vite dev server      : http://localhost:5176  (optional, hot reload)
 echo ========================================
 echo.
 echo Press any key to close this window...
-echo (Backend and frontend windows will keep running)
+echo (Processes run in background, logs in .logs\)
 pause >nul
