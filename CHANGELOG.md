@@ -19,6 +19,16 @@
 ### 修复
 - 测试 `test_read_page` 系列改用 monkeypatch 覆盖路径，兼容 path_resolver
 - `.gitignore` 添加 `.obsidian/` 全局忽略
+- 开发模式路径回退到 CWD（而非 %APPDATA%），修复 health 端点 `total_pages` 永远为 0
+- PyInstaller spec 中 `__file__` NameError（exec() 上下文无 `__file__`）
+- `uvicorn.logging.DefaultFormatter` 在 `console=False` 时 `sys.stdout=None` 崩溃
+- EXE 打包后路径全部指向 `%APPDATA%/LLM-Wiki/`，不再意外读写 CWD
+- Agent 同步 LLM 调用（`with_structured_output.invoke`）移到 `asyncio.to_thread`，防止阻塞事件循环导致进程崩溃
+
+### 已知问题（打包相关）
+- `build-exe.bat` 行 67 的 Size 显示直接输出算式而非计算结果
+- `build-exe.bat` 行 71 的 `>/dev/null` 在 Windows 中无效，应改为 `>nul`
+- `wiki.spec`（轻量版）落后于代码库，缺少 chat/ingest/purpose/system 路由和全部 agent 模块
 
 ### 技术债务
 - `wiki.db` 路径仍有多处硬编码，后续应迁移到 path_resolver

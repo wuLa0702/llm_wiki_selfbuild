@@ -64,8 +64,13 @@ echo   Output: dist\LLM-Wiki.exe
 echo ========================================
 
 :: Show file size
-for %%f in ("dist\LLM-Wiki.exe") do echo   Size: %%~zf bytes (%%~zf / 1048576 MB)
+for %%f in ("dist\LLM-Wiki.exe") do (
+    set "SZ=%%~zf"
+    set /a "MB=%%~zf / 1048576"
+)
+call echo   Size: %%SZ%% bytes (%%MB%% MB)
+if not defined SZ echo   [WARN] dist\LLM-Wiki.exe not found
 
 echo.
 echo Press any key to exit...
-pause >/dev/null
+pause >nul
