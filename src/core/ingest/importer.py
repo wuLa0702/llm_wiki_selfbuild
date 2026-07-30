@@ -7,6 +7,7 @@
 import os
 
 from src.core.logging_config import get_logger
+from src.utils.path_resolver import get_raw_sources_dir
 
 logger = get_logger("importer")
 
@@ -17,12 +18,12 @@ SUPPORTED_EXTENSIONS = {".md", ".txt", ".pdf", ".html", ".csv"}
 class FolderImporter:
     """文件夹导入 — 扫描 + 队列 + 上下文注入"""
 
-    def __init__(self, sources_dir: str = "raw/sources") -> None:
+    def __init__(self, sources_dir: str | None = None) -> None:
         """
         Args:
-            sources_dir: 源文件根目录
+            sources_dir: 源文件根目录，None 时使用 %APPDATA%/LLM-Wiki/raw/sources
         """
-        self.sources_dir = sources_dir
+        self.sources_dir = sources_dir if sources_dir is not None else get_raw_sources_dir()
 
     # ------------------------------------------------------------------
     # 同步导入

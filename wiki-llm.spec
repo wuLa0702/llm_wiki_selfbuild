@@ -40,6 +40,8 @@ added_files = [
     (str(FRONTEND_DIST / "index.html"), "wiki-ui-v2/dist"),
     # 后端静态资源
     (str(ROOT_DIR / "static"), "static"),
+    # 默认模板文件（reset 时使用）
+    (str(ROOT_DIR / "src" / "templates"), "src/templates"),
 ]
 
 # ── 隐藏导入（PyInstaller 静态分析可能遗漏的动态 import） ────────────────
@@ -67,6 +69,15 @@ hidden_imports = [
     # Template engines
     "jinja2",
     "jinja2.ext",
+    # Search & Embedding
+    "rank_bm25",
+    "numpy",
+    "chromadb",
+    "sentence_transformers",
+    "sqlite3",
+    # Pydantic
+    "pydantic",
+    "pydantic_settings",
 ]
 
 # ── Spec ──────────────────────────────────────────────────────────────────
@@ -83,7 +94,7 @@ a = Analysis(
         "tkinter",           # GUI 框架（不用）
         "matplotlib",        # 绘图库（不用）
         "PIL",               # 图片处理（不用）
-        "numpy",             # 科学计算（不用）
+        # numpy 不排除 — rank_bm25 依赖它
         "pandas",            # 数据处理（不用）
         "scipy",             # 科学计算（不用）
         "notebook",          # Jupyter（不用）

@@ -5,18 +5,20 @@ import hashlib
 import os
 import sqlite3
 
+from src.utils.path_resolver import get_db_path, get_raw_sources_dir
+
 
 class IngestCache:
     """基于 SHA256 的源文件增量缓存"""
 
-    def __init__(self, db_path: str = "wiki.db", sources_dir: str = "raw/sources") -> None:
+    def __init__(self, db_path: str | None = None, sources_dir: str | None = None) -> None:
         """
         Args:
-            db_path: SQLite 数据库路径
-            sources_dir: raw/sources 目录路径
+            db_path: SQLite 数据库路径，None 时使用 %APPDATA%/LLM-Wiki/wiki.db
+            sources_dir: raw/sources 目录路径，None 时使用 %APPDATA%/LLM-Wiki/raw/sources
         """
-        self.db_path = db_path
-        self.sources_dir = sources_dir
+        self.db_path = db_path if db_path is not None else get_db_path("wiki.db")
+        self.sources_dir = sources_dir if sources_dir is not None else get_raw_sources_dir()
         self._init_table()
 
     def _init_table(self) -> None:

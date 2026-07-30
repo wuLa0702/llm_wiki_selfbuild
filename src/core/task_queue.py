@@ -12,6 +12,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from src.core.logging_config import get_logger
+from src.utils.path_resolver import get_db_path
 
 logger = get_logger("task_queue")
 
@@ -21,13 +22,13 @@ TASK_TYPES = {"rebuild_graph", "semantic_lint"}
 class TaskQueue:
     """轻量持久化任务队列 — SQLite 存储 + 后台线程串行处理"""
 
-    def __init__(self, db_path: str = "wiki.db", poll_interval: float = 1.0) -> None:
+    def __init__(self, db_path: str | None = None, poll_interval: float = 1.0) -> None:
         """
         Args:
-            db_path: SQLite 数据库路径
+            db_path: SQLite 数据库路径，None 时使用 %APPDATA%/LLM-Wiki/wiki.db
             poll_interval: 轮询间隔（秒）
         """
-        self.db_path = db_path
+        self.db_path = db_path if db_path is not None else get_db_path("wiki.db")
         self.poll_interval = poll_interval
         self._handlers: dict[str, Callable] = {}
         self._running = False

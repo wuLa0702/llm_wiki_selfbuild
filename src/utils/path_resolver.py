@@ -109,6 +109,19 @@ def get_raw_dir() -> str:
     return path
 
 
+def get_raw_sources_dir() -> str:
+    """raw/sources 目录的绝对路径
+
+    用户上传的源文件存放于此，跨版本持久化。
+
+    Returns:
+        raw/sources 目录的绝对路径
+    """
+    path = os.path.join(get_raw_dir(), "sources")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def get_static_dir() -> str:
     """静态资源目录
 

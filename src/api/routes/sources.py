@@ -3,17 +3,53 @@
 """
 import logging
 import os
+import re
 import shutil
+import sqlite3
+from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from src.core.logging_config import get_logger
-from src.db.repository import WikiRepository
+from src.utils.path_resolver import get_db_path, get_raw_sources_dir, get_wiki_dir
 
 logger = get_logger("api.routes.sources")
 router = APIRouter(tags=["sources"])
+
+
+def _safe_base() -> str:
+    """返回 raw/sources 的绝对路径（规范化），作为安全校验的基目录"""
+    return os.path.normpath(get_raw_sources_dir())
+
+
+def _resolve_source_path(rel_path: str) -> tuple[str | None, int | None]:
+    """将前端传来的路径（如 raw/sources/foo.md）解析为绝对路径，做安全校验。
+
+    Returns:
+        (abs_path, None) — 校验通过，返回绝对路径
+        (None, status_code) — 校验失败，返回 HTTP 状态码
+    """
+    # 统一分隔符
+    cleaned = rel_path.strip().lstrip("/").replace("\\", "/")
+
+    # 前端传的路径格式是 raw/sources/xxx，去掉前缀
+    prefix = "raw/sources/"
+    if not cleaned.startswith(prefix) and cleaned != "raw/sources":
+        logger.warning("路径安全校验失败: %s (不在 raw/sources/ 下)", cleaned)
+        return None, 403
+
+    rel = cleaned[len(prefix):] if cleaned != "raw/sources" else ""
+    abs_path = os.path.normpath(os.path.join(_safe_base(), rel))
+
+    # 防御路径穿越：最终路径必须在 safe_base 内
+    base = _safe_base()
+    if abs_path != base and not abs_path.startswith(base + os.sep):
+        logger.warning("路径穿越检测: %s", rel_path)
+        return None, 403
+
+    return abs_path, None
 
 
 # =====================================================================
@@ -37,21 +73,24 @@ def _list_dir(base: str) -> list[dict]:
         else:
             stat = os.stat(full)
             entries.append((name, "file", stat.st_mtime))
-    # 目录在前，文件在后，各自按 mtime 升序
     entries.sort(key=lambda x: (0 if x[1] == "directory" else 1, x[2] if x[1] == "file" else 0))
+    base_prefix = _safe_base()
     for name, typ, data in entries:
         full = os.path.join(base, name)
+        # 返回给前端的路径用 raw/sources/xxx 格式（相对 APP_DATA_DIR）
+        rel_to_appdata = os.path.relpath(full, os.path.dirname(base_prefix))
+        display_path = rel_to_appdata.replace("\\", "/")
         if typ == "directory":
-            items.append({"name": name, "type": "directory", "path": full.replace("\\", "/"), "children": data})
+            items.append({"name": name, "type": "directory", "path": display_path, "children": data})
         else:
-            items.append({"name": name, "type": "file", "path": full.replace("\\", "/"), "size": int(os.path.getsize(full))})
+            items.append({"name": name, "type": "file", "path": display_path, "size": int(os.path.getsize(full))})
     return items
 
 
 @router.get("/v1/sources/tree")
 async def sources_tree():
     """返回 raw/sources/ 的完整目录树"""
-    base = "raw/sources"
+    base = _safe_base()
     if not os.path.isdir(base):
         return {"tree": [], "total_files": 0}
     tree = _list_dir(base)
@@ -74,19 +113,12 @@ def _count_files(tree: list[dict]) -> int:
 # =====================================================================
 
 def _cascade_delete_wiki(source_path: str) -> int:
-    """删除关联的 Wiki 页面（通过 sources frontmatter 匹配），返回删除数
-
-    注意：wiki_pages 表中没有 source_file 字段（待 migration），
-    所以目前 cascade 仅尝试匹配 frontmatter 中的 sources: 字段。
-    匹配不到时静默返回 0，不影响源文件本身的删除。
-    """
-    import re
-    import sqlite3
-    from pathlib import Path
-
-    wiki_dir = "wiki"
+    """删除关联的 Wiki 页面（通过 sources frontmatter 匹配），返回删除数"""
+    wiki_dir = get_wiki_dir()
+    db_file = get_db_path("wiki.db")
     deleted = 0
-    source_ref = source_path.replace("\\", "/")
+    source_ref = os.path.basename(source_path).replace("\\", "/")
+    source_abs = os.path.normpath(source_path)
 
     if not os.path.isdir(wiki_dir):
         return 0
@@ -97,20 +129,18 @@ def _cascade_delete_wiki(source_path: str) -> int:
         except OSError:
             continue
 
-        # 在 frontmatter 中找 sources: 字段
         m = re.search(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
         if not m:
             continue
         frontmatter = m.group(1)
-        if source_ref in frontmatter or os.path.basename(source_ref) in frontmatter:
-            rel_path = str(wiki_file).replace("\\", "/")
+        if source_ref in frontmatter or source_abs.replace("\\", "/") in frontmatter:
+            rel_path = str(wiki_file.relative_to(wiki_dir)).replace("\\", "/")
             try:
                 wiki_file.unlink()
             except OSError:
                 pass
-            # 删 DB
             try:
-                conn = sqlite3.connect("wiki.db")
+                conn = sqlite3.connect(db_file)
                 conn.execute("DELETE FROM wiki_pages WHERE path = ?", (rel_path,))
                 conn.execute("DELETE FROM page_links WHERE source_path = ? OR target_path = ?", (rel_path, rel_path))
                 conn.commit()
@@ -124,10 +154,7 @@ def _cascade_delete_wiki(source_path: str) -> int:
 
 @router.delete("/v1/sources/delete")
 async def delete_source(path: str = ""):
-    """删除单个源文件或空目录，级联删除关联 wiki 页面
-
-    用 query parameter 传 path，避免 URL 路径编码问题。
-    """
+    """删除单个源文件或空目录，级联删除关联 wiki 页面"""
     raw_path = path
     path = path.strip().lstrip("/").replace("\\", "/")
     logger.info("DELETE /v1/sources/delete | raw=%s cleaned=%s", raw_path, path)
@@ -136,32 +163,30 @@ async def delete_source(path: str = ""):
         logger.warning("DELETE 拒绝: path 为空 | raw=%s", raw_path)
         return JSONResponse(status_code=400, content={"error": "path is required"})
 
-    # 安全校验：路径必须在 raw/sources/ 下
-    safe_prefix = "raw/sources/"
-    if not path.startswith(safe_prefix):
-        logger.warning("DELETE 安全校验失败 | path=%s 不满足前缀=%s", path, safe_prefix)
-        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    abs_path, err = _resolve_source_path(path)
+    if err:
+        return JSONResponse(status_code=err, content={"error": "Access denied"})
 
-    logger.info("DELETE 安全校验通过 | path=%s", path)
+    assert abs_path is not None
 
-    if os.path.isdir(path):
-        logger.info("DELETE 目标为目录 | path=%s", path)
+    if os.path.isdir(abs_path):
+        logger.info("DELETE 目标为目录 | abs=%s", abs_path)
         try:
-            os.rmdir(path)
-            logger.info("DELETE 目录已删除 | path=%s", path)
+            os.rmdir(abs_path)
+            logger.info("DELETE 目录已删除 | abs=%s", abs_path)
         except OSError as e:
-            logger.error("DELETE 目录删除失败 | path=%s error=%s", path, e)
+            logger.error("DELETE 目录删除失败 | abs=%s error=%s", abs_path, e)
             return JSONResponse(status_code=400, content={"error": f"Directory not empty or cannot delete: {e}"})
         return {"status": "deleted", "source": path, "wiki_pages_deleted": 0}
 
-    if not os.path.isfile(path):
-        logger.warning("DELETE 文件不存在 | path=%s cwd=%s", path, os.getcwd())
+    if not os.path.isfile(abs_path):
+        logger.warning("DELETE 文件不存在 | abs=%s", abs_path)
         return JSONResponse(status_code=404, content={"error": "File not found", "path": path})
 
-    logger.info("DELETE 目标为文件 | path=%s", path)
-    wiki_deleted = _cascade_delete_wiki(path)
-    os.remove(path)
-    logger.info("DELETE 文件已删除 | path=%s wiki_deleted=%d", path, wiki_deleted)
+    logger.info("DELETE 目标为文件 | abs=%s", abs_path)
+    wiki_deleted = _cascade_delete_wiki(abs_path)
+    os.remove(abs_path)
+    logger.info("DELETE 文件已删除 | abs=%s wiki_deleted=%d", abs_path, wiki_deleted)
 
     return {"status": "deleted", "source": path, "wiki_pages_deleted": wiki_deleted}
 
@@ -171,17 +196,17 @@ async def delete_source_folder(folder_path: str):
     """级联删除文件夹，级联删除关联 wiki 页面"""
     logger.info("DELETE /v1/sources/folder/%s", folder_path)
 
-    full = os.path.normpath(folder_path)
-    safe_base = os.path.normpath("raw/sources")
-    if not full.startswith(safe_base + os.sep) and full != safe_base:
-        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    abs_path, err = _resolve_source_path(folder_path)
+    if err:
+        return JSONResponse(status_code=err, content={"error": "Access denied"})
 
-    if not os.path.isdir(full):
+    assert abs_path is not None
+
+    if not os.path.isdir(abs_path):
         return JSONResponse(status_code=404, content={"error": "Directory not found", "path": folder_path})
 
-    # 统计所有子文件
-    file_paths = []
-    for root, dirs, files in os.walk(full):
+    file_paths: list[str] = []
+    for root, _, files in os.walk(abs_path):
         for f in files:
             fp = os.path.join(root, f).replace("\\", "/")
             file_paths.append(fp)
@@ -190,7 +215,7 @@ async def delete_source_folder(folder_path: str):
     for fp in file_paths:
         total_wiki_deleted += _cascade_delete_wiki(fp)
 
-    shutil.rmtree(full)
+    shutil.rmtree(abs_path)
 
     return {"status": "deleted", "folder": folder_path, "files_deleted": len(file_paths), "wiki_pages_deleted": total_wiki_deleted}
 
@@ -200,27 +225,24 @@ async def delete_source_folder(folder_path: str):
 # =====================================================================
 
 class ExtractRequest(BaseModel):
-    """大文件提取请求"""
     source_path: str
     force: bool = False
 
 
 @router.post("/v1/sources/extract-to-wiki")
 async def extract_to_wiki(body: ExtractRequest):
-    """大文件 → Agent 多页面提取
-
-    - 文件无变化时返回 status=skipped（前端提示用户）
-    - force=true 时跳过 SHA256 缓存检查，强制重新生成
-    """
+    """大文件 → Agent 多页面提取"""
     source_path = body.source_path
     force = body.force
     logger.info("POST /v1/sources/extract-to-wiki | %s force=%s", source_path, force)
 
-    full = os.path.normpath(source_path)
-    safe_base = os.path.normpath("raw/sources")
-    if not full.startswith(safe_base + os.sep) and full != safe_base:
-        return JSONResponse(status_code=403, content={"error": "Access denied"})
-    if not os.path.isfile(full):
+    abs_path, err = _resolve_source_path(source_path)
+    if err:
+        return JSONResponse(status_code=err, content={"error": "Access denied"})
+
+    assert abs_path is not None
+
+    if not os.path.isfile(abs_path):
         return JSONResponse(status_code=404, content={"error": "File not found", "path": source_path})
 
     from src.core.compiler import WikiCompiler
@@ -228,9 +250,11 @@ async def extract_to_wiki(body: ExtractRequest):
 
     compiler = WikiCompiler(task_queue=get_task_queue())
 
+    # compiler.ingest 接受相对路径（相对 sources_dir），传入相对基目录的路径
+    rel = os.path.relpath(abs_path, _safe_base())
+
     try:
-        result = compiler.ingest(source_path, force=force)
-        # 透传 compiler 返回的 status (ok/skipped/success)
+        result = compiler.ingest(rel, force=force)
         return JSONResponse({
             "status": result.get("status", "ok"),
             "message": result.get("message", "提取完成"),
@@ -246,33 +270,24 @@ async def extract_to_wiki(body: ExtractRequest):
 # 提取前预检
 # =====================================================================
 
-
 @router.get("/v1/sources/check-changed")
 async def check_source_changed(path: str):
-    """检查源文件自上次 ingest 后是否变化
-
-    返回 {"changed": true/false, "cached": true/false}
-    - changed=true → 文件有变更或从未 ingest，需要提取
-    - changed=false → 文件无变更，缓存命中，提醒用户
-    """
+    """检查源文件自上次 ingest 后是否变化"""
     logger.info("GET /v1/sources/check-changed | path=%s", path)
 
-    # 安全校验
-    safe_prefix = "raw/sources/"
-    if not path.startswith(safe_prefix):
-        return JSONResponse(status_code=403, content={"error": "Access denied"})
-    full = os.path.normpath(path)
-    safe_base = os.path.normpath(safe_prefix)
-    if not full.startswith(safe_base):
-        return JSONResponse(status_code=403, content={"error": "Path traversal detected"})
-    if not os.path.isfile(full):
+    abs_path, err = _resolve_source_path(path)
+    if err:
+        return JSONResponse(status_code=err, content={"error": "Access denied"})
+
+    assert abs_path is not None
+
+    if not os.path.isfile(abs_path):
         return JSONResponse(status_code=404, content={"error": "File not found"})
 
     from src.core.cache import IngestCache
-    cache = IngestCache(sources_dir=safe_prefix)
+    cache = IngestCache()
 
-    # path 是 "raw/sources/xxx.md"，IngestCache 需要相对路径
-    rel_path = path[len(safe_prefix):]
+    rel_path = os.path.relpath(abs_path, _safe_base())
     changed = cache.has_changed(rel_path)
     return {
         "changed": changed,
@@ -286,47 +301,37 @@ async def check_source_changed(path: str):
 # =====================================================================
 
 class SourceEditRequest(BaseModel):
-    """编辑原始资料文件请求"""
     path: str
     content: str
 
 
 @router.post("/v1/sources/edit")
 async def edit_source(body: SourceEditRequest):
-    """编辑原始资料文件，保存后自动触发 ingest 更新 Wiki
-
-    流程：写文件 → 调用 WikiCompiler.ingest() → SHA256 缓存自动更新 → 返回结果
-    """
+    """编辑原始资料文件，保存后自动触发 ingest 更新 Wiki"""
     path = body.path.strip()
     logger.info("POST /v1/sources/edit | %s", path)
 
-    # 安全校验：路径必须在 raw/sources/ 下
-    safe_prefix = "raw/sources/"
-    if not path.startswith(safe_prefix):
-        return JSONResponse(status_code=403, content={"error": "Access denied: path must be under raw/sources/"})
+    abs_path, err = _resolve_source_path(path)
+    if err:
+        return JSONResponse(status_code=err, content={"error": "Access denied"})
 
-    full = os.path.normpath(path)
-    safe_base = os.path.normpath(safe_prefix)
-    if not full.startswith(safe_base):
-        return JSONResponse(status_code=403, content={"error": "Path traversal detected"})
+    assert abs_path is not None
 
-    if not os.path.isfile(full):
+    if not os.path.isfile(abs_path):
         return JSONResponse(status_code=404, content={"error": "File not found", "path": path})
 
-    # 写文件
     try:
-        with open(full, "w", encoding="utf-8") as f:
+        with open(abs_path, "w", encoding="utf-8") as f:
             f.write(body.content)
-        logger.info("文件已写入 | path=%s size=%d", path, len(body.content))
+        logger.info("文件已写入 | abs=%s size=%d", abs_path, len(body.content))
     except OSError as e:
-        logger.error("文件写入失败 | path=%s error=%s", path, e)
+        logger.error("文件写入失败 | abs=%s error=%s", abs_path, e)
         return JSONResponse(status_code=500, content={"error": f"Write failed: {e}"})
 
-    # 触发 ingest
     from src.core.compiler import WikiCompiler
     from src.app_state import get_task_queue
 
-    rel_path = path[len(safe_prefix):]  # raw/sources/ 之后的相对路径
+    rel_path = os.path.relpath(abs_path, _safe_base())
     compiler = WikiCompiler(task_queue=get_task_queue())
 
     try:

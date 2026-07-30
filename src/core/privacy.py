@@ -4,6 +4,7 @@
 import sqlite3
 
 from src.db.schema import CREATE_TABLES
+from src.utils.path_resolver import get_db_path
 
 DEFAULT_KEYWORDS: dict[str, list[str]] = {
     "emotion": ["情感", "恋爱", "失恋", "暗恋", "分手", "情侣", "配偶",
@@ -29,8 +30,8 @@ DEFAULT_CATEGORIES = {
 class PrivacyManager:
     """隐私规则管理器"""
 
-    def __init__(self, db_path: str = "wiki.db") -> None:
-        self.db_path = db_path
+    def __init__(self, db_path: str | None = None) -> None:
+        self.db_path = db_path if db_path is not None else get_db_path("wiki.db")
         self._init_db()
 
     def _get_conn(self) -> sqlite3.Connection:

@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from src.core.logging_config import get_logger
 from src.core.compiler import WikiCompiler
+from src.utils.path_resolver import get_db_path
 
 logger = get_logger("ingest_queue")
 
@@ -25,17 +26,17 @@ class IngestQueue:
 
     def __init__(
         self,
-        db_path: str = "wiki.db",
+        db_path: str | None = None,
         poll_interval: float = 1.0,
         task_queue=None,
     ) -> None:
         """
         Args:
-            db_path: SQLite 数据库路径
+            db_path: SQLite 数据库路径，None 时使用 %APPDATA%/LLM-Wiki/wiki.db
             poll_interval: 轮询间隔（秒）
             task_queue: 可选的 TaskQueue 实例，ingest 后异步重建图谱
         """
-        self.db_path = db_path
+        self.db_path = db_path if db_path is not None else get_db_path("wiki.db")
         self.poll_interval = poll_interval
         self.task_queue = task_queue
         self._running = False

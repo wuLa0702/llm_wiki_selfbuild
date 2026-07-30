@@ -9,10 +9,16 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from src.utils.path_resolver import get_app_dir, get_raw_dir, get_wiki_dir
+
 logger = logging.getLogger("api.routes.purpose")
 router = APIRouter(tags=["purpose"])
 
-PURPOSE_FILE = "purpose.md"
+
+def _purpose_file() -> str:
+    return os.path.join(get_app_dir(), "purpose.md")
+
+
 DEFAULT_DIRECTIONS = {
     "reading_notes": {
         "label": "📖 读书笔记",
@@ -48,36 +54,30 @@ DEFAULT_DIRECTIONS = {
 
 
 class DirectionInfo(BaseModel):
-    """方向信息"""
     label: str
     description: str
     hint: str
 
 
 class DirectionsResponse(BaseModel):
-    """可用方向列表"""
     directions: dict[str, DirectionInfo]
 
 
 class GenerateRequest(BaseModel):
-    """生成 purpose 请求"""
     direction: str
 
 
 class PurposeResponse(BaseModel):
-    """purpose 响应"""
     content: str = ""
     exists: bool = False
 
 
 class PurposeUpdateRequest(BaseModel):
-    """更新 purpose 请求"""
     content: str
 
 
 @router.get("/v1/purpose/directions", response_model=DirectionsResponse)
 async def list_directions():
-    """获取可选的 Wiki 方向列表"""
     return DirectionsResponse(
         directions={k: DirectionInfo(**v) for k, v in DEFAULT_DIRECTIONS.items()}
     )
@@ -85,7 +85,6 @@ async def list_directions():
 
 @router.post("/v1/purpose/generate", response_model=PurposeResponse)
 async def generate_purpose(body: GenerateRequest):
-    """根据选择的方向生成 purpose.md"""
     if body.direction not in DEFAULT_DIRECTIONS:
         return JSONResponse(
             status_code=400,
@@ -107,7 +106,9 @@ async def generate_purpose(body: GenerateRequest):
 {dir_info['hint']}。
 """
 
-    with open(PURPOSE_FILE, "w", encoding="utf-8") as f:
+    pf = _purpose_file()
+    os.makedirs(os.path.dirname(pf), exist_ok=True)
+    with open(pf, "w", encoding="utf-8") as f:
         f.write(content)
 
     return PurposeResponse(content=content, exists=True)
@@ -115,17 +116,18 @@ async def generate_purpose(body: GenerateRequest):
 
 @router.get("/v1/purpose", response_model=PurposeResponse)
 async def read_purpose():
-    """读取当前 purpose.md"""
-    if not os.path.exists(PURPOSE_FILE):
+    pf = _purpose_file()
+    if not os.path.exists(pf):
         return PurposeResponse(content="", exists=False)
-    with open(PURPOSE_FILE, "r", encoding="utf-8") as f:
+    with open(pf, "r", encoding="utf-8") as f:
         return PurposeResponse(content=f.read(), exists=True)
 
 
 @router.put("/v1/purpose", response_model=PurposeResponse)
 async def update_purpose(body: PurposeUpdateRequest):
-    """直接更新 purpose.md 内容"""
-    with open(PURPOSE_FILE, "w", encoding="utf-8") as f:
+    pf = _purpose_file()
+    os.makedirs(os.path.dirname(pf), exist_ok=True)
+    with open(pf, "w", encoding="utf-8") as f:
         f.write(body.content)
     return PurposeResponse(content=body.content, exists=True)
 
@@ -134,15 +136,14 @@ async def update_purpose(body: PurposeUpdateRequest):
 # ------------------------------------------------------------------
 
 class FileTreeItem(BaseModel):
-    """文件树节点"""
-    type: str  # "file" | "directory"
+    type: str
     size: int = 0
 
 
 FileTreeResponse = dict[str, "FileTreeItem | dict"]
 
+
 def _build_tree(base_dir: str) -> dict:
-    """递归构建目录树，按修改时间排序（目录优先，然后文件按 mtime 升序）"""
     result = {}
     if not os.path.isdir(base_dir):
         return result
@@ -158,7 +159,6 @@ def _build_tree(base_dir: str) -> dict:
             elif name.endswith(".md") or name.endswith(".txt"):
                 stat = os.stat(full)
                 items.append((name, {"type": "file", "size": stat.st_size, "mtime": int(stat.st_mtime)}))
-        # 排序：目录在前，文件在后，各自按 mtime 升序（先添加的先显示）
         items.sort(key=lambda x: (0 if x[1]["type"] == "directory" else 1, x[1].get("mtime", 0)))
         for name, data in items:
             result[name] = data
@@ -169,82 +169,89 @@ def _build_tree(base_dir: str) -> dict:
 
 @router.get("/v1/file-tree")
 async def get_file_tree():
-    """获取文件树（wiki/ + raw/sources/ + purpose.md）"""
     tree = {}
 
-    # wiki/ 目录
-    if os.path.isdir("wiki"):
-        tree["wiki"] = {"type": "directory", "children": _build_tree("wiki")}
+    wiki_dir = get_wiki_dir()
+    if os.path.isdir(wiki_dir):
+        tree["wiki"] = {"type": "directory", "children": _build_tree(wiki_dir)}
 
-    # raw/ 目录 — 一级级展开，不折叠
-    if os.path.isdir("raw"):
-        tree["raw"] = {"type": "directory", "children": _build_tree("raw")}
+    raw_dir = get_raw_dir()
+    if os.path.isdir(raw_dir):
+        tree["raw"] = {"type": "directory", "children": _build_tree(raw_dir)}
 
-    # purpose.md
-    if os.path.exists("purpose.md"):
-        tree["purpose.md"] = {"type": "file", "size": os.path.getsize("purpose.md")}
+    pf = _purpose_file()
+    if os.path.exists(pf):
+        tree["purpose.md"] = {"type": "file", "size": os.path.getsize(pf)}
 
     return tree
 
 
+def _resolve_display_path(path: str) -> tuple[str | None, int | None]:
+    """将前端路径 (wiki/xxx, raw/xxx, purpose.md) 解析为绝对路径。
+
+    Returns:
+        (abs_path, None) 或 (None, status_code)
+    """
+    wiki_dir = get_wiki_dir()
+    raw_dir = get_raw_dir()
+    app_dir = get_app_dir()
+
+    if path == "purpose.md":
+        return os.path.join(app_dir, "purpose.md"), None
+
+    if path.startswith("wiki/"):
+        rel = path[5:]
+        abs_path = os.path.normpath(os.path.join(wiki_dir, rel))
+        if not abs_path.startswith(wiki_dir):
+            return None, 403
+        return abs_path, None
+
+    if path.startswith("raw/"):
+        rel = path[4:]
+        abs_path = os.path.normpath(os.path.join(raw_dir, rel))
+        if not abs_path.startswith(raw_dir):
+            return None, 403
+        return abs_path, None
+
+    return None, 403
+
+
 @router.get("/v1/file-content")
 async def get_file_content(path: str):
-    """读取文件内容"""
-    import os
+    abs_path, err = _resolve_display_path(path)
+    if err:
+        return JSONResponse(status_code=err, content={"error": "Access denied"})
 
-    # 安全校验：只允许读取 wiki/ raw/ purpose.md
-    safe = False
-    allowed_prefixes = ("wiki/", "raw/")
-    if path == "purpose.md":
-        safe = True
-    elif any(path.startswith(p) for p in allowed_prefixes):
-        # 防止路径穿越
-        full = os.path.normpath(path)
-        if not full.startswith(".."):
-            safe = True
+    assert abs_path is not None
 
-    if not safe:
-        return JSONResponse(status_code=403, content={"error": "Access denied"})
-
-    if not os.path.exists(path):
+    if not os.path.exists(abs_path):
         return JSONResponse(status_code=404, content={"error": "File not found"})
 
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(abs_path, "r", encoding="utf-8") as f:
             content = f.read()
-        return {"path": path, "content": content, "size": os.path.getsize(path)}
+        return {"path": path, "content": content, "size": os.path.getsize(abs_path)}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 class FileWriteRequest(BaseModel):
-    """写入文件请求"""
     path: str
     content: str
 
 
 @router.post("/v1/file-content")
 async def write_file_content(body: FileWriteRequest):
-    """写入文件内容"""
-    path = body.path
-    content = body.content
+    abs_path, err = _resolve_display_path(body.path)
+    if err:
+        return JSONResponse(status_code=err, content={"error": "Access denied"})
 
-    safe = False
-    allowed_prefixes = ("wiki/", "raw/")
-    if path == "purpose.md":
-        safe = True
-    elif any(path.startswith(p) for p in allowed_prefixes):
-        full = os.path.normpath(path)
-        if not full.startswith(".."):
-            safe = True
-
-    if not safe:
-        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    assert abs_path is not None
 
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-        return {"status": "ok", "path": path}
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        with open(abs_path, "w", encoding="utf-8") as f:
+            f.write(body.content)
+        return {"status": "ok", "path": body.path}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})

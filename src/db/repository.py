@@ -4,16 +4,19 @@
 import json
 import sqlite3
 
+from src.utils.path_resolver import get_db_path
+
 
 class WikiRepository:
     """Wiki 元数据的数据访问层"""
 
-    def __init__(self, db_path: str = "wiki.db") -> None:
+    def __init__(self, db_path: str | None = None) -> None:
         """
         Args:
-            db_path: SQLite 数据库文件路径（支持 :memory: 用于测试）
+            db_path: SQLite 数据库文件路径（支持 :memory: 用于测试）。
+                     None 时默认使用用户数据目录下的 wiki.db。
         """
-        self.db_path = db_path
+        self.db_path = db_path if db_path is not None else get_db_path("wiki.db")
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:

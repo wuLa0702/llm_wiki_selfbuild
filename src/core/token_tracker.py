@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 from src.core.logging_config import get_logger
 from src.core.pricing import PricingProvider
+from src.utils.path_resolver import get_db_path
 
 logger = get_logger("token_tracker")
 
@@ -24,15 +25,15 @@ class TokenTracker:
     """Token 消耗追踪器 — 内存汇聚 + SQLite 持久化"""
 
     def __init__(
-        self, db_path: str = "wiki.db", pricing: PricingProvider | None = None
+        self, db_path: str | None = None, pricing: PricingProvider | None = None
     ) -> None:
         """
         Args:
-            db_path: SQLite 数据库路径
+            db_path: SQLite 数据库路径，None 时使用 %APPDATA%/LLM-Wiki/wiki.db
             pricing: 价格查询器，不传则使用默认 PricingProvider(db_path)
         """
-        self.db_path = db_path
-        self.pricing = pricing or PricingProvider(db_path)
+        self.db_path = db_path if db_path is not None else get_db_path("wiki.db")
+        self.pricing = pricing or PricingProvider(self.db_path)
         self._ensure_table()
 
     # ------------------------------------------------------------------

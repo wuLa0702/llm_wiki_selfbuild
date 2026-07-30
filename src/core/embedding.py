@@ -50,7 +50,10 @@ class EmbeddingEngine:
             return
 
         try:
-            self.client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
+            from src.utils.path_resolver import get_app_dir
+            chroma_dir = os.path.join(get_app_dir(), "chroma_db")
+            os.makedirs(chroma_dir, exist_ok=True)
+            self.client = chromadb.PersistentClient(path=chroma_dir)
             # 原有 — 整页 collection
             self.collection = self.client.get_or_create_collection(
                 name="wiki_pages",
@@ -68,7 +71,7 @@ class EmbeddingEngine:
             self._model = SentenceTransformer(model_path)
             logger.info(
                 "Embedding 引擎已初始化 | dir=%s model=%s chunks=%s",
-                settings.chroma_persist_dir, model_path,
+                chroma_dir, model_path,
                 settings.chunk_search_enabled,
             )
         except Exception as exc:

@@ -14,6 +14,7 @@ from datetime import datetime
 
 from src.core.logging_config import get_logger
 from src.core.compiler import WikiCompiler
+from src.utils.path_resolver import get_raw_sources_dir
 
 logger = get_logger("watcher")
 
@@ -23,17 +24,17 @@ class SourceWatcher:
 
     def __init__(
         self,
-        sources_dir: str = "raw/sources",
+        sources_dir: str | None = None,
         poll_interval: int = 10,
         task_queue=None,
     ) -> None:
         """
         Args:
-            sources_dir: 源文件目录路径
+            sources_dir: 源文件目录路径，None 时使用 %APPDATA%/LLM-Wiki/raw/sources
             poll_interval: 轮询间隔（秒）
             task_queue: 可选的 TaskQueue 实例，用于 ingest 后异步重建图谱
         """
-        self.sources_dir = sources_dir
+        self.sources_dir = sources_dir if sources_dir is not None else get_raw_sources_dir()
         self.poll_interval = poll_interval
         self.task_queue = task_queue
         self._running = False

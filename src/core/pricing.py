@@ -9,6 +9,7 @@ import sqlite3
 from datetime import datetime, timedelta
 
 from src.core.logging_config import get_logger
+from src.utils.path_resolver import get_db_path
 
 logger = get_logger("pricing")
 
@@ -70,8 +71,8 @@ CACHE_TTL = timedelta(hours=24)
 class PricingProvider:
     """模型价格查询器 — DB 缓存 + Web 抓取"""
 
-    def __init__(self, db_path: str = "wiki.db") -> None:
-        self.db_path = db_path
+    def __init__(self, db_path: str | None = None) -> None:
+        self.db_path = db_path if db_path is not None else get_db_path("wiki.db")
         self._ensure_table()
         self._ensure_seeds()
 

@@ -184,7 +184,8 @@ async def ingest_upload(request: Request):
         safe_path = os.path.normpath(filename)
         if safe_path.startswith("..") or safe_path.startswith("/"):
             continue
-        full_path = os.path.join("raw/sources", safe_path)
+        from src.utils.path_resolver import get_raw_sources_dir
+        full_path = os.path.join(get_raw_sources_dir(), safe_path)
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         try:
             content = await val.read()

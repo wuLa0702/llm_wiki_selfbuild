@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from src.app_state import get_watcher, set_watcher
 from src.core.privacy import PrivacyManager
 from src.utils.config_manager import is_configured, load_config, save_config
+from src.utils.path_resolver import get_raw_sources_dir
 from src.core.token_tracker import TokenTracker
 from src.core.compiler import WikiCompiler
 from src.models.common import (HealthResponse, PrivacyRuleListResponse,
@@ -243,7 +244,7 @@ async def watcher_status():
 class WatcherConfigRequest(BaseModel):
     """Watcher 配置请求"""
     poll_interval: int = 10
-    sources_dir: str = "raw/sources"
+    sources_dir: str | None = None  # None = 使用默认 raw/sources 路径
 
 
 @router.post("/v1/watcher/config")
@@ -255,7 +256,7 @@ async def watcher_config(body: WatcherConfigRequest):
     if watcher._running:
         return JSONResponse(status_code=400, content={"error": "请先停止 Watcher 再修改配置"})
     watcher.poll_interval = body.poll_interval
-    watcher.sources_dir = body.sources_dir
+    watcher.sources_dir = body.sources_dir if body.sources_dir is not None else get_raw_sources_dir()
     return {"status": "ok", "poll_interval": watcher.poll_interval, "sources_dir": watcher.sources_dir}
 
 
@@ -313,7 +314,7 @@ async def list_sources(page: int = 1, per_page: int = 50):
     logger.info("GET /v1/sources | page=%d per_page=%d", page, per_page)
 
     per_page = max(1, min(per_page, 200))
-    sources_dir = "raw/sources"
+    sources_dir = get_raw_sources_dir()
 
     if not os.path.isdir(sources_dir):
         return SourceListResponse(sources=[], total=0, page=page, per_page=per_page, total_pages=0)

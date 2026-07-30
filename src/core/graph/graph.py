@@ -15,6 +15,7 @@ import sqlite3
 from collections import defaultdict
 
 from src.core.logging_config import get_logger
+from src.utils.path_resolver import get_db_path
 
 logger = get_logger("graph")
 
@@ -156,10 +157,15 @@ class WikiGraph:
                     pass
         return h.hexdigest()
 
-    def save_cache(self, db_path: str = "wiki.db") -> None:
-        """将当前图谱写入 graph_cache 表"""
+    def save_cache(self, db_path: str | None = None) -> None:
+        """将当前图谱写入 graph_cache 表
+
+        Args:
+            db_path: SQLite 数据库路径，None 时使用 %APPDATA%/LLM-Wiki/wiki.db
+        """
         from src.db.schema import CREATE_TABLES
-        conn = sqlite3.connect(db_path)
+        resolved = db_path if db_path is not None else get_db_path("wiki.db")
+        conn = sqlite3.connect(resolved)
         conn.executescript(CREATE_TABLES)
 
         sig = self._compute_signature(self.wiki_dir)
@@ -180,14 +186,18 @@ class WikiGraph:
         conn.close()
         logger.info("WikiGraph 缓存已写入 | nodes=%d", len(self._adj))
 
-    def load_cache(self, db_path: str = "wiki.db") -> bool:
+    def load_cache(self, db_path: str | None = None) -> bool:
         """尝试从 graph_cache 加载图谱
+
+        Args:
+            db_path: SQLite 数据库路径，None 时使用 %APPDATA%/LLM-Wiki/wiki.db
 
         Returns:
             True - 加载成功（缓存有效），False - 无缓存或签名不匹配
         """
         try:
-            conn = sqlite3.connect(db_path)
+            resolved = db_path if db_path is not None else get_db_path("wiki.db")
+            conn = sqlite3.connect(resolved)
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM graph_cache WHERE id = 1"
@@ -219,17 +229,21 @@ class WikiGraph:
             return False
 
     @classmethod
-    def compute_and_cache(cls, db_path: str = "wiki.db") -> "WikiGraph":
+    def compute_and_cache(cls, db_path: str | None = None) -> "WikiGraph":
         """构建图谱 + 计算关联度 + 写入缓存（一次写入，后续启动从缓存加载）
 
         第一启动：全量扫描 + N² 计算 + 写入 DB
         后续启动：签名匹配 → 直接加载缓存（零扫描，零计算）
         文件变化：ingest 后 invalidate() → 下回读取触发增量查/重建
+
+        Args:
+            db_path: SQLite 数据库路径，None 时使用 %APPDATA%/LLM-Wiki/wiki.db
         """
+        resolved = db_path if db_path is not None else get_db_path("wiki.db")
         graph = cls()
 
         # 优先从缓存加载——无文件变化时零操作
-        if graph.load_cache(db_path):
+        if graph.load_cache(resolved):
             logger.info("WikiGraph 缓存命中，跳过预热")
             return graph
 
@@ -239,7 +253,7 @@ class WikiGraph:
         graph.build()
         repo = WikiRepository()
         graph.compute_relevance(repo)
-        graph.save_cache(db_path)
+        graph.save_cache(resolved)
         logger.info("WikiGraph 预热完成 | nodes=%d", len(graph.nodes()))
         return graph
 
