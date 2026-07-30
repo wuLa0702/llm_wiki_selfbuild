@@ -54,17 +54,19 @@ async def health():
     try:
         from src.db.repository import WikiRepository
         repo = WikiRepository()
-        all_pages = repo.get_all_pages()
-        total_pages = len(all_pages) if all_pages else 0
+        conn = repo._get_connection()
+        row = conn.execute("SELECT COUNT(*) FROM wiki_pages").fetchone()
+        total_pages = row[0] if row else 0
+        conn.close()
     except Exception:
         pass
 
     try:
-        from src.core.compiler import WikiCompiler
-        compiler = WikiCompiler()
-        g = compiler.graph.to_dict(repo=compiler.repo)
-        graph_nodes = len(g.get("nodes", []))
-        graph_edges = len(g.get("edges", []))
+        from src.core.graph.graph import WikiGraph
+        g = WikiGraph()
+        if g.load_cache():
+            graph_nodes = len(g.nodes())
+            graph_edges = len(g.edges())
     except Exception:
         pass
 

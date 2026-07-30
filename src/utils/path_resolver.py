@@ -23,15 +23,30 @@ logger = logging.getLogger("path_resolver")
 
 # ── 应用标识 ──────────────────────────────────────────────────────────────────
 APP_NAME = "LLM-Wiki"
-APP_DATA_DIR = os.environ.get(
-    "LLM_WIKI_DATA_DIR",  # 环境变量可覆盖，方便测试
-    os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME),
-)
 
 
 def is_frozen() -> bool:
     """判断是否在 PyInstaller 打包环境中运行"""
     return getattr(sys, "frozen", False)
+
+
+def _resolve_app_dir() -> str:
+    """解析用户数据根目录。
+
+    优先级：
+      1. LLM_WIKI_DATA_DIR 环境变量（最高，测试/特殊场景覆盖）
+      2. PyInstaller 打包模式（frozen）→ %APPDATA%/LLM-Wiki/（跨版本持久化）
+      3. 开发模式（非 frozen）→ 当前工作目录（CWD），和历史行为一致
+    """
+    env_dir = os.environ.get("LLM_WIKI_DATA_DIR")
+    if env_dir:
+        return env_dir
+    if is_frozen():
+        return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
+    return str(Path.cwd())
+
+
+APP_DATA_DIR = _resolve_app_dir()
 
 
 def get_exe_dir() -> str:
