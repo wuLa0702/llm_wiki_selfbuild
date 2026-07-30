@@ -89,6 +89,7 @@ def main():
             port=PORT,
             log_level="warning",
             reload=False,  # 打包模式禁用热重载
+            log_config=None,  # 禁止 uvicorn 默认日志（console=False 时 sys.stdout=None 会炸）
         )
     except KeyboardInterrupt:
         logger.info("收到退出信号，优雅关闭...")
