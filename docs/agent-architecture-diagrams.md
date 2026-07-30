@@ -1,6 +1,6 @@
 # Agent 架构图 — 当前节点与未来拓展
 
-> 生成日期：2026-07-28
+> 生成日期：2026-07-30
 > 对应代码：`src/agent/`（四层模块：perception/planning/memory/action + session.py）
 > 关联文档：[2026年7月 AI Agent 面试行情与招聘变化](./ai-agent-interview-market-2026-07.md)
 
@@ -12,29 +12,30 @@
 
 | 标记 | 含义 | 当前覆盖内容 |
 |:----:|:-----|:-------------|
-| `🔴 v6` | 最近一次改动的图例 | ReAct + Self-Correction 三层自修正架构（validate_tool/verify_result/reflect_node）|
-| `🟡 v5` | 最近两次改动的图例 | 模块化重构（四层架构）+ Working Memory + Attention Sink + 索引表 + session.py |
-| `🟢 v4` | 最近三次改动的图例 | 对话摘要压缩 summarizer 节点 + 结构化输出 |
+| `🔴 v8` | 最近一次改动的图例 | 前置意图分类 + ToolRegistry（Section 一/四/五）|
+| `🟡 v7` | 最近两次改动的图例 | 单/多 Agent 边界拆分（Section 四）|
+| `🟢 v6` | 最近三次改动的图例 | ReAct + Self-Correction 三层自修正架构（Section 一/五/六）|
 
 **更新步骤**（每次编辑此文件时执行）：
 1. 全文搜索 `🔴` → 改为 `🟡`
 2. 全文搜索 `🟡` → 改为 `🟢`
 3. 全文搜索 `🟢` → 删除标记
-4. 在本次新增/改动的章节打上 `🔴 v6`
+4. 在本次新增/改动的章节打上 `🔴 v8`
 
 ---
 
 ## 一、当前 StateGraph 节点与边
 
-### 1.1 图结构（Mermaid）🔴 v6
+### 1.1 图结构（Mermaid）🟡 v6
 
 ```mermaid
 flowchart TD
-    START["__start__"] --> AGENT["agent<br/>call_model()"]
+    START["__start__"] --> INTENT["intent_classifier 🔴 v8<br/>前置意图分类"]
+    INTENT --> AGENT["agent<br/>call_model()"]
     AGENT --> EXTRACT_WM["extract_wm<br/>工作记忆提取"]
     EXTRACT_WM --> WM_EVICT["wm_eviction<br/>工作记忆维护"]
     WM_EVICT -->|"should_continue()"| COND{{"有 tool_calls ？"}}
-    COND -->|"是 → validate_tool"| VALIDATE["validate_tool 🔴 v6<br/>① 前置校验"]
+    COND -->|"是 → validate_tool"| VALIDATE["validate_tool 🟢 v6<br/>① 前置校验"]
     COND -->|"否 → summarizer"| SUMM["summarizer<br/>对话摘要压缩"]
     SUMM -->|"→ __end__"| END["__end__"]
 
@@ -47,12 +48,19 @@ flowchart TD
     COND_A -->|"批准 → tools"| TOOLS["tools"]
     COND_A -->|"拒绝 → agent"| AGENT
 
-    TOOLS --> VERIFY["verify_result 🔴 v6<br/>② 后置验证"]
+    TOOLS --> VERIFY["verify_result 🟢 v6<br/>② 后置验证"]
     VERIFY -->|"should_after_verify()"| COND_VF{{"验证结果"}}
     COND_VF -->|"有效 → agent"| AGENT
-    COND_VF -->|"质量差 → reflect"| REFLECT["reflect_node 🔴 v6<br/>③ 推理反思"]
+    COND_VF -->|"质量差 → reflect"| REFLECT["reflect_node 🟢 v6<br/>③ 推理反思"]
     REFLECT -->|"修正后重试"| AGENT
 ```
+
+**前置意图分类**（🔴 v8 新增）：
+- `intent_classifier` 作为图入口节点，在每轮用户输入进入 agent 前先识别意图
+- 分类结果（category + confidence）写入 `current_intent` 状态字段
+- 问候/闲聊 → 跳过工具绑定，节省 token
+- 知识查询 → 确保工具绑定有效
+- `top_intent` 映射：`greeting/chit_chat → chat`，`knowledge_query/clarification/general_query → search`
 
 **三层自修正链路**：
 - **① 前置校验** (`validate_tool`)：wm_eviction → 有 tool_calls → 步数熔断 + 动作去重 + 置信度评估 → 通过→approve / 阻断→agent / 超限→summarizer
@@ -60,23 +68,24 @@ flowchart TD
 - **③ 推理反思** (`reflect_node`)：LLM 评估上一步推理方向，verdict=revise 时注入自我修正计划 → agent 重试
 - `should_continue` 不变，仍然判断 `tool_calls` 有无；改动的是后续路由不再直连 approve，而是经由 validate_tool
 
-### 1.2 节点说明 🔴 v6
+### 1.2 节点说明 🟡 v6
 
 | 节点 | 函数 | 职责 | 版本 |
 |:-----|:-----|:------|:----:|
 | `__start__` | 自动生成 | LangGraph 入口，注入初始状态 | — |
-| **`agent`** | `call_model()` | 调 LLM（`llm_with_tools.invoke()`），注入 Attention Sink + Working Memory 上下文 | ✅ 手写 |
+| **`intent_classifier`** | `intent_classifier_node()` | **前置意图分类**：规则识别用户输入意图（问候/知识查询/闲聊/追问/操作/未知），结果注入 `current_intent` 状态 | ✅ 手写 🔴 |
+| **`agent`** | `call_model()` | 调 LLM（`llm_with_tools.invoke()`），注入 Attention Sink + Working Memory + intent 上下文 | ✅ 手写 |
 | **`extract_wm`** | `extract_wm_node()` | 从最新 AI 回复中提取关键信息到工作记忆（引用页面、用户目标） | ✅ 手写 |
 | **`wm_eviction`** | `wm_eviction_node()` | 工作记忆槽级压缩：case-insensitive dedup、容量截断、空值清理 | ✅ 手写 |
-| **`validate_tool`** | `validate_tool_node()` 🔴 | **① 前置校验**：步数熔断（≥MAX_STEPS→summarizer）+ 动作去重（executed_actions 哈希表）+ 差质量重复阻断→agent | ✅ 手写 🔴 |
+| **`validate_tool`** | `validate_tool_node()` 🟡 | **① 前置校验**：步数熔断（≥MAX_STEPS→summarizer）+ 动作去重（executed_actions 哈希表）+ 差质量重复阻断→agent | ✅ 手写 🟡 |
 | **`approve`** | `human_approval_node()` | 工具调用前暂停，通过 `interrupt()` 等待用户审批 | ✅ 手写 |
-| **`tools`** | `ToolNode(P1_TOOLS)` | 执行 LLM 请求的工具（search_wiki / read_page） | ✅ 手写 |
-| **`verify_result`** | `verify_result_node()` 🔴 | **② 后置验证**：工具输出空/错误检测 + 质量评级（good/poor/error）+ 写入 executed_actions 哈希表 | ✅ 手写 🔴 |
-| **`reflect_node`** | `reflect_node()` 🔴 | **③ 推理反思**：`with_structured_output(ReflectionResult)` 评估推理方向，verdict=revise 时注入自我修正 AIMessage | ✅ 手写 🔴 |
+| **`tools`** | `ToolNode(registry.list_enabled())` | 执行 LLM 请求的工具（search_wiki / read_page），工具来源由 ToolRegistry 动态管理 | ✅ 手写 🔴 |
+| **`verify_result`** | `verify_result_node()` 🟡 | **② 后置验证**：工具输出空/错误检测 + 质量评级（good/poor/error）+ 写入 executed_actions 哈希表 | ✅ 手写 🟡 |
+| **`reflect_node`** | `reflect_node()` 🟡 | **③ 推理反思**：`with_structured_output(ReflectionResult)` 评估推理方向，verdict=revise 时注入自我修正 AIMessage | ✅ 手写 🟡 |
 | **`summarizer`** | `summarizer_node()` | 对话超过阈值时压缩为 LLM 摘要，注入 Attention Sink + Working Memory 上下文 | ✅ 手写 |
 | `__end__` | 自动生成 | 图终止 | — |
 
-### 1.3 数据流（含持久化 + 新状态）🟡 v5
+### 1.3 数据流（含持久化 + 新状态）🟢 v5
 
 ```mermaid
 sequenceDiagram
@@ -130,7 +139,7 @@ sequenceDiagram
     Route-->>Client: SSE data: {"type": "done", "sources": [...]}
 ```
 
-### 1.4 状态定义（AgentState）🔴 v6
+### 1.4 状态定义（AgentState）🟡 v6
 
 ```
 AgentState (TypedDict)
@@ -140,6 +149,13 @@ AgentState (TypedDict)
 │   ├── AIMessage        ← LLM 回答（含 tool_calls）
 │   ├── ToolMessage      ← 工具执行结果
 │   └── ...
+│
+├── current_intent: dict  🔴 v8
+│   ← 前置意图分类结果，由 intent_classifier_node 写入
+│   ← 字段：{category, confidence, top_intent}
+│   ← category 枚举：greeting / knowledge_query / chit_chat / clarification /
+│                    tool_operation / general_query / unknown
+│   ← top_intent 映射：chat / search / tool / admin
 │
 ├── attention_sinks: list[dict]
 │   ← 关键信息锚定：用户要求记住或反复提及的信息
@@ -153,16 +169,16 @@ AgentState (TypedDict)
 │   ├── tool_cache         ← 工具输出缓存（字典，上限 5 条）
 │   └── entities_mentioned ← 提及的知识库页面（列表，上限 50）
 │
-├── step_count: int  🔴 v6
+├── step_count: int  🟡 v6
 │   ← 推理步数计数器，每次 call_model 自动 +1
 │   ← validate_tool 中检查 ≥MAX_STEPS 时路由到 summarizer
 │
-├── executed_actions: dict[str, Any]  🔴 v6
+├── executed_actions: dict[str, Any]  🟡 v6
 │   ← 已执行动作的哈希表，key = "tool_name:canonical_args"
 │   ← value = {tool, args, result_truncated, quality, timestamp}
 │   ← verify_result 中写入，validate_tool 中读取做去重
 │
-└── self_correction: dict[str, Any]  🔴 v6
+└── self_correction: dict[str, Any]  🟡 v6
     ← 自修正临时标记字段，各节点写入、条件路由函数读取
     ← 字段集：{validated, step_limit_reached, correction_reason,
                 poor_result, poor_tools, verified, reflection_verdict}
@@ -199,7 +215,7 @@ flowchart TD
     AFTER -->|"拒绝：追加 reject ToolMessage"| AGENT["agent 节点"]
 ```
 
-### 1.6 对话摘要压缩节点（summarizer）🟢 v4
+### 1.6 对话摘要压缩节点（summarizer）
 
 > 更新：`summarizer_node` 现在使用独立小模型 + 注入 Attention Sink + Working Memory 上下文。
 
@@ -228,7 +244,7 @@ summarizer_node 接收 state["messages"]
      └─ return {messages: [RemoveMessage, ..., SystemMessage(摘要)]}
 ```
 
-**小模型独立（P1 优化）** 🟡 v5：
+**小模型独立（P1 优化）** 🟢 v5：
 
 | 机制 | 说明 |
 |:-----|:------|
@@ -237,7 +253,7 @@ summarizer_node 接收 state["messages"]
 | 不阻塞 | 摘要请求不会占用主模型配额，不影响对话响应速度 |
 | 默认复用 | 未单独配置 API Key 时，自动复用主 LLM 的凭据 |
 
-### 1.7 结构化输出提取（format_response）🟢 v4
+### 1.7 结构化输出提取（format_response）
 
 > 未变更。
 
@@ -252,7 +268,7 @@ summarizer_node 接收 state["messages"]
   └─ 将 cited_pages 和 follow_up_questions 附加到 done 事件
 ```
 
-### 1.8 Attention Sink 锚定机制 🟡 v5
+### 1.8 Attention Sink 锚定机制 🟢 v5
 
 **设计原理**：
 - 工作记忆（`messages[]`）是线性、可压缩的
@@ -288,7 +304,7 @@ summarizer_node 接收 state["messages"]
 
 **注入时机**：每轮 `call_model()` 时，将锚定格式化为 SystemMessage 注入 LLM 输入（不污染 `messages[]` 历史）。
 
-### 1.9 Working Memory 工作记忆 🟡 v5
+### 1.9 Working Memory 工作记忆 🟢 v5
 
 **设计原理**：
 - Attention Sink 由用户驱动（用户说"记住"），Working Memory 由系统驱动（自动提取）
@@ -339,7 +355,7 @@ summarizer_node 接收 state["messages"]
 用户信息: name=张三, role=后端开发
 ```
 
-### 1.10 索引表 🟡 v5
+### 1.10 索引表 🟢 v5
 
 **设计目标**：跨会话消息搜索 + 实体关联，支持用户记忆召回和知识发现。
 
@@ -378,13 +394,59 @@ SQLite 索引表（同文件 memory/store.py）
 
 **索引触发时机**：在 `chat_stream_session` 中每次 `save_thread()` 后自动调用。
 
+### 1.11 前置意图分类（Intent Classification）🔴 v8
+
+**设计原理**：
+- 在每轮用户输入进入 agent 节点前，先识别意图类别
+- 规则优先：基于关键词快速分类，零 LLM 调用
+- LLM 兜底：规则不匹配时使用结构化 LLM 调用（预留接口）
+- 默认 search：无法确定时降级为 search（不阻断用户查询）
+
+**分类体系**：
+
+```
+用户输入 → intent_classifier_node()
+  │
+  ├─ 7 条规则匹配（按优先级）
+  │   ├─ greeting        ← 问候/告别/感谢
+  │   ├─ chit_chat       ← 闲聊（天气/能力/评价）
+  │   ├─ clarification   ← 追问/澄清
+  │   ├─ tool_operation  ← 系统操作搜索/页面
+  │   ├─ knowledge_query ← 知识查询（含提问词）
+  │   ├─ general_query   ← 普通中文文本（兜底）
+  │   └─ unknown         ← 无中文/空白
+  │
+  └─→ 返回 {category, confidence, top_intent}
+```
+
+**top_intent 映射**：
+
+| category | top_intent | 行为影响 |
+|:---------|:-----------|:---------|
+| greeting | chat | 问候不走工具 |
+| chit_chat | chat | 闲聊不走工具 |
+| knowledge_query | search | 确保工具绑定 |
+| clarification | search | 搜索回顾上下文 |
+| tool_operation | tool | 精确执行工具操作 |
+| general_query | search | 默认搜索 |
+| unknown | search | 安全降级（不阻断） |
+
+**规则优先级**：greeting > chit_chat > clarification > tool_operation > knowledge_query > general_query > unknown
+
+**实现亮点**：
+- `_has_chinese()` 检测中文字符，纯英文/空白直接 unknown
+- 规则使用正则匹配，一次性 import 无运行时依赖
+- `intent_classifier_node()` 作为图入口节点，结果写入 `current_intent` 状态
+- `classify_user_intent()` 提供规则 + LLM 兜底接口（当前 llm=None 走纯规则）
+- SSE `intent` 事件在 `chat_stream_session` 中透出至前端
+
 ---
 
 ## 二、多轮会话隔离（MemorySaver + SQLite 混合方案）
 
 > 2026-07-27 确立。2026-07-28 更新：新增 Attention Sink + Working Memory 持久化。
 
-### 2.1 架构决策 🟡 v5
+### 2.1 架构决策 🟢 v5
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -406,7 +468,7 @@ SQLite 索引表（同文件 memory/store.py）
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 混合方案流程图 🟡 v5
+### 2.2 混合方案流程图 🟢 v5
 
 ```mermaid
 flowchart TD
@@ -434,7 +496,7 @@ flowchart TD
     INDEX --> DONE["yield {type: done, sources}"]
 ```
 
-### 2.3 序列化/反序列化细节 🟡 v5
+### 2.3 序列化/反序列化细节 🟢 v5
 
 | 函数 | 输入 | 输出 | 关键映射 |
 |:-----|:-----|:-----|:---------|
@@ -442,7 +504,7 @@ flowchart TD
 | `deserialize_messages` | `list[{role, content}]` | `list[BaseMessage]` | `"user"`→Human, `"assistant"`→AI |
 | 过滤规则 | — | — | 跳过 ToolMessage（前端不需要） |
 
-### 2.4 典型时序 🟡 v5
+### 2.4 典型时序 🟢 v5
 
 ```mermaid
 sequenceDiagram
@@ -486,7 +548,7 @@ sequenceDiagram
     Route-->>Client: done
 ```
 
-### 2.5 两条 API 路径 🟡 v5
+### 2.5 两条 API 路径 🟢 v5
 
 ```mermaid
 flowchart LR
@@ -523,13 +585,45 @@ flowchart LR
 
 ---
 
-## 三、工具节点详情
+## 三、工具节点详情 🔴 v8
 
-> 未变更。`P1_TOOLS` = `[search_wiki, read_page]`
+> 工具由 **ToolRegistry** 统一管理，不再硬编码。
+
+```python
+from src.agent.action.registry import registry
+
+# 启动时自动注册
+registry.register(search_wiki)              # 已启用
+registry.register(read_page)                # 已启用
+registry.register(query_graph, enabled=False)  # 已注册但默认禁用
+```
+
+### 3.1 当前工具列表
+
+| 工具 | 注册名 | 状态 | 用途 |
+|:-----|:-------|:-----|:------|
+| `search_wiki` | `search_wiki` | ✅ 启用 | BM25 搜索 Wiki 知识库 |
+| `read_page` | `read_page` | ✅ 启用 | 读取指定 Markdown 页面内容 |
+| `query_graph` | `query_graph` | ⏸️ 已注册·未启用 | 知识图谱查询（P1 暂不开放） |
+
+### 3.2 ToolRegistry 架构
+
+```
+ToolRegistry（单例）
+├── register(tool, enabled=True, metadata={})  ← 注册工具
+├── unregister(name)                            ← 注销工具
+├── enable(name) / disable(name)                ← 启禁控制
+├── list_enabled() / list_all()                 ← 枚举
+├── bind_tools(llm)                             ← 绑定到 LLM（替代 P1_TOOLS 硬编码）
+├── get_tool_info()                             ← 供 API 展示元数据
+└── 线程安全（CPython GIL 天然保护）
+```
+
+### 3.3 工具调用流程
 
 ```mermaid
 flowchart LR
-    LLM["LLM 决定调工具"]
+    LLM["LLM<br/>registry.bind_tools(llm)"]
     LLM --> SEARCH["search_wiki(query)"]
     LLM --> READ["read_page(path, offset, max_chars)"]
 
@@ -539,85 +633,104 @@ flowchart LR
     SEARCH_RES --> AGENT
     READ_RES --> AGENT
 
-    AGENT["消息追加回 messages<br/>LLM 继续处理"]
+    AGENT["消息追加回 messages<br/>LLM 继续推理"]
+    AGENT -->|"require tool"| LLM
 ```
 
 ---
 
 ## 四、未来拓展节点
 
-### 4.1 路线图 🔴 v6
+> **项目边界声明**：本项目 `llm-wiki-selfbuild` 聚焦**单 Agent 架构**。
+> - ✅ 当前节点及「单 Agent 拓展节点」属于本项目，持续迭代
+> - 🧩 「多 Agent 拓展节点」已标记为**跨项目学习**，将在独立的多 Agent 项目中实践（新开仓库）
+> - 本文档仅做知识整理，不承诺在本项目中实现多 Agent 功能
+
+### 4.1 单 Agent 路线图 🔴 v7
 
 ```mermaid
 flowchart TD
     subgraph CURRENT["当前（已完成）"]
-        AGENT["agent<br/>call_model()"]
-        APPROVE["approve<br/>人工审批"]
-        TOOLS["tools<br/>ToolNode"]
-        SUMM["summarizer<br/>对话摘要压缩"]
-        CHECK["MemorySaver<br/>运行时状态"]
+        AGENT["agent / call_model()"]
+        APPROVE["approve / 人工审批"]
+        TOOLS["tools / ToolNode"]
+        SUMM["summarizer / 对话摘要压缩"]
+        CHECK["MemorySaver / 运行时状态"]
         SQLITE["SQLite 持久化"]
-        WM["working_memory<br/>结构化工作记忆"]
-        SINK["attention_sink<br/>关键信息锚定"]
-        INDEX["index_table<br/>全文搜索+实体索引"]
-        VALIDATE["validate_tool 🔴 v6<br/>① 前置校验"]
-        VERIFY["verify_result 🔴 v6<br/>② 后置验证"]
-        REFLECT["reflect_node 🔴 v6<br/>③ 推理反思"]
+        WM["working_memory / 结构化工作记忆"]
+        SINK["attention_sink / 关键信息锚定"]
+        INDEX["index_table / 全文搜索+实体索引"]
+        VALIDATE["validate_tool / ① 前置校验"]
+        VERIFY["verify_result / ② 后置验证"]
+        REFLECT["reflect_node / ③ 推理反思"]
+        INTENT["intent_classifier / 前置意图分类 🔴 v8"]
+        REG["tool_registry / 工具注册中心 🔴 v8"]
     end
 
-    subgraph P1["近期待办"]
-        PERCEPT_INTENT["intent 意图分类"]
-        TOOL_REGISTRY["tool_registry<br/>工具注册中心"]
+    subgraph P2P3["单Agent 中期/远期"]
+        CONDENSER["condenser / 长上下文压缩"]
+        PROFILE["user_profile / 用户画像记忆"]
+        VALIDATOR["validator / 输出校验"]
+        RETRY["retry_handler / 工具重试+降级"]
     end
 
-    subgraph P2["中期拓展"]
-        SUPERVISOR["supervisor<br/>主管分配"]
-        WORKER1["worker_a<br/>搜索专家"]
-        WORKER2["worker_b<br/>分析专家"]
-        CONDENSER["condenser<br/>长上下文压缩"]
-    end
-
-    subgraph P3["远期拓展"]
-        PROFILE["user_profile<br/>用户画像长期记忆"]
-        SUBAGENT["subagent<br/>子 Agent 沙箱"]
-        ROUTER["router<br/>意图路由"]
-        PLANNER["planner<br/>多步推理规划"]
-        VALIDATOR["validator<br/>输出校验"]
-        RETRY["retry_handler<br/>工具重试+降级"]
-    end
-
-    CURRENT --> P1
-    P1 --> P2
-    P2 --> P3
+    CURRENT --> P2P3
 ```
 
-### 4.2 拓展节点说明 🔴 v6
+### 4.2 多 Agent 学习路线图 🧩 🔴 v7
+
+> 以下节点属于**多 Agent 架构**范畴，将在独立项目中实践学习。本文列出仅作知识整理。
+
+```mermaid
+flowchart TD
+    subgraph LEARN["多Agent 学习项目（独立仓库）"]
+        SUPERVISOR["supervisor / 主管分配"]
+        WORKER1["worker_a / 搜索专家"]
+        WORKER2["worker_b / 分析专家"]
+        SUBAGENT["subagent / 子Agent沙箱"]
+        ROUTER["router / 意图路由"]
+        PLANNER["planner / 多步推理规划"]
+    end
+
+    ROUTER --> SUPERVISOR
+    PLANNER --> SUPERVISOR
+    SUPERVISOR --> WORKER1
+    SUPERVISOR --> WORKER2
+    SUBAGENT --> WORKER1
+    SUBAGENT --> WORKER2
+```
+
+**学习路径建议** 🧩 🔴 v7：
+
+| 步骤 | 学习内容 | 预计前置 |
+|:----:|:---------|:---------|
+| ① | 实现 `supervisor + worker_a/b` 基础主管-工人模式（2~3 Agent） | 当前单 Agent 能力 |
+| ② | 接入 `router` 动态路由，按意图分配主管 | 步骤 ① |
+| ③ | 接入 `planner` 多步 DAG 执行计划 | 步骤 ② |
+| ④ | 引入 `subagent` 子 Agent 沙箱隔离 | 步骤 ①+③ |
+
+### 4.3 单 Agent 拓展节点说明 🔴 v7
 
 | 阶段 | 节点 | 触发条件 | 职责 |
 |:----:|:-----|:---------|:------|
-| **✅ 当前** | `approve` | LLM 返回 tool_calls | `interrupt()` 暂停图等审批 |
-| **✅ 当前** | `SQLite 持久化` | 流结束 / 重启 | 跨重启保存 messages+sinks+wm |
-| **✅ 当前** | `summarizer` | messages ≥40 条 | 压缩早期对话为摘要（小模型） |
-| **✅ 当前** | `extract_wm` | 每次 LLM 回复后 | 提取关键事实到工作记忆 |
-| **✅ 当前** | `wm_eviction` | extract_wm 后 | 槽级压缩与空值清理 |
-| **✅ 当前** | `attention_sink` | 每轮用户输入 | 锚定 → 衰减 → 注入 LLM |
-| **✅ 当前** | `index_table` | save_thread 后 | FTS5 + 实体索引 |
-| **✅ 当前** | `validate_tool` 🔴 | LLM 返回 tool_calls 后 | **① 前置校验**：步数熔断 + 动作去重 + 路由决策 |
-| **✅ 当前** | `verify_result` 🔴 | tools 节点执行后 | **② 后置验证**：工具输出质量检查 + 动作记录到 executed_actions |
-| **✅ 当前** | `reflect_node` 🔴 | verify_result 检测到差质量结果 | **③ 推理反思**：LLM 评估推理方向 + 注入自我修正计划 |
-| **P1** | `intent_classifier` | 用户新输入 | 预分类：知识查询/闲聊/操作 |
-| **P1** | `tool_registry` | 扩展工具集 | 统一注册/发现/权限校验 |
-| **P2** | `supervisor` | 需多专家协作 | 分发到对应 worker |
-| **P2** | `worker_a/b` | supervisor 分配 | 搜索 / 分析垂直分工 |
+| **✅ 当前** | `intent_classifier` 🔴 | 每轮用户输入 | 规则预分类：greeting/search/chit_chat/clarification/tool_operation/general_query |
+| **✅ 当前** | `tool_registry` 🔴 | 扩展工具集 | 统一注册/发现/启禁控制/绑定 LLM |
 | **P2** | `condenser` | 长工具输出 | 去重/摘要/结构化 |
 | **P3** | `profile` | 重复模式检测 | 多线程用户画像持久化 |
-| **P3** | `subagent` | 需隔离上下文 | 子任务独享 Agent 实例 |
-| **P3** | `router` | 新输入 | 预分类路由 |
-| **P3** | `planner` | 多跳问题 | 拆解 → DAG 执行计划 |
 | **P3** | `validator` | 最终回答前 | 校验引用准确性、格式 |
 | **P3** | `retry_handler` | 工具失败 | 自动重试/降级/替代 |
 
-### 4.3 自校正（Self-Correction）实现回顾 🔴 v6
+### 4.4 多 Agent 拓展节点说明 🧩 🔴 v7
+
+| 阶段 | 节点 | 职责 | 学习重点 |
+|:----:|:-----|:------|:---------|
+| **P2** | `supervisor` | 主管分发调度 | Supervisor-Worker 编排模式 |
+| **P2** | `worker_a / worker_b` | 搜索/分析垂直分工 | 消息传递与角色隔离 |
+| **P3** | `subagent` | 子任务独享 Agent 实例 | Agent 间上下文隔离 |
+| **P3** | `router` | 新输入预分类路由 | 动态路由分发机制 |
+| **P3** | `planner` | 多跳问题拆解 DAG | 任务分解与依赖编排 |
+
+### 4.5 自校正（Self-Correction）实现回顾 🟡 v6
 
 > 基于 commit `d3342d8`（2026-07-28）。三层自修正架构已在 LangGraph StateGraph 中实现。
 
@@ -629,7 +742,7 @@ flowchart TD
 | 重复检测（hash 表） | `_make_action_key()` 生成规范键，`executed_actions` 哈希表记录结果 | ✅ 实现 | 差质量（poor/error）结果才阻断；good 结果允许重调用 |
 | 状态验证 | `verify_result_node` 检测空结果/错误前缀 + 写入 `executed_actions` | ✅ 实现 | 三档质量评级：good / poor（空结果）/ error（调用失败） |
 | 推理反思 | `reflect_node` 用 `with_structured_output(ReflectionResult)` 评估 | ✅ 实现 | verdict=revise 时注入 `AIMessage` 含修正计划；LLM 失败时默认 proceed |
-| 置信度阈值 | 工具级置信度评估 | ❌ 推迟 | 待 P2 结合 `tool_registry` 统一实现 |
+| 置信度阈值 | 工具级置信度评估 | ❌ 推迟 | 待结合 `tool_registry` 统一实现（已注册但未启用） |
 
 **实际实现 vs 最初方案差异**：
 
@@ -659,14 +772,15 @@ v6 新链路:          agent → extract_wm → wm_eviction → should_continue
 ```
 
 **剩余约束**：
-- 置信度阈值（<0.7 人工确认）推迟到 `tool_registry` 统一接入后（P2）
+- 置信度阈值（<0.7 人工确认）推迟到 `tool_registry` 统一接入后（P1）
 - reflect_node 使用主 LLM（非独立小模型），成本可接受（仅在质量差时触发）
 
 ---
 
-## 五、常量体系总览 🔴 v6
+## 五、常量体系总览 🟡 v6
 
-> 🔴 v6 新增：`Self-Correction` 常量组（步数熔断/动作去重/校验/反思）
+> 🟡 v6 新增：`Self-Correction` 常量组（步数熔断/动作去重/校验/反思）
+> 🔴 v8 新增：`Intent Classification` 常量组（意图类型/置信度/分类规则）
 
 ```
 src/agent/constants.py（380+ 常量）
@@ -683,19 +797,42 @@ src/agent/constants.py（380+ 常量）
 │   ├── 节点
 │   │   ├── NODE_AGENT, NODE_TOOLS, NODE_APPROVE, NODE_SUMMARIZER
 │   │   ├── NODE_EXTRACT_WM, NODE_WM_EVICTION
-│   │   └── NODE_VALIDATE_TOOL, NODE_VERIFY_RESULT, NODE_REFLECT  🔴 v6
+│   │   ├── NODE_VALIDATE_TOOL, NODE_VERIFY_RESULT, NODE_REFLECT  🟡 v6
+│   │   └── NODE_INTENT_CLASSIFIER  🔴 v8
 │   └── 状态键
 │       ├── STATE_MESSAGES
 │       ├── STATE_ATTENTION_SINKS
 │       ├── STATE_WORKING_MEMORY
-│       ├── STATE_STEP_COUNT         🔴 v6
-│       ├── STATE_EXECUTED_ACTIONS   🔴 v6
-│       └── STATE_SELF_CORRECTION    🔴 v6
+│       ├── STATE_STEP_COUNT         🟡 v6
+│       ├── STATE_EXECUTED_ACTIONS   🟡 v6
+│       ├── STATE_SELF_CORRECTION    🟡 v6
+│       └── STATE_INTENT             🔴 v8
 │
 ├── SSE 事件协议
 │   ├── EVENT_TOKEN, EVENT_TOOL_START, EVENT_TOOL_END
 │   ├── EVENT_DONE, EVENT_ERROR, EVENT_SUMMARIZE
-│   └── FIELD_*                  ← 所有事件字段名
+│   └── EVENT_INTENT  🔴 v8
+│
+├── Intent Classification  🔴 v8
+│   ├── top_intent 映射
+│   │   ├── INTENT_SEARCH    = "search"    ← 知识检索
+│   │   ├── INTENT_CHAT      = "chat"      ← 纯聊天
+│   │   ├── INTENT_ADMIN     = "admin"     ← 系统管理
+│   │   └── INTENT_TOOL      = "tool"      ← 工具直接调用
+│   ├── category 枚举
+│   │   ├── INTENT_GREETING, INTENT_CLARIFICATION
+│   │   ├── INTENT_TOOL_OPERATION, INTENT_KNOWLEDGE_QUERY
+│   │   ├── INTENT_CHIT_CHAT, INTENT_GENERAL_QUERY
+│   │   └── INTENT_UNKNOWN
+│   ├── 置信度常量
+│   │   ├── INTENT_CONFIDENCE_HIGH   = 0.85
+│   │   ├── INTENT_CONFIDENCE_MEDIUM = 0.70
+│   │   └── INTENT_CONFIDENCE_LOW    = 0.50
+│   └── 映射表 INTENT_CATEGORY_MAP: category → top_intent
+│       greeting/chit_chat → chat
+│       knowledge_query/clarification/general_query → search
+│       tool_operation → tool
+│       unknown → search（默认降级）
 │
 ├── 对话摘要压缩
 │   ├── SUMMARIZE_PREFIX, SUMMARIZE_SYSTEM_PROMPT
@@ -734,7 +871,7 @@ src/agent/constants.py（380+ 常量）
 │   ├── MATCHED_NODES_LIMIT, NEIGHBOR_NODES_LIMIT
 │   └── WIKI_PATH_REGEX
 │
-├── Self-Correction  🔴 v6
+├── Self-Correction  🟡 v6
 │   ├── MAX_STEPS               = 15  ← 步数熔断上限
 │   ├── STATE_SELF_CORRECTION   ← 临时标记字段
 │   ├── STATE_STEP_COUNT        ← 步数计数器
@@ -761,11 +898,10 @@ src/agent/constants.py（380+ 常量）
 
 ---
 
-## 六、文件全景 🔴 v6
+## 六、文件全景 🟡 v6
 
-> 测试总数：agent 模块 214 通过 + API 路由 43 通过（共 257 项 agent 相关测试）
-> 17 个 wiki_compiler 测试为预存故障（独立于 agent 模块）
-> d3342d8 实测：645 passed / 17 failed（仅 wiki_compiler 预存故障）
+> 测试总数：agent 模块 **229 通过** + API 路由 489 通过（共 **718 项全量测试**）
+> 全量回归：agent 229 ✓ + API 489 ✓ + core + mcp = **718 passed**
 
 ### 6.1 四层模块化架构
 
@@ -777,11 +913,12 @@ src/
 │   ├── session.py                      ← 会话编排层（冷启动恢复 + 审批 + 持久化 + 索引）
 │   │
 │   ├── perception/                     ← 感知层
-│   │   └── handler.py                  ← 消息序列化/反序列化/来源提取
+│   │   ├── handler.py                  ← 消息序列化/反序列化/来源提取
+│   │   └── intent.py  🔴              ← 意图分类：7 规则 + LLM 兜底 + 图节点函数
 │   │
 │   ├── planning/                       ← 规划层
-│   │   ├── graph.py                    ← AgentState + 9 个节点 + 图构建（ReAct + Self-Correction）
-│   │   └── prompt.py                   ← SYSTEM_PROMPT + REFLECTION_SYSTEM_PROMPT  🔴 v6
+│   │   ├── graph.py                    ← AgentState + 10 个节点 + 图构建（ReAct + Self-Correction + Intent）
+│   │   └── prompt.py                   ← SYSTEM_PROMPT + REFLECTION_SYSTEM_PROMPT  🟡 v6
 │   │
 │   ├── memory/                         ← 记忆层
 │   │   ├── store.py                    ← SQLite 持久化 + 索引表（FTS5 + 实体）
@@ -789,6 +926,7 @@ src/
 │   │   └── attention.py                ← Attention Sink 锚定检测 + 衰减 + 格式化
 │   │
 │   └── action/                         ← 执行层
+│       ├── registry.py  🔴             ← ToolRegistry：单例注册/启禁/枚举/绑定 LLM
 │       ├── tools.py                    ← 2 个 @tool（search_wiki / read_page）
 │       ├── stream.py                   ← SSE 流式事件 + chat_stream 无状态接口
 │       └── response.py                 ← format_response / AgentResponse 结构化输出
@@ -797,7 +935,7 @@ src/
 │   └── chat.py                         ← FastAPI 路由（/chat / /chat/session / /threads）
 │
 └── tests/test_agent/
-    ├── test_agent.py                   ← 图构建 + 路由 + 审批 + 摘要 + 自修正（50+ 个 @pytest.mark.parametrize）
+    ├── test_agent.py                   ← 图构建 + 路由 + 审批 + 摘要 + 自修正 + 意图分类 + ToolRegistry
     ├── test_attention.py               ← Attention Sink 检测/合并/衰减/格式化
     ├── test_indexes.py                 ← 索引表创建/FTS5 搜索/实体提取/聚合/删除
     ├── test_persistence.py             ← SQLite CRUD（save/load/list/delete/并发/边界）
@@ -832,3 +970,5 @@ perception → planning → action ↕ memory
 | — | `session.py` | 新增编排层 |
 | — | `memory/attention.py` | 新增锚定模块 |
 | — | `perception/handler.py` | 新增感知模块 |
+| — | `perception/intent.py` 🔴 | 新增意图分类模块 |
+| — | `action/registry.py` 🔴 | 新增 ToolRegistry 工具注册中心 |
