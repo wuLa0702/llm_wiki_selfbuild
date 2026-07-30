@@ -1,0 +1,137 @@
+# -*- mode: python ; coding: utf-8 -*-
+"""
+PyInstaller spec — LLM Wiki (轻量便携版)
+
+排除 torch/transformers 等重型 ML 依赖，BM25 搜索可用。
+如需向量搜索，请直接用 pip 安装后源码运行。
+
+打包:  cd 项目目录 && pyinstaller wiki.spec --clean
+运行:  dist/LLM-Wiki/LLM-Wiki.exe
+"""
+import os
+from pathlib import Path
+
+HERE = Path(os.getcwd())
+
+datas = []
+
+def collect_dir(src_rel, dst_rel=None):
+    base = HERE / src_rel
+    if not base.exists():
+        return
+    dst = dst_rel or src_rel
+    for f in base.rglob("*"):
+        if f.is_file():
+            datas.append((str(f), str(Path(dst) / f.relative_to(base).parent)))
+
+collect_dir("static")
+collect_dir("src/api/templates", "src/api/templates")
+
+# 排除的重型包（向量搜索用不到时可安全排除）
+EXCLUDES = [
+    # 重型 ML 框架（向量搜索才需要，默认 BM25 不用）
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "transformers",
+    "sentence_transformers",
+    "onnxruntime",
+    "chromadb",
+    "PIL",
+    "Pillow",
+    "matplotlib",
+    "tensorflow",
+    "botocore",
+    "boto3",
+    "s3transfer",
+    "grpc",
+    "grpcio",
+]
+
+# 保留的核心模块
+HIDDEN = [
+    "src.main",
+    "src.api.routes.wiki",
+    "src.api.routes.graph",
+    "src.api.routes.misc",
+    "src.api.routes.pages",
+    "src.api.routes.lint",
+    "src.api.routes.auth",
+    "src.api.routes.sources",
+    "src.core.compiler",
+    "src.core.compiler.wiki_compiler",
+    "src.core.lint.linter",
+    "src.core.auth",
+    "src.core.search",
+    "src.db.repository",
+    "src.db.schema",
+    "src.llm.adapter",
+    "src.tools.read_tool",
+    "src.tools.write_tool",
+    "src.tools.search_tool",
+    "src.models",
+    "src.models.graph",
+    "src.models.common",
+    "src.models.page",
+    "src.models.search",
+    "markdown",
+    "uvicorn",
+    "uvicorn.logging",
+    "uvicorn.loops.auto",
+    "uvicorn.protocols.http.auto",
+    "jinja2",
+    "jinja2.ext",
+    "webview",
+    "webview.platforms.edgechromium",
+    "clr_loader",
+    "proxy_tools",
+    "bottle",
+]
+
+a = Analysis(
+    ["run.py"],
+    pathex=[str(HERE)],
+    binaries=[],
+    datas=datas,
+    hiddenimports=HIDDEN,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=EXCLUDES,
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
+    name="LLM-Wiki",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="LLM-Wiki",
+)

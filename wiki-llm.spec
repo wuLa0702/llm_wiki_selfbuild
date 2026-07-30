@@ -46,7 +46,102 @@ added_files = [
 
 # ── 隐藏导入（PyInstaller 静态分析可能遗漏的动态 import） ────────────────
 hidden_imports = [
-    # FastAPI 生态
+    # ═══════════════════════════════════════════════════════════════════
+    # 项目自有模块（safety net — 确保 PyInstaller 不遗漏任何 src.* 模块）
+    # 即使部分已通过静态追踪被包含，显式声明也无害（PyInstaller 去重）
+    # ═══════════════════════════════════════════════════════════════════
+    # -- 应用入口 --
+    "src.app_state",
+    "src.config",
+    "src.main",
+    "src.mcp_server",
+    # -- Agent --
+    "src.agent.constants",
+    "src.agent.session",
+    "src.agent.action.registry",
+    "src.agent.action.response",
+    "src.agent.action.stream",
+    "src.agent.action.tools",
+    "src.agent.memory.attention",
+    "src.agent.memory.store",
+    "src.agent.memory.summarizer",
+    "src.agent.perception.handler",
+    "src.agent.perception.intent",
+    "src.agent.planning.graph",
+    "src.agent.planning.prompt",
+    # -- API --
+    "src.api.errors",
+    "src.api.helpers",
+    "src.api.middleware",
+    "src.api.routes.auth",
+    "src.api.routes.chat",
+    "src.api.routes.graph",
+    "src.api.routes.ingest",
+    "src.api.routes.lint",
+    "src.api.routes.misc",
+    "src.api.routes.pages",
+    "src.api.routes.purpose",
+    "src.api.routes.sources",
+    "src.api.routes.system",
+    "src.api.routes.wiki",
+    # -- Core --
+    "src.core.cache",
+    "src.core.embedding",
+    "src.core.memory",
+    "src.core.pricing",
+    "src.core.privacy",
+    "src.core.task_queue",
+    "src.core.token_tracker",
+    "src.core.validator",
+    "src.core.watcher",
+    "src.core.auth.auth",
+    "src.core.compiler.wiki_compiler",
+    "src.core.graph.community",
+    "src.core.graph.graph",
+    "src.core.graph.insights",
+    "src.core.ingest.importer",
+    "src.core.ingest.ingest_queue",
+    "src.core.lint.linter",
+    "src.core.parsers.pptx_parser",
+    "src.core.parsers.xlsx_parser",
+    "src.core.query.query_engine",
+    "src.core.search.bigram",
+    "src.core.search.bm25_search",
+    "src.core.search.chunker",
+    "src.core.search.engine",
+    "src.core.search.stopwords",
+    # -- DB --
+    "src.db.repository",
+    "src.db.schema",
+    # -- i18n --
+    "src.i18n",
+    # -- LLM --
+    "src.llm.adapter",
+    "src.llm.prompts",
+    # -- Models --
+    "src.models.auth",
+    "src.models.common",
+    "src.models.graph",
+    "src.models.ingest",
+    "src.models.page",
+    "src.models.query",
+    "src.models.search",
+    "src.models.usage",
+    # -- Tools --
+    "src.tools.lint_tool",
+    "src.tools.markdown_utils",
+    "src.tools.path_utils",
+    "src.tools.read_tool",
+    "src.tools.search_tool",
+    "src.tools.write_tool",
+    # -- Utils --
+    "src.utils.config_manager",
+    "src.utils.path_resolver",
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 第三方依赖（PyInstaller 不会自动发现的动态/次级导入）
+    # ═══════════════════════════════════════════════════════════════════
+    # FastAPI / Uvicorn 生态
     "uvicorn.logging",
     "uvicorn.loops.auto",
     "uvicorn.loops.asyncio",
@@ -60,7 +155,7 @@ hidden_imports = [
     "uvicorn.middleware.debug",
     "uvicorn.middleware.proxy_headers",
     "uvicorn.middleware.wsgi",
-    # LangChain
+    # LangChain / LangGraph
     "langchain_core",
     "langchain_openai",
     "langgraph",

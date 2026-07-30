@@ -10,6 +10,7 @@ LLM Wiki — 应用启动入口（PyInstaller 打包用）
   - 处理 Ctrl+C 优雅退出
   - 全局异常捕获（崩溃弹窗 + 日志落盘）
 """
+import asyncio
 import logging
 import os
 import sys
@@ -141,11 +142,28 @@ def _threading_excepthook(args) -> None:
     _global_excepthook(args.exc_type, args.exc_value, args.exc_traceback)
 
 
-threading_excepthook_orig = getattr(threading, "excepthook", None)
 try:
     threading.excepthook = _threading_excepthook
 except (AttributeError, TypeError):
     pass
+
+
+def _asyncio_exception_handler(loop, context: dict) -> None:
+    """asyncio 未处理异常捕获（FastAPI startup/background task 中崩溃）"""
+    exc = context.get("exception")
+    if exc is not None:
+        exc_type = type(exc)
+        exc_val = exc
+        exc_tb = exc.__traceback__
+    else:
+        exc_type = RuntimeError
+        exc_val = RuntimeError(context.get("message", "asyncio unhandled"))
+        exc_tb = None
+    _global_excepthook(exc_type, exc_val, exc_tb)
+
+
+# asyncio 异常钩子在 event loop 创建后设置，这里只记录函数
+# 实际注册在 main() 中拿到 loop 后执行
 
 
 def _acquire_lock() -> bool:
@@ -201,6 +219,16 @@ def main():
 
     app = _get_app()
 
+    # 注册 asyncio 异常处理（FastAPI startup/background task 中的未捕获异常）
+    try:
+        loop = asyncio.new_event_loop()
+        loop.set_exception_handler(_asyncio_exception_handler)
+        asyncio.set_event_loop(loop)
+    except Exception:
+        pass
+
+    startup_ok = False
+
     try:
         uvicorn.run(
             app,
@@ -213,13 +241,46 @@ def main():
     except KeyboardInterrupt:
         logger.info("收到退出信号，优雅关闭...")
     except SystemExit:
-        # uvicorn 内部 sys.exit() 正常传播，不拦截
         raise
     except Exception:
-        # 让 sys.excepthook 统一处理（写 crash log + 弹窗）
         raise
     finally:
         logger.info("LLM-Wiki 已退出")
+        # 检测端口是否成功监听过（startup 失败时 uvicorn 正常退出，不抛异常）
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1)
+            result = s.connect_ex((HOST, PORT))
+            s.close()
+            port_in_use = (result == 0)
+        except Exception:
+            port_in_use = False
+
+        if not port_in_use and is_frozen():
+            # 启动失败，读日志最后几行给用户看
+            try:
+                with open(log_file, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                # 找最后一个 ERROR
+                error_lines = []
+                for line in reversed(lines):
+                    if "ERROR" in line or "Traceback" in line or line.strip().startswith("File "):
+                        error_lines.insert(0, line.rstrip())
+                        if len(error_lines) >= 15:
+                            break
+                error_text = "\n".join(error_lines) if error_lines else "(日志中未找到错误详情)"
+                _show_error_dialog(
+                    "LLM-Wiki 启动失败",
+                    f"LLM-Wiki 无法启动（端口 {PORT} 未成功监听）。\n\n"
+                    f"日志文件:\n{log_file}\n\n"
+                    f"--- 日志中的错误 ---\n{error_text}"
+                )
+            except Exception:
+                _show_error_dialog(
+                    "LLM-Wiki 启动失败",
+                    f"LLM-Wiki 启动失败，请查看日志:\n{log_file}"
+                )
 
 
 def _open_browser_and_exit():

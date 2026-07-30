@@ -17,11 +17,36 @@ echo.
 :: -- kill old processes --
 echo [CLEANUP] Killing old processes...
 
-:: uvicorn / app (port 8766)
+:: uvicorn — kill process tree (reloader + orphan workers)
+:: /t = kill entire process tree (catches workers that inherited socket handles)
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8766 " ^| findstr LISTENING') do (
-  echo   kill app PID: %%p
-  taskkill /f /pid %%p >nul 2>&1
+  echo   kill PID: %%p (port 8766)
+  taskkill /f /t /pid %%p >nul 2>&1
 )
+
+:: Retry: orphaned worker may survive first kill on Windows (inherited socket handle)
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8766 " ^| findstr LISTENING') do (
+  echo   kill orphan: %%p (port 8766)
+  taskkill /f /t /pid %%p >nul 2>&1
+)
+
+:: Kill any leftover Python processes still holding port 8766 (retry up to 10s)
+set RETRY_CNT=0
+:wait_port_free
+set KILL_PID=
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8766 " ^| findstr LISTENING') do set KILL_PID=%%p
+if defined KILL_PID (
+  set /a RETRY_CNT+=1
+  if %RETRY_CNT% gtr 10 (
+    echo   [WARN] Port 8766 still busy after 10 retries, continuing anyway...
+    goto :port_ready
+  )
+  echo   [RETRY] Port 8766 held by PID %KILL_PID%, retrying...
+  taskkill /f /t /pid %KILL_PID% >nul 2>&1
+  timeout /t 1 /nobreak >nul
+  goto :wait_port_free
+)
+:port_ready
 
 :: Vite dev server (port 5176)
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":5176 " ^| findstr LISTENING') do (
