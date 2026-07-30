@@ -96,6 +96,19 @@ CREATE TABLE IF NOT EXISTS wiki_settings (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS model_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'custom',
+    model_name TEXT NOT NULL,
+    api_key TEXT NOT NULL DEFAULT '',
+    api_base TEXT NOT NULL DEFAULT '',
+    is_active INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS lint_cache (
     cache_key TEXT PRIMARY KEY,
     result_json TEXT NOT NULL,

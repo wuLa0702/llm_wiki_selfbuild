@@ -388,3 +388,79 @@ class WikiRepository:
         conn.execute("DELETE FROM lint_cache WHERE cache_key = ?", (cache_key,))
         conn.commit()
         conn.close()
+
+    # ------------------------------------------------------------------
+    # 模型自定义配置 (model_configs)
+    # ------------------------------------------------------------------
+
+    def list_model_configs(self) -> list[dict]:
+        """列出全部模型配置"""
+        conn = self._get_connection()
+        rows = conn.execute(
+            "SELECT * FROM model_configs ORDER BY sort_order ASC, id ASC"
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_model_config(self, config_id: int) -> dict | None:
+        """获取单个模型配置"""
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT * FROM model_configs WHERE id = ?", (config_id,)
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def create_model_config(self, data: dict) -> int:
+        """创建模型配置，返回新 id"""
+        conn = self._get_connection()
+        cur = conn.execute(
+            """INSERT INTO model_configs (name, provider, model_name, api_key, api_base, is_active, sort_order)
+               VALUES (:name, :provider, :model_name, :api_key, :api_base, :is_active, :sort_order)""",
+            {
+                "name": data.get("name", ""),
+                "provider": data.get("provider", "custom"),
+                "model_name": data.get("model_name", ""),
+                "api_key": data.get("api_key", ""),
+                "api_base": data.get("api_base", ""),
+                "is_active": 1 if data.get("is_active") else 0,
+                "sort_order": int(data.get("sort_order", 0)),
+            },
+        )
+        new_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return new_id
+
+    def update_model_config(self, config_id: int, data: dict) -> bool:
+        """更新模型配置"""
+        allowed = {"name", "provider", "model_name", "api_key", "api_base", "is_active", "sort_order"}
+        sets = []
+        params: dict = {}
+        for k, v in data.items():
+            if k in allowed:
+                sets.append(f"{k} = :{k}")
+                if k == "is_active":
+                    params[k] = 1 if v else 0
+                elif k == "sort_order":
+                    params[k] = int(v)
+                else:
+                    params[k] = v
+        if not sets:
+            return False
+        sets.append("updated_at = datetime('now')")
+        params["id"] = config_id
+        sql = f"UPDATE model_configs SET {', '.join(sets)} WHERE id = :id"
+        conn = self._get_connection()
+        cur = conn.execute(sql, params)
+        conn.commit()
+        conn.close()
+        return cur.rowcount > 0
+
+    def delete_model_config(self, config_id: int) -> bool:
+        """删除模型配置"""
+        conn = self._get_connection()
+        cur = conn.execute("DELETE FROM model_configs WHERE id = ?", (config_id,))
+        conn.commit()
+        conn.close()
+        return cur.rowcount > 0

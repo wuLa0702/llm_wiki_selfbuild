@@ -2,7 +2,7 @@
 import logging
 import sqlite3
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -470,3 +470,97 @@ async def save_config_endpoint(body: ConfigSaveRequest):
     from src.utils.config_manager import inject_config_to_env
     inject_config_to_env()
     return {"status": "ok", "configured": is_configured()}
+
+
+# ── 模型自定义配置 CRUD ────────────────────────────────────────────────
+
+
+class ModelConfigResponse(BaseModel):
+    """模型配置响应"""
+    id: int
+    name: str
+    provider: str
+    model_name: str
+    api_key: str = ""
+    api_base: str = ""
+    is_active: bool = False
+    sort_order: int = 0
+
+
+class ModelConfigCreate(BaseModel):
+    """创建模型配置"""
+    name: str
+    provider: str = "custom"
+    model_name: str
+    api_key: str = ""
+    api_base: str = ""
+    is_active: bool = False
+    sort_order: int = 0
+
+
+class ModelConfigUpdate(BaseModel):
+    """更新模型配置"""
+    name: str | None = None
+    provider: str | None = None
+    model_name: str | None = None
+    api_key: str | None = None
+    api_base: str | None = None
+    is_active: bool | None = None
+    sort_order: int | None = None
+
+
+@router.get("/v1/models", tags=["model-config"])
+async def list_models():
+    """列出所有模型配置"""
+    from src.db.repository import WikiRepository
+    repo = WikiRepository()
+    models = repo.list_model_configs()
+    return {"models": models}
+
+
+@router.get("/v1/models/{model_id}", tags=["model-config"])
+async def get_model(model_id: int):
+    """获取单个模型配置"""
+    from src.db.repository import WikiRepository
+    repo = WikiRepository()
+    m = repo.get_model_config(model_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model config not found")
+    return m
+
+
+@router.post("/v1/models", status_code=201, tags=["model-config"])
+async def create_model(body: ModelConfigCreate):
+    """创建模型配置"""
+    from src.db.repository import WikiRepository
+    repo = WikiRepository()
+    new_id = repo.create_model_config(body.model_dump())
+    created = repo.get_model_config(new_id)
+    return created
+
+
+@router.put("/v1/models/{model_id}", tags=["model-config"])
+async def update_model(model_id: int, body: ModelConfigUpdate):
+    """更新模型配置（部分更新，只传需要改的字段）"""
+    from src.db.repository import WikiRepository
+    repo = WikiRepository()
+    # 过滤掉 None 的字段
+    data = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    ok = repo.update_model_config(model_id, data)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Model config not found")
+    updated = repo.get_model_config(model_id)
+    return updated
+
+
+@router.delete("/v1/models/{model_id}", tags=["model-config"])
+async def delete_model(model_id: int):
+    """删除模型配置"""
+    from src.db.repository import WikiRepository
+    repo = WikiRepository()
+    ok = repo.delete_model_config(model_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Model config not found")
+    return {"status": "ok", "deleted_id": model_id}
