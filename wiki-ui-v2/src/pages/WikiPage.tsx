@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { showConfirm } from '@/components/ui/confirm-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import EmptyState from '@/components/shared/EmptyState';
 import {
@@ -232,8 +233,8 @@ export default function WikiPage() {
     }
   };
 
-  const handleClose = () => {
-    if (isDirty && !window.confirm('内容已修改但未保存，确定关闭吗？')) return;
+  const handleClose = async () => {
+    if (isDirty && !(await showConfirm('内容已修改但未保存，确定关闭吗？', { title: '未保存的修改' }))) return;
     setEditing(false);
   };
 
@@ -461,10 +462,13 @@ export default function WikiPage() {
     </div>
 
       {/* ── Edit Sheet ── */}
-      <Sheet open={editing} onOpenChange={(v: boolean) => {
-        if (!v && isDirty && !window.confirm('内容已修改但未保存，确定关闭吗？')) {
-          setTimeout(() => setEditing(true), 50);
-          return;
+      <Sheet open={editing} onOpenChange={async (v: boolean) => {
+        if (!v && isDirty) {
+          const ok = await showConfirm('内容已修改但未保存，确定关闭吗？', { title: '未保存的修改' });
+          if (!ok) {
+            setTimeout(() => setEditing(true), 50);
+            return;
+          }
         }
         setEditing(false);
       }}>

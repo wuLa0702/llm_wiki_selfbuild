@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { FileText, FolderClosed, Upload, Trash2, RefreshCw, Sparkles, Edit3, Save, X, ChevronDown, ChevronRight, RotateCcw, AlertCircle, CheckCircle2, Clock, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { showConfirm } from '@/components/ui/confirm-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
@@ -250,7 +251,7 @@ export default function SourcesPage() {
   };
 
   const deleteFile = async (path: string) => {
-    if (!confirm('删除此文件？将同时删除关联的 Wiki 页面。')) return;
+    if (!(await showConfirm('删除此文件？将同时删除关联的 Wiki 页面。', { title: '确认删除', variant: 'destructive' }))) return;
     try {
       const r = await fetch(`/v1/sources/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
       const d = await r.json();
@@ -273,10 +274,9 @@ export default function SourcesPage() {
         const d = await check.json();
         if (d.changed === false) {
           setPreviewLoading(false);
-          const ok = window.confirm(
-            '该文件内容自上次生成 Wiki 后没有变化。\n\n' +
-            '· 点击「确定」强制重新生成（消耗 LLM 额度）\n' +
-            '· 点击「取消」跳过本次操作'
+          const ok = await showConfirm(
+            '该文件内容自上次生成 Wiki 后没有变化。\n\n· 点击「确定」强制重新生成（消耗 LLM 额度）\n· 点击「取消」跳过本次操作',
+            { title: '文件未变化', confirmLabel: '强制生成', variant: 'destructive' },
           );
           if (!ok) return;
           // 用户确认强制生成 → 带 force=true 重新调用

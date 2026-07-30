@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { showConfirm } from '@/components/ui/confirm-dialog';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -68,7 +69,7 @@ export default function ChatSidebar({
   const cancelEdit = () => { setEditingId(null); setEditValue(''); };
 
   const handleDelete = async (t: ThreadMeta) => {
-    if (!window.confirm(`删除对话「${t.title || '未命名'}」？此操作不可撤销。`)) return;
+    if (!(await showConfirm(`删除对话「${t.title || '未命名'}」？此操作不可撤销。`, { title: '确认删除', variant: 'destructive' }))) return;
     setBusyId(t.thread_id);
     try {
       await onDelete(t.thread_id);
