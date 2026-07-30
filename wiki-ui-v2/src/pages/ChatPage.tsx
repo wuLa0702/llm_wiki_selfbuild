@@ -1,150 +1,304 @@
-import { useState, useRef, useEffect } from 'react';
-import { MessageSquare, Plus, Send, StopCircle, Copy, Sparkles } from 'lucide-react';
+/**
+ * ChatPage — Agent 对话页（对接后端持久化）
+ *
+ * 功能：
+ *   - 会话列表来自 GET /v1/agent/threads（后端 SQLite 持久化）
+ *   - 新建：前端生成 UUID，首条消息发出时落库
+ *   - 删除/重命名：侧栏菜单操作，调 DELETE / PATCH
+ *   - 消息历史：懒加载，点进会话时 GET detail（含 messages）
+ *   - 对话：POST /v1/agent/chat/session SSE 流式
+ *   - 工具调用：tool_start / tool_end 事件实时展示
+ *   - 中断：AbortController 停止生成
+ *
+ * 架构说明：
+ *   - 所有数据源以**后端为准**，前端只维护：
+ *       · threads 列表（元数据）
+ *       · messagesByThread 本地缓存（Map<thread_id, messages>）
+ *       · toolCallsByAssistantMsg 工具调用展示
+ *   - 不再用 localStorage 存 sessions（旧数据由迁移逻辑处理）
+ */
+
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { MessageSquare, Send, StopCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { showToast } from '@/components/shared/Toast';
+import ChatSidebar from '@/components/chat/ChatSidebar';
+import ChatMessage from '@/components/chat/ChatMessage';
+import {
+  listThreads, getThread, renameThread, deleteThread, openSessionStream,
+} from '@/api/agent';
+import type {
+  ThreadMeta, ChatMessage as ApiChatMessage, ToolCall as ApiToolCall,
+} from '@/api/agent';
+import type { ToolCallInfo } from '@/components/chat/ToolCallBadge';
 
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-  id: string;
+function newId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
-interface Session {
-  id: string;
-  title: string;
-  date: string;
-  messages: Message[];
-}
+/** 将后端返回的消息归一化为前端展示用（过滤 tool 角色消息） */
+function normalizeMessages(raw: ApiChatMessage[]): { visible: ApiChatMessage[]; toolsByAssistantIdx: Map<number, ToolCallInfo[]> } {
+  const visible: ApiChatMessage[] = [];
+  const toolsByAssistantIdx = new Map<number, ToolCallInfo[]>();
+  const toolOutputsById = new Map<string, string>();
 
-function mid() { return Math.random().toString(36).slice(2, 10); }
-
-/** SSE 事件类型 */
-interface SseToken { type: 'token'; content: string }
-interface SseToolStart { type: 'tool_start'; tool: string; input: Record<string, unknown> }
-interface SseToolEnd { type: 'tool_end'; tool: string; output: string }
-interface SseDone { type: 'done'; sources: string[] }
-interface SseError { type: 'error'; message: string }
-type SseEvent = SseToken | SseToolStart | SseToolEnd | SseDone | SseError;
-
-/** 调用后端 Agent 会话版（/session 端点），通过 fetch + ReadableStream 读取 SSE */
-async function* agentChatStreamSession(content: string, threadId: string): AsyncGenerator<SseEvent> {
-  const res = await fetch('/v1/agent/chat/session', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, thread_id: threadId }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-
-  const reader = res.body?.getReader();
-  if (!reader) throw new Error('Response body is null');
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';  // 保留最后一个不完整的行
-
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      try {
-        const data: SseEvent = JSON.parse(line.slice(6));
-        yield data;
-      } catch { /* 忽略解析错误 */ }
+  // 先收集所有 tool 输出（role=tool）
+  for (const m of raw) {
+    if (m.role === 'tool' && m.tool_call_id) {
+      toolOutputsById.set(m.tool_call_id, m.content);
     }
   }
+
+  for (const m of raw) {
+    if (m.role === 'tool') continue;
+    if (m.role === 'system') continue;
+    if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length) {
+      // assistant 发起工具调用 — 记录工具调用信息，并把消息本身加入可见
+      const idx = visible.length;
+      const tools: ToolCallInfo[] = m.tool_calls.map((tc: ApiToolCall) => {
+        let input: Record<string, unknown> = {};
+        try { input = JSON.parse(tc.function.arguments || '{}'); } catch { /* ignore */ }
+        const out = toolOutputsById.get(tc.id);
+        return {
+          id: tc.id,
+          name: tc.function.name,
+          input,
+          output: out,
+          status: out ? 'done' : 'running',
+        };
+      });
+      toolsByAssistantIdx.set(idx, tools);
+      // assistant 消息有 tool_calls 时 content 可能为空，仍保留展示工具徽标
+      visible.push({ role: 'assistant', content: m.content || '' });
+    } else {
+      visible.push({ role: m.role, content: m.content || '' });
+    }
+  }
+  return { visible, toolsByAssistantIdx };
 }
 
 export default function ChatPage() {
-  const [sessions, setSessions] = useState<Session[]>(() => {
-    try { return JSON.parse(localStorage.getItem('chat_sessions') || '[]'); } catch { return []; }
-  });
+  // ── 状态 ────────────────────────────────────────────────────────────────
+  const [threads, setThreads] = useState<ThreadMeta[]>([]);
+  const [loadingList, setLoadingList] = useState(true);
   const [activeId, setActiveId] = useState<string>('');
+  const [messagesByThread, setMessagesByThread] = useState<Record<string, ApiChatMessage[]>>({});
+  const [toolMapByThread, setToolMapByThread] = useState<Record<string, Map<number, ToolCallInfo[]>>>({});
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [sending, setSending] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const listRefreshTimer = useRef<number | null>(null);
 
-  const active = sessions.find(s => s.id === activeId);
+  // ── 数据加载 ────────────────────────────────────────────────────────────
+  const refreshThreads = useCallback(async (silent = false) => {
+    if (!silent) setLoadingList(true);
+    try {
+      const list = await listThreads(50, 0);
+      setThreads(list);
+      return list;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (!silent) showToast(`加载会话列表失败：${message}`, 'error');
+      return [];
+    } finally {
+      setLoadingList(false);
+    }
+  }, []);
 
+  const loadThreadMessages = useCallback(async (threadId: string) => {
+    // 已有缓存直接用
+    if (messagesByThread[threadId]) return;
+    try {
+      const detail = await getThread(threadId);
+      const { visible, toolsByAssistantIdx } = normalizeMessages(detail.messages);
+      setMessagesByThread(prev => ({ ...prev, [threadId]: visible }));
+      setToolMapByThread(prev => ({ ...prev, [threadId]: toolsByAssistantIdx }));
+      // 同步更新列表里的标题/计数（防止 list 缓存过期）
+      setThreads(prev => prev.map(t => t.thread_id === threadId
+        ? { ...t, title: detail.title, message_count: visible.filter(m => m.role === 'user').length }
+        : t));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      showToast(`加载会话失败：${message}`, 'error');
+    }
+  }, [messagesByThread]);
+
+  // 首次加载
   useEffect(() => {
-    localStorage.setItem('chat_sessions', JSON.stringify(sessions));
-  }, [sessions]);
+    refreshThreads();
+    return () => {
+      if (listRefreshTimer.current) window.clearTimeout(listRefreshTimer.current);
+      abortRef.current?.abort();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // 选中会话时懒加载
+  useEffect(() => {
+    if (activeId && !messagesByThread[activeId]) {
+      loadThreadMessages(activeId);
+    }
+  }, [activeId, loadThreadMessages, messagesByThread]);
+
+  // 自动滚动到底
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [sessions, activeId]);
+  }, [activeId, messagesByThread]);
 
-  const newSession = () => {
-    const s: Session = {
-      id: mid(),
-      title: '新对话',
-      date: new Date().toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
-      messages: [],
-    };
-    setSessions(prev => [s, ...prev]);
-    setActiveId(s.id);
+  // ── 操作 ────────────────────────────────────────────────────────────────
+  const handleNew = () => {
+    setActiveId('');
     setInput('');
     setTimeout(() => inputRef.current?.focus(), 50);
   };
 
-  const streamReply = async (text: string, sid: string) => {
-    const userMsg: Message = { role: 'user', content: text, id: mid() };
-    const assistantMsg: Message = { role: 'assistant', content: '', id: mid() };
+  const handleSelect = (id: string) => {
+    if (streaming) return;
+    setActiveId(id);
+  };
 
-    setSessions(prev => prev.map(s =>
-      s.id === sid
-        ? { ...s, title: s.messages.length === 0 ? text.slice(0, 30) : s.title, messages: [...s.messages, userMsg, assistantMsg] }
-        : s
-    ));
+  const handleRename = async (id: string, newTitle: string) => {
+    try {
+      const res = await renameThread(id, newTitle);
+      setThreads(prev => prev.map(t => t.thread_id === id ? { ...t, title: res.title } : t));
+      showToast('已重命名', 'success');
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      showToast(`重命名失败：${message}`, 'error');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteThread(id);
+      setThreads(prev => prev.filter(t => t.thread_id !== id));
+      setMessagesByThread(prev => {
+        const { [id]: _, ...rest } = prev; return rest;
+      });
+      setToolMapByThread(prev => {
+        const { [id]: _, ...rest } = prev; return rest;
+      });
+      if (activeId === id) setActiveId('');
+      showToast('已删除', 'success');
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      showToast(`删除失败：${message}`, 'error');
+    }
+  };
+
+  // ── 发送 / 流式 ────────────────────────────────────────────────────────
+  const streamReply = async (text: string, threadId: string) => {
+    const userMsg: ApiChatMessage = { role: 'user', content: text };
+    const assistantMsg: ApiChatMessage = { role: 'assistant', content: '' };
+
+    // 本地立即插入 user + 空 assistant 占位
+    setMessagesByThread(prev => {
+      const existing = prev[threadId] || [];
+      return { ...prev, [threadId]: [...existing, userMsg, assistantMsg] };
+    });
+    setToolMapByThread(prev => {
+      const map = new Map(prev[threadId] || []);
+      const assistantIdx = (prev[threadId] ? messagesByThread[threadId].length : 0) + 1;
+      map.set(assistantIdx, []);
+      return { ...prev, [threadId]: map };
+    });
+
     setStreaming(true);
+    setSending(true);
+    const ac = new AbortController();
+    abortRef.current = ac;
 
-    // 由后端 /session 端点管理历史（持久化 SQLite），
-    // 前端只需传本轮 text + session.id 作为 thread_id
     let accumulated = '';
+    let currentTool: ToolCallInfo | null = null;
 
     try {
-      for await (const event of agentChatStreamSession(text, sid)) {
+      for await (const event of openSessionStream({
+        content: text, threadId, signal: ac.signal,
+      })) {
         switch (event.type) {
           case 'token':
             accumulated += event.content;
-            setSessions(prev => prev.map(s => {
-              if (s.id !== sid) return s;
-              const msgs = [...s.messages];
-              const last = msgs[msgs.length - 1];
-              if (last.role === 'assistant') msgs[msgs.length - 1] = { ...last, content: accumulated };
-              return { ...s, messages: msgs };
-            }));
+            setMessagesByThread(prev => {
+              const msgs = [...(prev[threadId] || [])];
+              const lastIdx = msgs.length - 1;
+              if (lastIdx >= 0 && msgs[lastIdx].role === 'assistant') {
+                msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated };
+              }
+              return { ...prev, [threadId]: msgs };
+            });
             break;
-          case 'tool_start':
-            // 可选：显示"正在搜索..."状态
+
+          case 'tool_start': {
+            const tool: ToolCallInfo = {
+              id: event.tool + '-' + Date.now(),
+              name: event.tool,
+              input: event.input,
+              status: 'running',
+            };
+            currentTool = tool;
+            setToolMapByThread(prev => {
+              const map = new Map(prev[threadId] || []);
+              // 找到最后一个 assistant 的 idx
+              const msgs = messagesByThread[threadId] || [];
+              const assistantIdx = msgs.length - 1;
+              const existing = map.get(assistantIdx) || [];
+              map.set(assistantIdx, [...existing, tool]);
+              return { ...prev, [threadId]: map };
+            });
             break;
+          }
+
           case 'tool_end':
-            break;
-          case 'done':
-            if (event.sources?.length) {
-              console.log('Sources:', event.sources);
+            if (currentTool && currentTool.name === event.tool) {
+              currentTool.status = 'done';
+              currentTool.output = event.output;
+              // 触发重渲染（替换 tool 对象）
+              setToolMapByThread(prev => {
+                const map = new Map(prev[threadId] || []);
+                const msgs = messagesByThread[threadId] || [];
+                const assistantIdx = msgs.length - 1;
+                const arr = (map.get(assistantIdx) || []).map(t =>
+                  t.id === currentTool!.id ? { ...currentTool! } : t);
+                map.set(assistantIdx, arr);
+                return { ...prev, [threadId]: map };
+              });
+              currentTool = null;
             }
             break;
+
+          case 'tool_approval_needed':
+            // 未来人工审批接入点，当前只打日志
+            console.log('[agent] approval needed:', event);
+            break;
+
           case 'error':
             showToast(`对话出错：${event.message}`, 'error');
+            break;
+
+          case 'done':
+            // 刷新会话列表（标题/更新时间/消息数由后端生成）
+            listRefreshTimer.current = window.setTimeout(() => refreshThreads(true), 800);
             break;
         }
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      showToast(`连接失败：${message}`, 'error');
+      if ((err as Error)?.name === 'AbortError') {
+        showToast('已停止生成', 'info');
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        showToast(`连接失败：${message}`, 'error');
+      }
+    } finally {
+      setStreaming(false);
+      setSending(false);
+      abortRef.current = null;
     }
-    setStreaming(false);
   };
 
   const send = async () => {
@@ -152,153 +306,87 @@ export default function ChatPage() {
     if (!text || streaming) return;
 
     let sid = activeId;
-    if (!active) {
-      const s: Session = {
-        id: mid(),
-        title: text.slice(0, 30),
-        date: new Date().toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
-        messages: [],
-      };
-      setSessions(prev => [s, ...prev]);
-      sid = s.id;
+    if (!sid) {
+      sid = newId();
       setActiveId(sid);
+      setMessagesByThread(prev => ({ ...prev, [sid]: [] }));
+      setToolMapByThread(prev => ({ ...prev, [sid]: new Map() }));
     }
-
     setInput('');
-    streamReply(text, sid);
+    await streamReply(text, sid);
   };
 
-  /* Called by suggestion buttons — creates session + sends immediately */
-  const sendSuggestion = (text: string) => {
-    if (streaming) return;
-    const s: Session = {
-      id: mid(),
-      title: text.slice(0, 30),
-      date: new Date().toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
-      messages: [],
-    };
-    setSessions(prev => [s, ...prev]);
-    setActiveId(s.id);
-    setInput('');
-    streamReply(text, s.id);
+  const handleStop = () => {
+    abortRef.current?.abort();
   };
 
-  const copyMsg = (c: string) => {
-    navigator.clipboard.writeText(c);
-    showToast('已复制', 'success');
-  };
+  const active = threads.find(t => t.thread_id === activeId);
+  const activeMessages = messagesByThread[activeId] || (activeId ? undefined : []) || [];
+  const activeTools = toolMapByThread[activeId] || new Map();
+  const hasActive = activeMessages.length > 0;
 
-  const msgCount = (s: Session) => s.messages.filter(m => m.role === 'user').length;
+  const suggestions = [
+    '什么是异步编程？',
+    'Python 和 JavaScript 的区别',
+    '解释 Docker 容器化部署',
+  ];
 
   return (
     <div className="flex flex-1 min-h-0">
-      {/* Session sidebar */}
+      {/* Sidebar */}
       <div
-        className="flex-shrink-0 flex flex-col border-r border-border bg-card transition-all duration-200"
-        style={{ width: sidebarOpen ? 260 : 0, overflow: 'hidden' }}
+        className="flex-shrink-0 transition-all duration-200 overflow-hidden"
+        style={{ width: sidebarOpen ? 260 : 0 }}
       >
-        <div className="p-3 border-b border-border">
-          <Button
-            variant="outline"
-            className="w-full justify-start gap-2"
-            onClick={newSession}
-          >
-            <Plus className="h-4 w-4" /> 新建对话
-          </Button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-2">
-          {sessions.length === 0 ? (
-            <div className="text-xs text-muted-foreground text-center py-8">暂无对话记录</div>
-          ) : (
-            sessions.map(s => (
-              <div
-                key={s.id}
-                className={`px-3 py-2.5 mb-1 rounded-lg cursor-pointer transition-colors ${
-                  s.id === activeId ? 'bg-accent' : 'hover:bg-accent/50'
-                }`}
-                onClick={() => setActiveId(s.id)}
-              >
-                <div className="text-sm truncate font-medium">{s.title}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  {s.date} · {msgCount(s)} 条消息
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+        <ChatSidebar
+          threads={threads}
+          activeId={activeId}
+          loading={loadingList}
+          onSelect={handleSelect}
+          onNew={handleNew}
+          onRename={handleRename}
+          onDelete={handleDelete}
+        />
       </div>
 
       {/* Toggle button */}
       <div
         className="flex items-center cursor-pointer flex-shrink-0 w-6 border-r border-border justify-center hover:bg-accent/50"
         onClick={() => setSidebarOpen(!sidebarOpen)}
+        title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
       >
         <span className="text-xs text-muted-foreground">{sidebarOpen ? '◀' : '▶'}</span>
       </div>
 
       {/* Main chat */}
       <div className="flex-1 flex flex-col min-w-0">
-        {active ? (
+        {hasActive ? (
           <>
+            {/* 顶部标题栏 */}
+            <div className="border-b border-border px-4 py-2.5 flex items-center gap-2">
+              <MessageSquare className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium truncate">
+                {active?.title || '新对话'}
+              </span>
+            </div>
+
             {/* Messages */}
             <div className="flex-1 overflow-y-auto">
               <div className="px-4 py-6 max-w-3xl mx-auto space-y-6">
-                {active.messages.map(msg => (
-                  <div key={msg.id} className="flex gap-3">
-                    {msg.role === 'assistant' && (
-                      <div className="flex-shrink-0 w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-medium">
-                        AI
-                      </div>
-                    )}
-                    <div className={`flex-1 min-w-0 ${msg.role === 'user' ? 'ml-auto max-w-[75%]' : ''}`}>
-                      {msg.role === 'user' ? (
-                        <div className="bg-primary text-primary-foreground rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm">
-                          {msg.content}
-                        </div>
-                      ) : (
-                        <div>
-                          {msg.content ? (
-                            <div className="space-y-2">
-                              <div className="prose prose-sm dark:prose-invert max-w-none">
-                                <div className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</div>
-                              </div>
-                              {!streaming && (
-                                <div className="flex gap-2 pt-1">
-                                  <button
-                                    className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-                                    onClick={() => copyMsg(msg.content)}
-                                  >
-                                    <Copy className="h-3 w-3" /> 复制
-                                  </button>
-                                  <button className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
-                                    <Sparkles className="h-3 w-3" /> 保存到 Wiki
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2 text-muted-foreground">
-                              <span className="w-2 h-2 rounded-full bg-muted-foreground animate-pulse" />
-                              <span className="w-2 h-2 rounded-full bg-muted-foreground animate-pulse" style={{ animationDelay: '0.2s' }} />
-                              <span className="w-2 h-2 rounded-full bg-muted-foreground animate-pulse" style={{ animationDelay: '0.4s' }} />
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    {msg.role === 'user' && (
-                      <div className="flex-shrink-0 w-7 h-7 rounded-full bg-secondary text-secondary-foreground flex items-center justify-center text-xs font-medium">
-                        U
-                      </div>
-                    )}
-                  </div>
+                {activeMessages.map((msg, idx) => (
+                  <ChatMessage
+                    key={`${activeId}-${idx}`}
+                    message={msg}
+                    toolCalls={msg.role === 'assistant' ? activeTools.get(idx) : undefined}
+                    isStreaming={streaming && idx === activeMessages.length - 1 && msg.role === 'assistant'}
+                    onCopy={() => showToast('已复制', 'success')}
+                  />
                 ))}
                 <div ref={messagesEndRef} />
               </div>
             </div>
 
-            {/* Input bar */}
+            {/* Input */}
             <div className="border-t border-border bg-card p-4">
               <div className="max-w-3xl mx-auto">
                 <div className="flex gap-2 items-end">
@@ -315,9 +403,10 @@ export default function ChatPage() {
                     }}
                     className="min-h-[2.5rem] max-h-32 resize-none"
                     rows={1}
+                    disabled={sending && !streaming}
                   />
                   <Button
-                    onClick={streaming ? () => setStreaming(false) : send}
+                    onClick={streaming ? handleStop : send}
                     disabled={!streaming && !input.trim()}
                     className="shrink-0"
                   >
@@ -342,20 +431,41 @@ export default function ChatPage() {
               <p className="text-sm text-muted-foreground mb-6">
                 向知识库提问，AI 将基于 Wiki 内容回答
               </p>
-              <div className="flex flex-wrap gap-2 justify-center">
-                {[
-                  '什么是异步编程？',
-                  'Python 和 JavaScript 的区别',
-                  '解释 Docker 容器化部署',
-                ].map(suggestion => (
+              <div className="flex flex-wrap gap-2 justify-center mb-6">
+                {suggestions.map(s => (
                   <button
-                    key={suggestion}
-                    className="px-3 py-1.5 text-xs rounded-full border border-border bg-secondary text-secondary-foreground hover:bg-accent"
-                    onClick={() => sendSuggestion(suggestion)}
+                    key={s}
+                    disabled={streaming}
+                    className="px-3 py-1.5 text-xs rounded-full border border-border bg-secondary text-secondary-foreground hover:bg-accent disabled:opacity-50"
+                    onClick={() => setInput(s)}
                   >
-                    {suggestion}
+                    {s}
                   </button>
                 ))}
+              </div>
+              <div className="max-w-xl mx-auto">
+                <div className="flex gap-2 items-end">
+                  <Textarea
+                    ref={inputRef}
+                    placeholder="输入消息开始新对话..."
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        send();
+                      }
+                    }}
+                    className="min-h-[2.5rem] max-h-32 resize-none"
+                    rows={1}
+                  />
+                  <Button
+                    onClick={send}
+                    disabled={!input.trim() || streaming}
+                  >
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>

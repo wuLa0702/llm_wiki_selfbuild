@@ -130,6 +130,15 @@ export async function putJson<T>(path: string, body?: unknown): Promise<T> {
 }
 
 /**
+ * PATCH 请求 — 自动失效 GET 缓存
+ */
+export async function patchJson<T>(path: string, body?: unknown): Promise<T> {
+  const res = await api.patch(path, { json: body });
+  invalidateCache(path);
+  return res.json();
+}
+
+/**
  * DELETE 请求 — 自动失效 GET 缓存
  */
 export async function deleteJson<T>(path: string): Promise<T> {
