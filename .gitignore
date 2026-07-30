@@ -267,5 +267,8 @@ agent_persistence.db*
 checkpoints.db*
 test_checkpoints.db*
 
+# Obsidian vault config (any subdirectory)
+.obsidian/
+
 # Temp debug files
 .claude/tmp_*
