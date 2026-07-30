@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Sun, Moon, Monitor, Minus, Plus, Save, Palette, SlidersHorizontal, Brain,
-  Eye, Activity, Shield, Lock, Target, Trash2, Plus as PlusIcon, Key,
+  Eye, Activity, Shield, Lock, Target, Trash2, Plus as PlusIcon, Key, Edit3,
   AlertCircle, CheckCircle2, Loader2, EyeOff, RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Package, Timer, FileText, Network as NetworkIcon, ListTodo } from 'lucide-react';
 import { fetchJson, postJson, putJson, deleteJson } from '@/api/client';
+import { listModels, createModel, updateModel, deleteModel } from '@/api/models';
+import type { ModelConfig } from '@/api/models';
 
 /* ──────────────────────────────────────────────
    Tabs 定义（去掉空壳 embedding / network）
@@ -30,16 +32,6 @@ const settingsTabs = [
   { key: 'purpose', label: '知识库目标', icon: Target },
   { key: 'health', label: '健康检查', icon: Activity },
 ];
-
-const PROVIDER_OPTIONS = [
-  { value: 'deepseek', label: 'DeepSeek' },
-  { value: 'doubao', label: '豆包（火山引擎）' },
-];
-
-const MODEL_OPTIONS: Record<string, string[]> = {
-  deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat'],
-  doubao: ['ep-20260704205018-srlpk'],
-};
 
 const SEARCH_METHODS = [
   { value: 'bm25', label: 'BM25 关键词', desc: '快，适合精确词匹配' },
@@ -477,36 +469,78 @@ function GeneralSettings({ settings, setSettings }: BackendTabProps) {
 
 function LLMSettings({ settings, setSettings }: BackendTabProps) {
   const [showKey, setShowKey] = useState(false);
+  const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([]);
+  const [configsLoading, setConfigsLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [form, setForm] = useState({ name: '', provider: 'custom', model_name: '', api_key: '', api_base: '' });
+  const [saving, setSaving] = useState(false);
+
+  const loadConfigs = useCallback(() => {
+    setConfigsLoading(true);
+    listModels()
+      .then(d => { setModelConfigs(d.models); setConfigsLoading(false); })
+      .catch(() => { showToast('加载模型配置失败', 'error'); setConfigsLoading(false); });
+  }, []);
+
+  useEffect(() => { loadConfigs(); }, [loadConfigs]);
 
   const update = (patch: Partial<BackendSettings>) => setSettings(patch);
-  const models = MODEL_OPTIONS[settings.llm_provider] || [];
+
+  const resetForm = () => {
+    setForm({ name: '', provider: 'custom', model_name: '', api_key: '', api_base: '' });
+    setEditingId(null);
+    setShowForm(false);
+  };
+
+  const handleSave = async () => {
+    if (!form.name.trim() || !form.model_name.trim()) {
+      showToast('名称和模型名不能为空', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      if (editingId !== null) {
+        await updateModel(editingId, form);
+        showToast('模型配置已更新', 'success');
+      } else {
+        await createModel(form);
+        showToast('模型配置已创建', 'success');
+      }
+      resetForm();
+      loadConfigs();
+    } catch { showToast('保存失败', 'error'); }
+    setSaving(false);
+  };
+
+  const handleEdit = (m: ModelConfig) => {
+    setForm({
+      name: m.name,
+      provider: m.provider,
+      model_name: m.model_name,
+      api_key: m.api_key,
+      api_base: m.api_base,
+    });
+    setEditingId(m.id);
+    setShowForm(true);
+  };
+
+  const handleDelete = async (id: number, name: string) => {
+    const { showConfirm } = await import('@/components/ui/confirm-dialog');
+    if (!(await showConfirm(`删除模型配置「${name}」？`, { variant: 'destructive' }))) return;
+    try {
+      await deleteModel(id);
+      showToast('已删除', 'success');
+      loadConfigs();
+    } catch { showToast('删除失败', 'error'); }
+  };
 
   return (
     <div className="p-6 flex flex-col min-h-0 max-w-2xl">
       <h2 className="text-lg font-semibold mb-1">LLM 模型</h2>
       <p className="text-sm text-muted-foreground mb-6">配置 AI 模型 Provider 和密钥</p>
 
-      <SectionHeader title="服务提供商" />
-      <div className="flex gap-2 mb-4 flex-wrap">
-        {PROVIDER_OPTIONS.map(opt => (
-          <button
-            key={opt.value}
-            className={`px-4 py-2 text-sm rounded-md cursor-pointer transition-all duration-200 ${
-              settings.llm_provider === opt.value
-                ? 'bg-primary text-primary-foreground shadow-sm shadow-primary/20'
-                : 'border border-border bg-secondary text-secondary-foreground hover:bg-accent hover:-translate-y-0.5'
-            }`}
-            onClick={() => {
-              const defModel = PROVIDER_CONFIG_DEFAULTS[opt.value] || '';
-              update({ llm_provider: opt.value, deepseek_model: defModel });
-            }}
-          >
-            {opt.label}
-          </button>
-        ))}
-      </div>
-
-      <SectionHeader title="API 密钥" desc="密钥保存在本地数据库，不经过第三方" />
+      <SectionHeader title="当前使用的密钥" />
       <div className="relative mb-4">
         <Input
           type={showKey ? 'text' : 'password'}
@@ -524,36 +558,117 @@ function LLMSettings({ settings, setSettings }: BackendTabProps) {
         </button>
       </div>
 
-      <SectionHeader title="模型" desc="选择该 Provider 下使用的具体模型" />
-      <div className="flex gap-2 mb-4 flex-wrap">
-        {models.map(m => (
-          <button
-            key={m}
-            className={`px-3 py-1.5 text-xs font-mono rounded-md cursor-pointer transition-all duration-200 ${
-              settings.deepseek_model === m
-                ? 'bg-primary text-primary-foreground shadow-sm shadow-primary/20'
-                : 'border border-border bg-secondary text-secondary-foreground hover:bg-accent hover:-translate-y-0.5'
-            }`}
-            onClick={() => update({ deepseek_model: m })}
-          >
-            {m}
-          </button>
-        ))}
-      </div>
+      <SectionHeader title="模型配置管理" desc="可自由添加多组模型配置（增删改查），按需切换" />
+      {configsLoading ? (
+        <div className="space-y-2 mb-4">{[1, 2].map(i => <Skeleton key={i} className="h-14 w-full" />)}</div>
+      ) : (
+        <div className="space-y-2 mb-4">
+          {modelConfigs.length === 0 && (
+            <p className="text-xs text-muted-foreground px-1 py-3">暂无自定义配置，添加一组以管理多个模型</p>
+          )}
+          {modelConfigs.map(mc => (
+            <div
+              key={mc.id}
+              className="flex items-center justify-between gap-2 px-4 py-3 rounded-md border border-border bg-secondary/40"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{mc.name}</span>
+                  <Badge variant="outline" className="text-[10px] font-mono">{mc.provider}</Badge>
+                  <code className="text-xs text-muted-foreground font-mono">{mc.model_name}</code>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                  {mc.api_base && <span className="truncate max-w-[200px]">{mc.api_base}</span>}
+                  {mc.api_key && <span>· 密钥已配置</span>}
+                  {mc.is_active && <Badge className="text-[10px] bg-primary/10 text-primary border-primary/20">当前使用</Badge>}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <Button variant="ghost" size="xs" onClick={() => handleEdit(mc)} title="编辑">
+                  <Edit3 className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="ghost" size="xs" onClick={() => handleDelete(mc.id, mc.name)} title="删除">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showForm ? (
+        <div className="rounded-md border border-border bg-secondary/40 p-4 mb-4 space-y-3">
+          <h4 className="text-sm font-semibold">{editingId ? '编辑模型配置' : '添加模型配置'}</h4>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">名称</label>
+              <Input
+                className="text-sm"
+                value={form.name}
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="例如：DeepSeek 主模型"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Provider</label>
+              <Input
+                className="text-sm font-mono"
+                value={form.provider}
+                onChange={e => setForm(f => ({ ...f, provider: e.target.value }))}
+                placeholder="deepseek / openai / custom"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">模型名</label>
+              <Input
+                className="text-sm font-mono"
+                value={form.model_name}
+                onChange={e => setForm(f => ({ ...f, model_name: e.target.value }))}
+                placeholder="deepseek-v4-flash"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">API Base (可选)</label>
+              <Input
+                className="text-sm font-mono"
+                value={form.api_base}
+                onChange={e => setForm(f => ({ ...f, api_base: e.target.value }))}
+                placeholder="https://api.deepseek.com/v1"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">API Key (可选，不填则使用全局密钥)</label>
+            <Input
+              type="password"
+              className="text-sm font-mono"
+              value={form.api_key}
+              onChange={e => setForm(f => ({ ...f, api_key: e.target.value }))}
+              placeholder="sk-..."
+            />
+          </div>
+          <div className="flex gap-2 pt-1">
+            <Button size="sm" onClick={handleSave} disabled={saving}>
+              {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+              {editingId ? '更新' : '添加'}
+            </Button>
+            <Button variant="outline" size="sm" onClick={resetForm}>取消</Button>
+          </div>
+        </div>
+      ) : (
+        <Button variant="outline" size="sm" onClick={() => setShowForm(true)} className="mb-4">
+          <PlusIcon className="h-3.5 w-3.5 mr-1" />添加模型配置
+        </Button>
+      )}
 
       <div className="mt-2 px-4 py-3 rounded-md bg-amber-500/10 border border-amber-500/20">
         <p className="text-xs text-amber-700 dark:text-amber-400">
-          ⚠️ 更改 Provider/模型后，需要重启后端服务才能完全生效。API 密钥热生效。
+          ⚠️ 更改模型配置后，需要重启后端服务才能完全生效。
         </p>
       </div>
     </div>
   );
 }
-
-const PROVIDER_CONFIG_DEFAULTS: Record<string, string> = {
-  deepseek: 'deepseek-v4-flash',
-  doubao: 'ep-20260704205018-srlpk',
-};
 
 /* ──────────────────────────────────────────────
    4. 资料监控
