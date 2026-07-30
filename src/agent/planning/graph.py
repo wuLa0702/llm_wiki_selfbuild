@@ -51,6 +51,7 @@ from langgraph.prebuilt import ToolNode
 from langgraph.types import Command, interrupt
 
 from src.agent import constants as C
+from src.agent.action.registry import registry
 from src.agent.action.tools import read_page, search_wiki
 from src.agent.memory.attention import extract_sink_content, format_sink_knowledge, update_attention_sinks
 from src.agent.memory.summarizer import condense_history
@@ -64,7 +65,9 @@ logger = logging.getLogger("agent.graph")
 
 # ── 工具列表 ──────────────────────────────────────────────────────────────────
 
-P1_TOOLS = [search_wiki, read_page]
+# 向后兼容：测试代码直接引用 P1_TOOLS
+# 工具实际通过 registry.py 的 init_default_tools() 在模块加载时自动注册
+P1_TOOLS = registry.list_enabled()
 
 
 # ── 图状态定义 ────────────────────────────────────────────────────────────────
@@ -224,7 +227,7 @@ llm = ChatOpenAI(
     timeout=C.LLM_TIMEOUT,
     max_retries=C.LLM_MAX_RETRIES,
 )
-llm_with_tools = llm.bind_tools(P1_TOOLS)
+llm_with_tools = registry.bind_tools(llm)
 
 # ── 摘要压缩专用 LLM（小模型） ──────────────────────────────────────────────
 
@@ -422,7 +425,7 @@ def call_model(state: AgentState) -> dict:
     return result
 
 
-tool_node = ToolNode(P1_TOOLS)
+tool_node = ToolNode(registry.list_enabled())
 
 
 def should_continue(state: AgentState) -> Literal["validate_tool", "summarizer"]:
@@ -968,5 +971,5 @@ app = builder.compile(checkpointer=MemorySaver())
 
 def build_agent() -> CompiledStateGraph:
     """构建 ReAct Agent（CompiledStateGraph）"""
-    logger.info(C.LOG_AGENT_BUILT, [t.name for t in P1_TOOLS])
+    logger.info(C.LOG_AGENT_BUILT, registry.list_enabled_names())
     return app
