@@ -20,7 +20,11 @@ import sys
 from pathlib import Path
 
 # ── 项目根目录 ────────────────────────────────────────────────────────────
-ROOT_DIR = Path(__file__).parent.absolute()
+try:
+    ROOT_DIR = Path(__file__).parent.absolute()
+except NameError:
+    # PyInstaller exec() 上下文不注入 __file__，fallback 到 CWD
+    ROOT_DIR = Path.cwd()
 
 # ── 前端构建产物（必须事先 npm run build） ────────────────────────────────
 FRONTEND_DIST = ROOT_DIR / "wiki-ui-v2" / "dist"
