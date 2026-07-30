@@ -241,6 +241,12 @@ wiki-ui/dist/
 # wiki-ui-v2 (shadcn/ui frontend)
 wiki-ui-v2/node_modules/
 wiki-ui-v2/dist/
+wiki-ui-v2/.vite/
+
+# PyInstaller build
+build/
+*.spec
+!wiki-llm.spec    # keep the project spec file
 
 # AI coding tool directories (auto-generated, not part of the project)
 .cat-cafe/
