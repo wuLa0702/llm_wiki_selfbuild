@@ -7,6 +7,7 @@ import os
 import re
 
 from src.core.logging_config import get_logger
+from src.utils.path_resolver import get_wiki_dir
 
 logger = get_logger("search")
 
@@ -17,12 +18,12 @@ NAV_FILES = {"index.md", "overview.md", "log.md"}
 class SearchTool:
     """在 wiki 目录中搜索关键词（文件名 + 全文）"""
 
-    def __init__(self, wiki_dir: str = "wiki") -> None:
+    def __init__(self, wiki_dir: str | None = None) -> None:
         """
         Args:
-            wiki_dir: wiki 根目录的路径
+            wiki_dir: wiki 根目录的路径，None 或 "wiki" 自动解析到 %APPDATA%
         """
-        self.wiki_dir = wiki_dir
+        self.wiki_dir = wiki_dir if wiki_dir and wiki_dir != "wiki" else get_wiki_dir()
 
     def search(self, keyword: str, limit: int = 15) -> list[dict]:
         """
