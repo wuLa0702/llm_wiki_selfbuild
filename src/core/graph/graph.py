@@ -220,10 +220,22 @@ class WikiGraph:
 
     @classmethod
     def compute_and_cache(cls, db_path: str = "wiki.db") -> "WikiGraph":
-        """构建图谱 + 计算关联度 + 写入缓存（一次性 warmup）"""
+        """构建图谱 + 计算关联度 + 写入缓存（一次写入，后续启动从缓存加载）
+
+        第一启动：全量扫描 + N² 计算 + 写入 DB
+        后续启动：签名匹配 → 直接加载缓存（零扫描，零计算）
+        文件变化：ingest 后 invalidate() → 下回读取触发增量查/重建
+        """
+        graph = cls()
+
+        # 优先从缓存加载——无文件变化时零操作
+        if graph.load_cache(db_path):
+            logger.info("WikiGraph 缓存命中，跳过预热")
+            return graph
+
+        # 缓存缺失或签名不匹配 → 全量构建
         from src.db.repository import WikiRepository
 
-        graph = cls()
         graph.build()
         repo = WikiRepository()
         graph.compute_relevance(repo)

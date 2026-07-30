@@ -6,6 +6,7 @@ LLM Wiki — FastAPI 服务入口
 import asyncio
 import logging
 import os
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -84,6 +85,10 @@ else:
     logger.info("前端 dist 目录不存在，SPA 路由禁用（仅 API 模式）")
 
 
+# 预热状态信号（后台预热完成后 set）
+_warmup_complete = threading.Event()
+
+
 @app.on_event("startup")
 async def _start_services():
     import time
@@ -91,16 +96,22 @@ async def _start_services():
 
     init_services()
 
-    # 同步预热：构建图谱 + 计算关联度 + 写入 DB 缓存
-    # 启动阶段多花几秒，换来第一个请求瞬时响应
-    logger.info("启动预热：预构建知识图谱并写入缓存 ...")
-    try:
-        from src.core.graph.graph import WikiGraph
-        await asyncio.to_thread(WikiGraph.compute_and_cache)
-        elapsed = time.time() - t0
-        logger.info("启动预热完成 | 耗时=%.1fs", elapsed)
-    except Exception as exc:
-        logger.warning("启动预热失败，后续请求将触发懒重建 | %s", exc)
+    # 后台预热：加载/构建图谱 + 计算/恢复关联度
+    # 不阻塞 HTTP 服务——服务器立即开始接受请求，预热在后台跑
+    # 缓存有效（文件未变）→ 零操作加载；缓存失效 → 全量构建
+    logger.info("后台预热：开始（缓存有效则跳过）...")
+
+    async def _warmup_background():
+        try:
+            from src.core.graph.graph import WikiGraph
+            await asyncio.to_thread(WikiGraph.compute_and_cache)
+            _warmup_complete.set()
+            elapsed = time.time() - t0
+            logger.info("后台预热完成 | 耗时=%.1fs", elapsed)
+        except Exception as exc:
+            logger.warning("后台预热失败，后续请求将触发懒重建 | %s", exc)
+
+    asyncio.create_task(_warmup_background())
 
 
 @app.on_event("shutdown")

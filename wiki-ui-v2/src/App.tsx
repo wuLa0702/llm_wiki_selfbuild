@@ -189,8 +189,8 @@ export default function App() {
 }
 
 /**
- * 后端启动等待画面 — 替代散乱的骨架屏
- * 在后端同步预热图谱期间（~3-5s）显示统一的加载状态
+ * 后端启动等待画面 — 仅在后端 HTTP 服务完全就绪前显示
+ * 后端预热（图谱构建）已在后台异步执行，不阻塞本画面消失
  */
 function StartupSplash({ elapsed }: { elapsed: number }) {
   const [dots, setDots] = useState('');
