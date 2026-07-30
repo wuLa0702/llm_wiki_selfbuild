@@ -16,6 +16,7 @@ from src.app_state import init_services, shutdown_services
 from src.api.errors import global_exception_handler
 from src.api.middleware import setup_middleware
 from src.api.routes import auth, chat, graph, ingest, lint, misc, pages, purpose, sources, system
+from src.utils.path_resolver import get_frontend_dist_dir, get_static_dir
 
 # 保持向后兼容 — 测试仍 import 这些符号
 from src.api.helpers import (_check_page_access, _convert_wikilinks,
@@ -33,9 +34,12 @@ setup_middleware(app)
 app.add_exception_handler(Exception, global_exception_handler)
 
 # 挂载静态资源（CSS / JS / 图片）
-_static_dir = os.environ.get("LLM_WIKI_RESOURCE_DIR", None)
-_static_path = os.path.join(_static_dir, "static") if _static_dir else "static"
-app.mount("/static", StaticFiles(directory=_static_path), name="static")
+# 开发模式：项目根/static/；打包模式：exe 内部 static/（只读）
+_static_path = get_static_dir()
+if os.path.isdir(_static_path):
+    app.mount("/static", StaticFiles(directory=_static_path), name="static")
+else:
+    logger.warning("静态资源目录不存在，跳过挂载 | path=%s", _static_path)
 
 # 注册 API 路由（优先于 SPA）
 app.include_router(auth.router)
@@ -53,9 +57,13 @@ logger.info("LLM Wiki API 启动 | version=0.1.0")
 
 # ── SPA 前端（wiki-ui-v2/dist/） ──
 # 迁移自 HeroUI → shadcn/ui，见 migration-audit.md
-_ui_dist = Path(__file__).resolve().parents[1] / "wiki-ui-v2" / "dist"
-if _ui_dist.is_dir():
-    app.mount("/assets", StaticFiles(directory=str(_ui_dist / "assets")), name="ui_assets")
+# 开发模式：CWD/wiki-ui-v2/dist/；打包模式：exe 内部 dist/
+_ui_dist_path = get_frontend_dist_dir()
+if _ui_dist_path:
+    _ui_dist = Path(_ui_dist_path)
+    assets_dir = _ui_dist / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="ui_assets")
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
@@ -68,6 +76,8 @@ if _ui_dist.is_dir():
             return FileResponse(str(spa_index))
         from fastapi.responses import JSONResponse
         return JSONResponse({"error": "Not found"}, status_code=404)
+else:
+    logger.info("前端 dist 目录不存在，SPA 路由禁用（仅 API 模式）")
 
 
 @app.on_event("startup")
