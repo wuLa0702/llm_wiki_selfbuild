@@ -25,12 +25,12 @@
 - EXE 打包后路径全部指向 `%APPDATA%/LLM-Wiki/`，不再意外读写 CWD
 - Agent 同步 LLM 调用（`with_structured_output.invoke`）移到 `asyncio.to_thread`，防止阻塞事件循环导致进程崩溃
 
-### 已知问题（打包相关）
-- `build-exe.bat` 行 67 的 Size 显示直接输出算式而非计算结果
-- `build-exe.bat` 行 71 的 `>/dev/null` 在 Windows 中无效，应改为 `>nul`
-- `wiki.spec`（轻量版）落后于代码库，缺少 chat/ingest/purpose/system 路由和全部 agent 模块
+### 已知问题（打包相关 — 已全部关闭）
+- ~~`build-exe.bat` 行 67 的 Size 显示直接输出算式而非计算结果~~ ✅ 修复于 `4a85fdb`
+- ~~`build-exe.bat` 行 71 的 `>/dev/null` 在 Windows 中无效，应改为 `>nul`~~ ✅ 修复于 `4a85fdb`
+- ~~`wiki.spec`（轻量版）落后于代码库~~ ✅ 已弃用并归档至 `docs/legacy/`，`wiki-llm.spec` 为唯一构建入口
 
 ### 技术债务
-- `wiki.db` 路径仍有多处硬编码，后续应迁移到 path_resolver
-- PyInstaller 构建签名和图标待完成
-- 首次运行引导页面待添加
+- `wiki.db` 路径已通过 `src/utils/path_resolver.py` 集中管理，各模块使用 `get_db_path()` 统一解析
+- PyInstaller 构建签名和图标待完成（功能增强，非 bug）
+- 首次运行引导页面待添加（功能增强，非 bug）
