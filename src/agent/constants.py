@@ -49,8 +49,7 @@ SUMMARIZE_THRESHOLD = 40
 # 摘要后保留的最新对话轮数（1 轮 = user + assistant 共 2 条消息）
 SUMMARIZE_KEEP_LATEST_TURNS = 10
 
-# Agent Checkpointer 持久化数据库路径（MemorySaver 纯内存不持久）
-# 持久化由 persistence.py 的 SQLite 层负责
+# Agent Checkpointer 持久化数据库文件名（由 path_resolver 解析到 %APPDATA%/LLM-Wiki/）
 PERSISTENCE_DB_PATH = "agent_persistence.db"
 
 
@@ -387,6 +386,8 @@ LOG_SESSION_COLD_RECOVER = "会话冷启动恢复 | thread=%s messages=%d"
 LOG_WINDOW_EXCEEDED = "消息超窗口 | total=%d keeping=%d"
 LOG_APPROVAL_NEEDED = "工具调用等待审批 | thread=%s tools=%s"
 LOG_APPROVAL_RESUMED = "工具调用审批结果 | thread=%s decision=%s"
+LOG_INTENT_SKIP = "意图分类跳过 | 最新消息不是用户输入"
+LOG_INTENT_CLASSIFIED = "意图分类 | category=%s confidence=%.2f text=%.50s"
 
 # Summarizer
 LOG_SUMMARIZE_SKIP = "摘要压缩跳过 | 消息数=%d 低于阈值=%d"

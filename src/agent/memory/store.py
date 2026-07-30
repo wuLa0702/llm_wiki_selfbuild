@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from src.agent import constants as C
+from src.utils.path_resolver import get_db_path
 
 logger = logging.getLogger("agent.persistence")
 
@@ -36,8 +37,10 @@ def _get_conn() -> sqlite3.Connection:
     """获取 SQLite 连接（懒初始化）"""
     global _conn
     if _conn is None:
-        _conn = sqlite3.connect(C.PERSISTENCE_DB_PATH, check_same_thread=False)
+        db_path = get_db_path(C.PERSISTENCE_DB_PATH)
+        _conn = sqlite3.connect(db_path, check_same_thread=False)
         _conn.row_factory = sqlite3.Row
+        logger.info("持久化存储就绪 | db=%s", db_path)
     return _conn
 
 
@@ -176,13 +179,36 @@ def thread_exists(thread_id: str) -> bool:
     return row is not None
 
 
+def rename_thread(thread_id: str, title: str) -> bool:
+    """重命名会话标题
+
+    Args:
+        thread_id: 会话 ID
+        title: 新标题（自动截断到 50 字符）
+
+    Returns:
+        True 表示存在并更新 / False 表示不存在
+    """
+    _ensure_table()
+    title = (title or "").strip()[:50]
+    if not title:
+        return False
+    conn = _get_conn()
+    cur = conn.execute(
+        "UPDATE agent_threads SET title = ?, updated_at = ? WHERE thread_id = ?",
+        (title, time.time(), thread_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def migrate_memorysaver_to_sqlite():
     """冷启动辅助：若 MemorySaver 在内存中有未持久化的对话，
     插件式迁移入口（当前无数据需迁移，留作接口）
     """
     _ensure_table()
     _ensure_index_tables()
-    logger.info("持久化存储就绪 | db=%s", C.PERSISTENCE_DB_PATH)
+    # _get_conn() 已在连接时打印路径日志
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
