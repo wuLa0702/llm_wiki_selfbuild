@@ -11,6 +11,7 @@ chat_stream_session 是本层的核心入口，
 它协调 4 个模块完成"接收输入 → 处理 → 持久化 → 输出"的完整链路。
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -222,7 +223,11 @@ async def chat_stream_session(
             stream_input[C.STATE_WORKING_MEMORY] = cold_wm
 
     # ── Step 3: 意图分类（前置通知前端，不影响图执行） ─────────────────────
-    intent_result = classify_intent(content)
+    try:
+        intent_result = await asyncio.to_thread(classify_intent, content)
+    except Exception as e:
+        logger.warning("意图分类失败（非阻断）| thread=%s error=%s", thread_id, e)
+        intent_result = {"category": C.INTENT_UNKNOWN, "confidence": 0.0, "explanation": ""}
     if intent_result.get("category") != C.INTENT_UNKNOWN:
         logger.info("会话意图分类 | thread=%s category=%s top=%s",
                     thread_id, intent_result["category"], intent_result.get("top_intent", "?"))
@@ -288,12 +293,17 @@ async def chat_stream_session(
 
     # ── Step 5: 结构化提取最终回答 ───────────────────────────────────────────
     structured: AgentResponse | None = None
-    final_state = agent.get_state(config)
-    final_messages = final_state.values.get(C.STATE_MESSAGES, [])
-    for m in reversed(final_messages):
-        if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
-            structured = format_response(str(m.content))
-            break
+    try:
+        final_state = agent.get_state(config)
+        final_messages = final_state.values.get(C.STATE_MESSAGES, [])
+        for m in reversed(final_messages):
+            if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
+                # with_structured_output 内部是同步 httpx 调用，必须放到线程池
+                # 否则阻塞 asyncio 事件循环，在 Windows 上可能导致进程崩溃
+                structured = await asyncio.to_thread(format_response, str(m.content))
+                break
+    except Exception as e:
+        logger.warning("Step 5 结构化提取失败（非阻断）| thread=%s error=%s", thread_id, e)
 
     # ── Step 6: 持久化到 SQLite ─────────────────────────────────────────────
     serialized = serialize_messages(final_messages)
