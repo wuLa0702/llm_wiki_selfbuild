@@ -547,6 +547,29 @@ class TestChatStreamSession:
         assert len(events) >= 1
 
     @pytest.mark.asyncio
+    async def test_session_emits_intent_event(self, mocker):
+        """首轮对话产出 intent 事件（问候→greeting）"""
+        agent = self._mock_first_turn(mocker)
+
+        async def event_generator(inputs, config, **kwargs):
+            yield {
+                "event": "on_chat_model_stream",
+                "run_id": "r1",
+                "name": "ChatOpenAI",
+                "data": {"chunk": mocker.MagicMock(content="你好")},
+            }
+
+        agent.astream_events = event_generator
+        events = [e async for e in chat_stream_session(agent, "你好", "intent-test")]
+
+        intent_events = [e for e in events if e["type"] == "intent"]
+        assert len(intent_events) == 1
+        # session 使用 classify_intent（无 top_intent 映射），intent 字段就是原始 category
+        assert intent_events[0]["intent"] == "greeting"
+        assert intent_events[0]["category"] == "greeting"
+        assert intent_events[0]["confidence"] >= 0.5
+
+    @pytest.mark.asyncio
     async def test_session_persists_after_stream(self, mocker):
         """流结束后将最终状态保存到 SQLite（save_thread 被调用）"""
         from src.agent.planning.prompt import SYSTEM_PROMPT
@@ -1144,3 +1167,382 @@ class TestGraphStructure:
         assert "approve" in node_names
         assert "tools" in node_names
         assert "agent" in node_names
+
+    def test_graph_contains_intent_classifier_node(self, mocker):
+        """编译图中包含 intent_classifier 节点"""
+        mock_llm = mocker.MagicMock()
+        mock_llm.invoke.return_value = mocker.MagicMock(content="ok")
+        mocker.patch("src.agent.planning.graph.ChatOpenAI", return_value=mock_llm)
+        mocker.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"})
+
+        from src.agent import build_agent
+
+        agent = build_agent()
+        graph = agent.get_graph()
+        node_names = {n for n in graph.nodes.keys() if not n.startswith("__")}
+
+        assert "intent_classifier" in node_names
+
+
+# ============================================================================
+# IntentClassifier
+# ============================================================================
+
+
+class TestIntentClassifier:
+    """意图分类规则测试"""
+
+    def test_classify_greeting(self):
+        from src.agent.perception.intent import classify_intent
+        from src.agent import constants as C
+
+        result = classify_intent("你好")
+        assert result["category"] == C.INTENT_GREETING
+        assert result["confidence"] >= C.INTENT_CONFIDENCE_MEDIUM
+
+    def test_classify_greeting_thanks(self):
+        from src.agent.perception.intent import classify_intent
+        from src.agent import constants as C
+
+        result = classify_intent("谢谢你的帮助")
+        assert result["category"] == C.INTENT_GREETING
+
+    def test_classify_knowledge_query(self):
+        from src.agent.perception.intent import classify_intent
+        from src.agent import constants as C
+
+        result = classify_intent("什么是Python异步编程？")
+        assert result["category"] == C.INTENT_KNOWLEDGE_QUERY
+
+    def test_classify_knowledge_query_how(self):
+        from src.agent.perception.intent import classify_intent
+        from src.agent import constants as C
+
+        result = classify_intent("如何用FastAPI创建路由")
+        assert result["category"] == C.INTENT_KNOWLEDGE_QUERY
+
+    def test_classify_chit_chat(self):
+        from src.agent.perception.intent import classify_intent
+        from src.agent import constants as C
+
+        result = classify_intent("今天天气真好")
+        assert result["category"] == C.INTENT_CHIT_CHAT
+
+    def test_classify_clarification(self):
+        from src.agent.perception.intent import classify_intent
+        from src.agent import constants as C
+
+        result = classify_intent("能详细说说吗？")
+        assert result["category"] == C.INTENT_CLARIFICATION
+
+    def test_classify_tool_operation(self):
+        from src.agent.perception.intent import classify_intent
+        from src.agent import constants as C
+
+        result = classify_intent("怎么搜索页面？")
+        assert result["category"] == C.INTENT_TOOL_OPERATION
+
+    def test_classify_empty_returns_unknown(self):
+        from src.agent.perception.intent import classify_intent
+        from src.agent import constants as C
+
+        result = classify_intent("")
+        assert result["category"] == C.INTENT_UNKNOWN
+        assert result["confidence"] == 0.0
+
+    def test_classify_short_non_chinese_fallsback_unknown(self):
+        from src.agent.perception.intent import classify_intent
+        from src.agent import constants as C
+
+        result = classify_intent("abc")
+        assert result["category"] == C.INTENT_UNKNOWN
+
+    def test_classify_whitespace_returns_unknown(self):
+        """全空白字符输入返回 unknown"""
+        from src.agent.perception.intent import classify_intent
+        from src.agent import constants as C
+
+        result = classify_intent("   ")
+        assert result["category"] == C.INTENT_UNKNOWN
+
+    def test_classify_general_query(self):
+        """不含特定提问词的中文文本归类为 general_query"""
+        from src.agent.perception.intent import classify_intent
+        from src.agent import constants as C
+
+        # "了解一下"匹配 knowledge_query，用不含提问词的句子
+        result = classify_intent("我今天去了图书馆")
+        assert result["category"] == C.INTENT_GENERAL_QUERY
+
+    def test_classify_user_intent_returns_top_intent(self):
+        """classify_user_intent 返回 top_intent 映射"""
+        from src.agent.perception.intent import classify_user_intent
+        from src.agent import constants as C
+
+        # 问候 → top_intent = chat
+        result = classify_user_intent("你好")
+        assert "top_intent" in result
+        assert result["top_intent"] == C.INTENT_CHAT
+
+        # 知识查询 → top_intent = search
+        result = classify_user_intent("什么是Python？")
+        assert result["top_intent"] == C.INTENT_SEARCH
+
+    def test_classify_user_intent_default_fallback(self):
+        """classify_user_intent 规则未知且无 LLM 时返回默认 general_query"""
+        from src.agent.perception.intent import classify_user_intent
+        from src.agent import constants as C
+
+        # 短英文规则未匹配 → classify_intent 返回 unknown
+        # classify_user_intent 因 llm=None 走默认降级 → general_query
+        result = classify_user_intent("xyz")
+        assert result["category"] == C.INTENT_GENERAL_QUERY
+        assert result["top_intent"] == C.INTENT_SEARCH
+
+
+# ============================================================================
+# ToolRegistry
+# ============================================================================
+
+
+class TestToolRegistry:
+    """工具注册中心测试"""
+
+    def test_register_tool(self):
+        from src.agent.action.registry import ToolRegistry
+
+        reg = ToolRegistry()
+
+        def mock_tool(query: str) -> str:
+            """Mock tool"""
+            return f"result: {query}"
+        mock_tool.name = "mock_search"
+
+        name = reg.register(mock_tool)
+        assert name == "mock_search"
+        assert reg.count() == 1
+
+    def test_register_duplicate_raises(self):
+        from src.agent.action.registry import ToolRegistry
+
+        reg = ToolRegistry()
+
+        def t1():
+            pass
+        t1.name = "my_tool"
+
+        reg.register(t1)
+        import pytest
+
+        def t2():
+            pass
+        t2.name = "my_tool"
+
+        with pytest.raises(ValueError):
+            reg.register(t2)
+
+    def test_unregister(self):
+        from src.agent.action.registry import ToolRegistry
+
+        reg = ToolRegistry()
+
+        def t():
+            pass
+        t.name = "t1"
+
+        reg.register(t)
+        assert reg.count() == 1
+        reg.unregister("t1")
+        assert reg.count() == 0
+
+    def test_enable_disable(self):
+        from src.agent.action.registry import ToolRegistry
+
+        reg = ToolRegistry()
+
+        def t():
+            pass
+        t.name = "my_tool"
+
+        reg.register(t, enabled=False)
+        assert reg.is_enabled("my_tool") is False
+        assert reg.count_enabled() == 0
+
+        reg.enable("my_tool")
+        assert reg.is_enabled("my_tool") is True
+        assert reg.count_enabled() == 1
+
+        reg.disable("my_tool")
+        assert reg.is_enabled("my_tool") is False
+
+    def test_list_enabled_filters(self):
+        from src.agent.action.registry import ToolRegistry
+
+        reg = ToolRegistry()
+
+        def t1():
+            pass
+        t1.name = "t1"
+
+        def t2():
+            pass
+        t2.name = "t2"
+
+        reg.register(t1, enabled=True)
+        reg.register(t2, enabled=False)
+
+        enabled = reg.list_enabled()
+        assert len(enabled) == 1
+        assert enabled[0].name == t1.name
+
+    def test_list_all_returns_all(self):
+        from src.agent.action.registry import ToolRegistry
+
+        reg = ToolRegistry()
+
+        def t1():
+            pass
+        t1.name = "t1"
+
+        def t2():
+            pass
+        t2.name = "t2"
+
+        reg.register(t1)
+        reg.register(t2)
+
+        all_tools = reg.list_all()
+        assert len(all_tools) == 2
+
+    def test_get_returns_tool(self):
+        from src.agent.action.registry import ToolRegistry
+
+        reg = ToolRegistry()
+
+        def t():
+            pass
+        t.name = "my_tool"
+
+        reg.register(t)
+        retrieved = reg.get("my_tool")
+        assert retrieved is t
+
+    def test_get_nonexistent_returns_none(self):
+        from src.agent.action.registry import ToolRegistry
+
+        reg = ToolRegistry()
+        assert reg.get("nope") is None
+
+    def test_global_registry_has_default_tools(self):
+        """全局 registry 应该包含默认注册的 search_wiki 和 read_page"""
+        from src.agent.action.registry import registry
+
+        assert registry.count() >= 2
+        assert registry.is_enabled("search_wiki")
+        assert registry.is_enabled("read_page")
+        assert registry.get("search_wiki") is not None
+        assert registry.get("read_page") is not None
+
+    def test_p1_tools_backward_compat(self):
+        """P1_TOOLS 向后兼容：仍可导入且包含正确的工具"""
+        from src.agent.planning.graph import P1_TOOLS
+
+        tool_names = {t.name for t in P1_TOOLS}
+        assert "search_wiki" in tool_names
+        assert "read_page" in tool_names
+        assert "query_graph" not in tool_names
+
+    def test_list_names(self):
+        """list_names 返回所有注册名"""
+        from src.agent.action.registry import ToolRegistry
+
+        reg = ToolRegistry()
+
+        def t1():
+            pass
+        t1.name = "tool_a"
+
+        def t2():
+            pass
+        t2.name = "tool_b"
+
+        reg.register(t1, enabled=True)
+        reg.register(t2, enabled=False)
+
+        names = reg.list_names()
+        assert "tool_a" in names
+        assert "tool_b" in names
+        assert len(names) == 2
+
+        enabled_names = reg.list_enabled_names()
+        assert enabled_names == ["tool_a"]
+
+    def test_get_def_returns_definition(self):
+        """get_def 返回 ToolDefinition 对象"""
+        from src.agent.action.registry import ToolRegistry, ToolDefinition
+
+        reg = ToolRegistry()
+
+        def t():
+            pass
+        t.name = "my_tool"
+
+        reg.register(t)
+        td = reg.get_def("my_tool")
+        assert td is not None
+        assert isinstance(td, ToolDefinition)
+        assert td.name == "my_tool"
+        assert td.enabled is True
+
+    def test_get_def_nonexistent_returns_none(self):
+        """get_def 对未知工具返回 None"""
+        from src.agent.action.registry import ToolRegistry
+
+        reg = ToolRegistry()
+        assert reg.get_def("nope") is None
+
+    def test_unregister_nonexistent_does_not_crash(self):
+        """unregister 不存在的工具不会崩溃"""
+        from src.agent.action.registry import ToolRegistry
+
+        reg = ToolRegistry()
+        reg.unregister("nope")  # should not raise
+
+    def test_metadata_operations(self):
+        """get_metadata / set_metadata 正常运作"""
+        from src.agent.action.registry import ToolRegistry
+
+        reg = ToolRegistry()
+
+        def t():
+            pass
+        t.name = "my_tool"
+
+        reg.register(t, metadata={"category": "search"})
+
+        # 获取全部元数据
+        assert reg.get_metadata("my_tool") == {"category": "search"}
+        # 获取特定键
+        assert reg.get_metadata("my_tool", "category") == "search"
+        # 不存在的键返回 None
+        assert reg.get_metadata("my_tool", "nope") is None
+        # 不存在的工具返回 None
+        assert reg.get_metadata("nope") is None
+
+        # 更新元数据
+        reg.set_metadata("my_tool", {"version": 2})
+        assert reg.get_metadata("my_tool", "version") == 2
+        assert reg.get_metadata("my_tool", "category") == "search"  # update 不覆盖
+
+    def test_get_tool_info_returns_list(self):
+        """get_tool_info 返回工具信息列表"""
+        from src.agent.action.registry import get_tool_info
+
+        info = get_tool_info()
+        assert isinstance(info, list)
+        names = [i["name"] for i in info]
+        assert "search_wiki" in names
+        assert "read_page" in names
+        for entry in info:
+            assert "name" in entry
+            assert "description" in entry
