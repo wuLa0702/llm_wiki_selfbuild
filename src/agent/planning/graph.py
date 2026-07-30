@@ -14,8 +14,14 @@
     ② 执行后验证（verify_result）— 工具输出质量检查 + 动作记录
     ③ 推理反思  （reflect_node）— LLM 评估上一步推理方向并修正策略
 
+  前置意图分类（intent_classifier）：
+    - 在每轮用户输入进入 agent 节点前，先识别意图类别
+    - 问候/闲聊跳过工具绑定（节省 token，避免不必要的工具调用）
+    - 知识查询确保绑定工具
+    - 分类结果注入 LLM 上下文
+
   完整链路：
-    agent → extract_wm → wm_eviction
+    intent_classifier → agent → extract_wm → wm_eviction
         → (有 tool_calls → validate_tool)
             → 步数超限 → summarizer（强制输出）
             → 重复/低置信 → agent（重新思考）
@@ -48,8 +54,9 @@ from src.agent import constants as C
 from src.agent.action.tools import read_page, search_wiki
 from src.agent.memory.attention import extract_sink_content, format_sink_knowledge, update_attention_sinks
 from src.agent.memory.summarizer import condense_history
+from src.agent.perception.intent import classify_intent, intent_classifier_node
 from src.agent.planning.prompt import REFLECTION_SYSTEM_PROMPT, SYSTEM_PROMPT
-from src.agent.planning.prompt import ReflectionResult
+from src.agent.planning.prompt import IntentClassificationResult, ReflectionResult
 
 load_dotenv()
 logger = logging.getLogger("agent.graph")
@@ -103,6 +110,7 @@ class AgentState(TypedDict):
     step_count: int
     executed_actions: dict[str, Any]
     self_correction: dict[str, Any]
+    current_intent: dict[str, Any]
 
 
 # ── 工作记忆 Reducer ─────────────────────────────────────────────────────────
@@ -278,6 +286,57 @@ def _build_wm_context(working_memory: dict) -> str | None:
 # ── 图节点 ────────────────────────────────────────────────────────────────────
 
 
+def intent_classifier_node(state: AgentState) -> dict:
+    """意图分类节点：分析用户最新输入，识别意图类别
+
+    在每轮用户输入进入 agent 节点前运行。
+    仅在以下情况执行实际分类：
+      - state 中尚无 current_intent 字段（首轮）
+      - 最新消息是 HumanMessage（用户新输入）
+
+    工具调用循环中不重新分类（最新消息是 AIMessage/ToolMessage）。
+
+    意图分类结果影响：
+      - call_model 根据意图决定是否绑定工具
+        问候/闲聊 → 不绑定工具（节省 token）
+        知识查询 → 绑定工具
+      - 意图信息注入 LLM 上下文（可选的 SystemMessage）
+
+    Returns:
+        {current_intent: {...}} 或 {}（不分类时）
+    """
+    messages = state.get(C.STATE_MESSAGES, [])
+    if not messages:
+        return {}
+
+    # 仅当最新消息是用户输入时才分类
+    last_msg = messages[-1]
+    if not isinstance(last_msg, HumanMessage):
+        logger.debug(C.LOG_INTENT_SKIP)
+        return {}
+
+    # 已分类且无新 HumanMessage → 跳过
+    existing = state.get(C.STATE_INTENT)
+    if existing and existing.get('category'):
+        return {}
+
+    text = str(last_msg.content) if last_msg.content else ''
+    if not text:
+        return {
+            C.STATE_INTENT: {
+                'category': C.INTENT_UNKNOWN,
+                'confidence': 0.0,
+                'explanation': '空输入',
+            }
+        }
+
+    result = classify_intent(text)
+    logger.info(C.LOG_INTENT_CLASSIFIED,
+                result['category'], result['confidence'], text[:50])
+
+    return {C.STATE_INTENT: result}
+
+
 def call_model(state: AgentState) -> dict:
     """调 LLM，返回响应追加到 messages
 
@@ -325,13 +384,34 @@ def call_model(state: AgentState) -> dict:
         else:
             llm_messages.insert(0, wm_msg)
 
+    # 2c. 注入意图上下文（让 LLM 知道用户的意图分类）
+    current_intent = state.get(C.STATE_INTENT, {})
+    if current_intent and current_intent.get('category'):
+        intent_text = (
+            f"【意图识别】用户意图: {current_intent['category']}"
+            f" (置信度: {current_intent.get('confidence', 0):.1f})"
+        )
+        if current_intent.get('explanation'):
+            intent_text += f" - {current_intent['explanation']}"
+        intent_msg = SystemMessage(content=intent_text)
+        # 在 sink 和 wm 之后插入
+        insert_pos = len(llm_messages) - len(messages)
+        if insert_pos > 0 and insert_pos <= len(llm_messages):
+            llm_messages.insert(insert_pos, intent_msg)
+
     # 3. 步数计数（Self-Correction 熔断器）
     current_step = state.get(C.STATE_STEP_COUNT, 0)
     result_step = current_step + 1
     logger.debug("推理步数 | step=%d/%d", result_step, C.MAX_STEPS)
 
-    # 4. 调用 LLM
-    response = llm_with_tools.invoke(llm_messages)
+    # 4. 意图感知的 LLM 调用
+    # 问候/闲聊 → 不绑定工具（节省 token，避免不必要的工具调用）
+    no_tool_intents = {C.INTENT_GREETING, C.INTENT_CHIT_CHAT}
+    if current_intent.get('category') in no_tool_intents:
+        logger.debug("意图=%s → 跳过工具绑定", current_intent['category'])
+        response = llm.invoke(llm_messages)
+    else:
+        response = llm_with_tools.invoke(llm_messages)
 
     result: dict = {
         C.STATE_MESSAGES: [response],
@@ -841,6 +921,7 @@ def wm_eviction_node(state: AgentState) -> dict:
 #   ③ reflect_node   — 推理反思：LLM 评估方向 + 修正策略
 
 builder = StateGraph(AgentState)
+builder.add_node(C.NODE_INTENT_CLASSIFIER, intent_classifier_node)  # 前置意图分类
 builder.add_node(C.NODE_AGENT, call_model)
 builder.add_node(C.NODE_EXTRACT_WM, extract_wm_node)
 builder.add_node(C.NODE_WM_EVICTION, wm_eviction_node)
@@ -850,9 +931,10 @@ builder.add_node(C.NODE_TOOLS, tool_node)
 builder.add_node(C.NODE_VERIFY_RESULT, verify_result_node)    # ② 后置验证
 builder.add_node(C.NODE_REFLECT, reflect_node)                # ③ 推理反思
 builder.add_node(C.NODE_SUMMARIZER, summarizer_node)
-builder.set_entry_point(C.NODE_AGENT)
+builder.set_entry_point(C.NODE_INTENT_CLASSIFIER)
 
 # 推理链路
+builder.add_edge(C.NODE_INTENT_CLASSIFIER, C.NODE_AGENT)          # intent_classifier → agent
 builder.add_edge(C.NODE_AGENT, C.NODE_EXTRACT_WM)                # agent → extract_wm
 builder.add_edge(C.NODE_EXTRACT_WM, C.NODE_WM_EVICTION)         # extract_wm → wm_eviction
 

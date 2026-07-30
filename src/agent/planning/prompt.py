@@ -3,8 +3,9 @@
 
 职责：
   - 定义 Agent 的系统提示词（SYSTEM_PROMPT）
-  - 定义结构化输出模型（AgentResponse, ReflectionResult）
+  - 定义结构化输出模型（AgentResponse, ReflectionResult, IntentClassificationResult）
   - 定义反思节点提示词（REFLECTION_SYSTEM_PROMPT）
+  - 定义意图分类提示词（INTENT_CLASSIFICATION_PROMPT）
   - 与具体的图构建逻辑分离，方便独立修改
 """
 
@@ -12,6 +13,21 @@ from pydantic import BaseModel, Field
 
 
 # ── 系统提示 ──────────────────────────────────────────────────────────────────
+
+INTENT_CLASSIFICATION_PROMPT = """你是 LLM Wiki 的意图分类器。分析用户输入，分类其意图。
+
+分类规则：
+- greeting: 问候、告别、感谢、打招呼（不需要搜索知识库）
+- knowledge_query: 询问知识库中的内容，需要搜索 Wiki 或读取页面来回答
+- general_query: 通用问题，不依赖知识库内容（如"你怎么看"、"你好吗"）
+- chit_chat: 闲聊、情感表达、无实质问题
+- clarification: 追问、要求具体化、请求进一步解释
+- tool_operation: 关于如何使用工具或系统的问题
+- unknown: 无法确定
+
+输出格式：category + confidence + explanation
+"""
+
 
 SYSTEM_PROMPT = """你是 LLM Wiki 的知识助手。你可以搜索、阅读、分析知识库中的内容来回答用户问题。
 
@@ -37,6 +53,21 @@ REFLECTION_SYSTEM_PROMPT = """你是推理质量评估专家。分析以下对�
 
 
 # ── 反思结构化输出模型 ──────────────────────────────────────────────────────
+
+
+class IntentClassificationResult(BaseModel):
+    """意图分类的结构化输出
+
+    category:
+      分类意图: "greeting" / "knowledge_query" / "general_query" / "chit_chat" / "clarification" / "tool_operation" / "unknown"
+    confidence:
+      置信度，0~1
+    explanation:
+      分类原因的简短解释
+    """
+    category: str = Field(description="意图类别")
+    confidence: float = Field(description="置信度(0~1)", default=0.5)
+    explanation: str = Field(description="分类原因", default="")
 
 
 class ReflectionResult(BaseModel):

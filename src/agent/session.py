@@ -25,6 +25,7 @@ from src.agent.action.response import AgentResponse, format_response
 from src.agent.action.stream import emit_token
 from src.agent.memory import store as M
 from src.agent.perception.handler import deserialize_messages, extract_event, extract_sources, serialize_messages
+from src.agent.perception.intent import classify_intent
 from src.agent.planning.graph import app, summarizer_llm  # noqa: F401 — also used by _archive_stale_thread
 from src.agent.planning.prompt import SYSTEM_PROMPT
 
@@ -65,7 +66,10 @@ def _archive_stale_thread(thread_id: str) -> None:
 
     # 够旧？
     age_days = M.get_thread_age_days(thread_id)
-    if age_days is None or age_days < C.ARCHIVE_DAYS:
+    if age_days is None:
+        logger.info(C.LOG_ARCHIVE_SKIP, thread_id, "age_days 为 None")
+        return
+    if age_days < C.ARCHIVE_DAYS:
         logger.info(C.LOG_ARCHIVE_SKIP, thread_id,
                     f"最近活跃 age={age_days:.1f}d < {C.ARCHIVE_DAYS}d")
         return
@@ -217,7 +221,20 @@ async def chat_stream_session(
         if cold_wm:
             stream_input[C.STATE_WORKING_MEMORY] = cold_wm
 
-    # ── Step 3: 统一的流式处理 ──────────────────────────────────────────────
+    # ── Step 3: 意图分类（前置通知前端，不影响图执行） ─────────────────────
+    intent_result = classify_intent(content)
+    if intent_result.get("category") != C.INTENT_UNKNOWN:
+        logger.info("会话意图分类 | thread=%s category=%s top=%s",
+                    thread_id, intent_result["category"], intent_result.get("top_intent", "?"))
+        yield {
+            C.FIELD_TYPE: C.EVENT_INTENT,
+            C.FIELD_INTENT: intent_result.get("top_intent", intent_result["category"]),
+            C.FIELD_CATEGORY: intent_result["category"],
+            C.FIELD_CONFIDENCE: intent_result["confidence"],
+            C.FIELD_REASONING: intent_result["explanation"],
+        }
+
+    # ── Step 4: 统一的流式处理 ──────────────────────────────────────────────
     wiki_path_source: list[str] = []
 
     try:

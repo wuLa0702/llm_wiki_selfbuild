@@ -63,9 +63,42 @@ NODE_AGENT = "agent"
 NODE_TOOLS = "tools"
 NODE_APPROVE = "approve"
 NODE_SUMMARIZER = "summarizer"
+NODE_INTENT_CLASSIFIER = "intent_classifier"
 
 # 状态键
 STATE_MESSAGES = "messages"
+STATE_INTENT = "current_intent"
+
+# 意图分类（顶层意图，对应图路由）
+INTENT_SEARCH = "search"       # 知识检索（指向知识库）
+INTENT_CHAT = "chat"           # 纯聊天（无工具需求）
+INTENT_ADMIN = "admin"         # 系统管理指令
+INTENT_TOOL = "tool"           # 工具直接调用
+
+# 意图分类子类目（规则匹配 + LLM 细分类）
+INTENT_GREETING = "greeting"
+INTENT_CLARIFICATION = "clarification"
+INTENT_TOOL_OPERATION = "tool_operation"
+INTENT_KNOWLEDGE_QUERY = "knowledge_query"
+INTENT_CHIT_CHAT = "chit_chat"
+INTENT_GENERAL_QUERY = "general_query"
+INTENT_UNKNOWN = "unknown"
+
+# 意图分类置信度预设
+INTENT_CONFIDENCE_HIGH = 0.85
+INTENT_CONFIDENCE_MEDIUM = 0.70
+INTENT_CONFIDENCE_LOW = 0.50
+
+# LLM 分类子类目 → 顶层意图映射
+INTENT_CATEGORY_MAP = {
+    INTENT_GREETING: INTENT_CHAT,
+    INTENT_CLARIFICATION: INTENT_SEARCH,
+    INTENT_TOOL_OPERATION: INTENT_TOOL,
+    INTENT_KNOWLEDGE_QUERY: INTENT_SEARCH,
+    INTENT_CHIT_CHAT: INTENT_CHAT,
+    INTENT_GENERAL_QUERY: INTENT_SEARCH,
+    INTENT_UNKNOWN: INTENT_SEARCH,
+}
 
 # Config 键
 CONFIG_CONFIGURABLE = "configurable"
@@ -84,6 +117,7 @@ EVENT_TOKEN = "token"
 EVENT_TOOL_START = "tool_start"
 EVENT_TOOL_END = "tool_end"
 EVENT_TOOL_APPROVAL_NEEDED = "tool_approval_needed"
+EVENT_INTENT = "intent"
 EVENT_DONE = "done"
 EVENT_ERROR = "error"
 
@@ -103,6 +137,10 @@ FIELD_NAME = "name"
 FIELD_DATA = "data"
 FIELD_CHUNK = "chunk"
 FIELD_RUN_ID = "run_id"
+FIELD_INTENT = "intent"
+FIELD_CONFIDENCE = "confidence"
+FIELD_REASONING = "reasoning"
+FIELD_CATEGORY = "category"
 
 # 工具输出截断长度
 TOOL_OUTPUT_DISPLAY_CHARS = 500
@@ -281,7 +319,6 @@ ARCHIVE_SYSTEM_PROMPT = """你是对话归档助手。将以下一段完整对�
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Agent 消息角色
-# ═══════════════════════════════════════════════════════════════════════════════
 # ═══════════════════════════════════════════════════════════════════════════════
 
 ROLE_USER = "user"
