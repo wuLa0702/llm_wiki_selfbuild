@@ -1,4 +1,4 @@
-"""路由: 杂项 — /, /health, /v1/query, /v1/usage, /v1/watcher/*, /v1/privacy/*"""
+"""路由: 杂项 — /, /health, /v1/query, /v1/usage, /v1/watcher/*, /v1/privacy/*, /v1/setup/*"""
 import logging
 import sqlite3
 
@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from src.app_state import get_watcher, set_watcher
 from src.core.privacy import PrivacyManager
+from src.utils.config_manager import is_configured, load_config, save_config
 from src.core.token_tracker import TokenTracker
 from src.core.compiler import WikiCompiler
 from src.models.common import (HealthResponse, PrivacyRuleListResponse,
@@ -417,3 +418,52 @@ async def save_settings(body: SettingsResponse):
         logger.info("Watcher 配置已热生效 | interval=%ds", watcher.poll_interval)
 
     return body
+
+
+# ── 首次配置 ──────────────────────────────────────────────────────────────
+
+
+class ConfigItem(BaseModel):
+    """单个配置项"""
+    key: str
+    value: str
+
+
+class ConfigResponse(BaseModel):
+    """配置读取响应"""
+    configured: bool
+    config: dict[str, str | bool]
+
+
+class ConfigSaveRequest(BaseModel):
+    """配置保存请求"""
+    config: dict[str, str]
+
+
+@router.get("/v1/setup/status")
+async def setup_status():
+    """首次配置状态检查
+
+    前端在启动时调用此接口，若未配置 API Key 则跳转到引导页。
+    """
+    return {"configured": is_configured()}
+
+
+@router.get("/v1/config", response_model=ConfigResponse)
+async def get_config():
+    """读取可编辑配置项"""
+    cfg = load_config()
+    # 只暴露前端可编辑的配置
+    editable_keys = {"DEEPSEEK_API_KEY", "LLM_PROVIDER", "OUTPUT_LANGUAGE"}
+    filtered = {k: v for k, v in cfg.items() if k in editable_keys}
+    return ConfigResponse(configured=is_configured(), config=filtered)
+
+
+@router.post("/v1/config")
+async def save_config_endpoint(body: ConfigSaveRequest):
+    """保存配置项并注入环境变量"""
+    save_config(body.config)
+    # 重新注入环境变量（让新 key 即时生效）
+    from src.utils.config_manager import inject_config_to_env
+    inject_config_to_env()
+    return {"status": "ok", "configured": is_configured()}

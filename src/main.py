@@ -22,6 +22,10 @@ from src.utils.path_resolver import get_frontend_dist_dir, get_static_dir
 from src.api.helpers import (_check_page_access, _convert_wikilinks,
                              _get_pm, _get_token_from_request, _render_page_html)
 
+# 启动时：从 config.yaml 注入 API Key 到环境变量（优先级低于 .env）
+from src.utils.config_manager import inject_config_to_env
+inject_config_to_env()
+
 logger = logging.getLogger("main")
 
 app = FastAPI(
