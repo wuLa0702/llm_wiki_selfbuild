@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "chroma_db"
     embedding_model_path: str = ".models/all-MiniLM-L6-v2"
 
+    # Chunk 级搜索（heading-based chunk 切分 + chunk 级向量索引）
+    chunk_search_enabled: bool = False
+
     # MCP Server
     mcp_host: str = "0.0.0.0"
     mcp_port: int = 8010

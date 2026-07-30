@@ -1,6 +1,11 @@
 """
 统一搜索引擎 — BM25 关键词 + 向量语义 + RRF 融合
 
+支持两种向量搜索模式：
+  - page 模式（默认）：整页级向量搜索（wiki_pages collection）
+  - chunk 模式（CHUNK_SEARCH_ENABLED=true）：章节级 chunk 搜索（wiki_chunks），
+    结果聚合并换算 page 级 score
+
 生命周期：
   1. 服务启动时 initialize() → 扫描所有 wiki 页面构建 BM25 索引
   2. ingest 后 mark_dirty() → 下次搜索前自动重建
@@ -10,6 +15,7 @@ import logging
 import os
 from pathlib import Path
 
+from src.config import settings
 from src.core.search.bm25_search import BM25Search
 
 logger = logging.getLogger("search.engine")
@@ -39,8 +45,6 @@ class SearchEngine:
     def initialize(self, wiki_dir: str = "wiki") -> None:
         """服务启动时构建索引
 
-        扫描 wiki/ 下所有 .md 页面，构建 BM25 索引。
-
         Args:
             wiki_dir: wiki 目录路径
         """
@@ -62,7 +66,9 @@ class SearchEngine:
     # 搜索
     # ------------------------------------------------------------------
 
-    def search(self, query: str, method: str = "bm25", k: int = 10, offset: int = 0) -> tuple[list[dict], int]:
+    def search(
+        self, query: str, method: str = "bm25", k: int = 10, offset: int = 0,
+    ) -> tuple[list[dict], int]:
         """统一搜索入口
 
         Args:
@@ -90,9 +96,9 @@ class SearchEngine:
             results, total_matched = self._search_bm25(query, k=total_needed)
         elif method == "vector":
             results = self._search_vector(query, k=total_needed)
+            total_matched = len(results)
         elif method == "hybrid":
             results = self._search_hybrid(query, k=total_needed)
-            # hybrid 暂时无法精确计算 total，用结果数近似
             total_matched = len(results)
         else:
             logger.warning("未知搜索模式 | method=%s", method)
@@ -117,7 +123,7 @@ class SearchEngine:
                 self.bm25.build_index(pages)
                 logger.info("BM25 索引重建完成 | pages=%d", len(pages))
             else:
-                self.bm25._dirty = False  # 无页面也清除脏标记，避免每次空跑
+                self.bm25._dirty = False
             return True
         except Exception:
             logger.exception("BM25 索引重建失败")
@@ -138,12 +144,21 @@ class SearchEngine:
         return results, total_matched
 
     def _search_vector(self, query: str, k: int = 10) -> list[dict]:
-        """纯向量语义搜索"""
+        """向量搜索 — 根据配置选择 page 级或 chunk 级
+
+        当 CHUNK_SEARCH_ENABLED=true 时，使用 chunk 级搜索（wiki_chunks），
+        结果按 path 聚合到 page 级。
+        """
         try:
             from src.core.embedding import get_embedding_engine
+
             engine = get_embedding_engine()
+
+            if settings.chunk_search_enabled and engine.chunk_collection is not None:
+                return self._search_vector_chunks(engine, query, k)
+
+            # 默认：整页级搜索
             results = engine.search(query, k=k)
-            # 向量分数已是 [0, 1]，但统一过 normalize 保持字段完整
             results = _normalize_scores(results)
             for r in results:
                 r["search_method"] = "vector"
@@ -151,10 +166,98 @@ class SearchEngine:
                 r["match_positions"] = []
             return results
         except Exception:
+            logger.exception("向量搜索失败")
             return []
 
+    def _search_vector_chunks(
+        self, engine, query: str, k: int = 10,
+    ) -> list[dict]:
+        """Chunk 级向量搜索 → 聚合并到 page 级
+
+        策略：
+          1. 搜索 wiki_chunks，返回 chunk 级结果
+          2. 按 path 分组聚合：
+             - 页面最高分 = max(chunk_scores)
+             - 多 chunk 命中加成 = 0.15 × (命中数 / 总chunk数)
+             - 聚合 score = max_score + bonus
+          3. 保留 top chunk 的 heading/breadcrumb 作为 match_positions
+
+        Args:
+            engine: EmbeddingEngine 实例
+            query: 搜索关键词
+            k: 期望返回的页面数（实际请求更多 chunk 以覆盖）
+
+        Returns:
+            页面级结果列表，含增强的 match_positions
+        """
+        from collections import defaultdict
+
+        # 请求更多 chunk 以保证覆盖所有候选页面
+        chunk_k = min(k * 3, 100)
+        chunk_results = engine.search_chunks(query, k=chunk_k)
+        if not chunk_results:
+            return []
+
+        # 按 path 聚合
+        page_data: dict[str, dict] = {}
+        path_match_positions: dict[str, list[dict]] = defaultdict(list)
+
+        for cr in chunk_results:
+            path = cr["path"]
+            if path not in page_data:
+                page_data[path] = {
+                    "path": path,
+                    "max_score": cr["score"],
+                    "hit_count": 1,
+                    "total_chunks": cr.get("total_chunks", 1),
+                    "score_sum": cr["score"],
+                }
+            else:
+                pd = page_data[path]
+                pd["hit_count"] += 1
+                pd["max_score"] = max(pd["max_score"], cr["score"])
+                pd["score_sum"] += cr["score"]
+
+            # 记录 chunk 定位信息（用于 match_positions）
+            if cr.get("heading"):
+                path_match_positions[path].append({
+                    "heading": cr.get("heading", ""),
+                    "breadcrumb": cr.get("breadcrumb", ""),
+                    "score": cr["score"],
+                })
+
+        # 计算聚合 score 并排序
+        results: list[dict] = []
+        for path, pd in page_data.items():
+            hit_ratio = pd["hit_count"] / max(pd["total_chunks"], 1)
+            bonus = 0.15 * hit_ratio
+            agg_score = pd["max_score"] + bonus
+
+            # 取 top-3 match positions
+            positions = sorted(
+                path_match_positions.get(path, []),
+                key=lambda x: x["score"],
+                reverse=True,
+            )[:3]
+
+            results.append({
+                "path": path,
+                "score": round(min(agg_score, 1.0), 4),
+                "raw_score": round(pd["max_score"], 4),
+                "chunk_hits": pd["hit_count"],
+                "search_method": "vector_chunk",
+                "match_positions": positions,
+            })
+
+        # 按 score 降序，取 top-k
+        results.sort(key=lambda r: r["score"], reverse=True)
+        results = results[:k]
+        results = _normalize_scores(results)
+
+        return results
+
     def _search_hybrid(self, query: str, k: int = 10) -> list[dict]:
-        """RRF 融合搜索"""
+        """RRF 融合搜索（始终在 page 级融合）"""
         bm25_results = self._search_bm25(query, k=k * 2)
         vector_results = self._search_vector(query, k=k * 2)
         results = rrf_fuse(bm25_results, vector_results, top_n=k)
@@ -162,7 +265,6 @@ class SearchEngine:
             r["search_method"] = "hybrid"
             if "rrf_score" not in r:
                 r["rrf_score"] = r.get("score", 0)
-        # 对 hybrid，主 score 用归一化的 rrf_score
         results = _normalize_rrf_scores(results)
         return results
 
@@ -255,14 +357,18 @@ def _normalize_rrf_scores(results: list[dict]) -> list[dict]:
 # ====================================================================
 
 
-def rrf_fuse(bm25_results: list[dict], vector_results: list[dict],
-             k: int = 60, top_n: int = 10) -> list[dict]:
+def rrf_fuse(
+    bm25_results: list[dict],
+    vector_results: list[dict],
+    k: int = 60,
+    top_n: int = 10,
+) -> list[dict]:
     """RRF（Reciprocal Rank Fusion）融合两个搜索结果的排序
 
     Args:
         bm25_results: BM25 返回的结果列表
         vector_results: 向量搜索返回的结果列表
-        k: RRF 常数（默认 60，增大则排名差异影响减小）
+        k: RRF 常数（默认 60）
         top_n: 返回 top-N
 
     Returns:

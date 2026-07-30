@@ -639,6 +639,12 @@ class WikiCompiler:
                 try:
                     content = self._read_wiki_file(p)
                     engine.embed_page(p, content)
+                    # Chunk 级 embedding
+                    from src.config import settings
+                    if settings.chunk_search_enabled:
+                        from src.core.search.chunker import chunk_page
+                        chunks = chunk_page(p, content)
+                        engine.embed_page_chunks(p, chunks)
                 except Exception:
                     logger.debug("Embedding 生成跳过 | page=%s", p)
 
@@ -737,6 +743,12 @@ class WikiCompiler:
                 try:
                     content = self._read_wiki_file(p)
                     engine.embed_page(p, content)
+                    # Chunk 级 embedding
+                    from src.config import settings
+                    if settings.chunk_search_enabled:
+                        from src.core.search.chunker import chunk_page
+                        chunks = chunk_page(p, content)
+                        engine.embed_page_chunks(p, chunks)
                 except Exception:
                     logger.debug("Embedding 生成跳过 | page=%s", p)
 
