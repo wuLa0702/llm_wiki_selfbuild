@@ -26,7 +26,7 @@ const settingsTabs = [
   { key: 'llm', label: 'LLM 模型', icon: Brain },
   { key: 'watcher', label: '资料监控', icon: Eye },
   { key: 'privacy', label: '隐私', icon: Shield },
-  { key: 'security', label: '安全', icon: Lock },
+  // { key: 'security', label: '安全', icon: Lock },  // TODO: 安全设置入口暂时关闭，后续功能完善后开放
   { key: 'purpose', label: '知识库目标', icon: Target },
   { key: 'health', label: '健康检查', icon: Activity },
 ];
