@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.agent import build_agent, chat_stream, chat_stream_session
+from src.agent.action.registry import get_tool_info
 from src.agent.memory import store as P
 
 logger = logging.getLogger("api.routes.chat")
@@ -28,6 +29,19 @@ def _get_agent():
     if _agent is None:
         _agent = build_agent()
     return _agent
+
+
+@router.get("/v1/agent/tools")
+async def list_tools():
+    """列出 Agent 所有已注册工具的元数据
+
+    返回每个工具的名称、描述、参数 schema，
+    供前端展示工具面板或调试使用。
+    """
+    return {
+        "status": "ok",
+        "tools": get_tool_info(),
+    }
 
 
 class ChatRequest(BaseModel):
@@ -50,6 +64,11 @@ class ChatSessionRequest(BaseModel):
     )
 
 
+class ThreadRenameRequest(BaseModel):
+    """会话重命名请求"""
+    title: str = Field(description="新标题", min_length=1, max_length=50)
+
+
 @router.get("/v1/agent/threads")
 async def list_threads(
     limit: int = Query(20, description="最多返回条数"),
@@ -60,6 +79,47 @@ async def list_threads(
     返回按最后更新时间倒序的会话列表，包含 thread_id / title / 消息数。
     """
     return {"threads": P.list_threads(limit=limit, offset=offset)}
+
+
+@router.get("/v1/agent/threads/{thread_id}")
+async def get_thread(thread_id: str):
+    """获取单个会话详情 — 含完整消息历史"""
+    loaded = P.load_thread(thread_id)
+    if loaded is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
+    messages, attention_sinks, working_memory = loaded
+    row = P._get_conn().execute(
+        "SELECT title, created_at, updated_at FROM agent_threads WHERE thread_id = ?",
+        (thread_id,),
+    ).fetchone()
+    return {
+        "thread_id": thread_id,
+        "title": row["title"] if row else "",
+        "created_at": row["created_at"] if row else 0,
+        "updated_at": row["updated_at"] if row else 0,
+        "messages": messages,
+        "attention_sinks": attention_sinks,
+        "working_memory": working_memory,
+    }
+
+
+@router.patch("/v1/agent/threads/{thread_id}")
+async def rename_thread(thread_id: str, body: ThreadRenameRequest):
+    """重命名会话标题"""
+    from fastapi import HTTPException
+    if not P.rename_thread(thread_id, body.title):
+        raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
+    return {"status": "ok", "thread_id": thread_id, "title": body.title.strip()[:50]}
+
+
+@router.delete("/v1/agent/threads/{thread_id}")
+async def delete_thread(thread_id: str):
+    """删除会话及其全部消息、索引数据"""
+    from fastapi import HTTPException
+    if not P.delete_thread(thread_id):
+        raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
+    return {"status": "ok", "thread_id": thread_id}
 
 
 @router.post("/v1/agent/chat/session")
