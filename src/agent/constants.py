@@ -452,3 +452,94 @@ LOG_VALIDATE_PASS = "工具调用前置校验通过 | tool_calls=%d"
 LOG_VERIFY_POOR_RESULT = "工具结果验证失败 | poor_tools=%s"
 LOG_VERIFY_PASS = "工具结果验证通过 | tools=%d"
 LOG_REFLECTION = "推理反思 | verdict=%s"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 模型列表 & 选择器
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 已知模型注册表（display_name, provider, capabilities）
+# 用于 GET /v1/agent/models 返回给前端模型选择器
+MODEL_REGISTRY: dict[str, dict] = {
+    "deepseek-v4-flash": {
+        "display_name": "DeepSeek Flash",
+        "provider": "deepseek",
+        "capabilities": ["text", "tools", "streaming"],
+    },
+    "deepseek-v4-pro": {
+        "display_name": "DeepSeek Pro",
+        "provider": "deepseek",
+        "capabilities": ["text", "tools", "streaming"],
+    },
+    "ep-20260704205018-srlpk": {
+        "display_name": "豆包 V1 Pro-32k",
+        "provider": "doubao",
+        "capabilities": ["text", "tools", "streaming"],
+    },
+    "ep-20260704205835-vbkmb": {
+        "display_name": "豆包 Seed2",
+        "provider": "doubao",
+        "capabilities": ["text", "tools", "streaming"],
+    },
+}
+
+# Models API 响应字段
+FIELD_MODELS = "models"
+FIELD_CURRENT = "current"
+FIELD_MODEL_ID = "id"
+FIELD_DISPLAY_NAME = "display_name"
+FIELD_CAPABILITIES = "capabilities"
+FIELD_IS_ACTIVE = "is_active"
+FIELD_CONFIGURED = "configured"
+
+# Models API 日志
+LOG_MODELS_LISTED = "模型列表已查询 | current=%s count=%d"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Citation 富化（SSE done 事件）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+FIELD_CITATION_PATH = "path"
+FIELD_CITATION_TITLE = "title"
+FIELD_CITATION_PAGE_TYPE = "page_type"
+
+# 降级用默认值
+DEFAULT_PAGE_TYPE = "unknown"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 反馈（Feedback）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 数据库
+TABLE_AGENT_FEEDBACK = "agent_feedback"
+
+# 请求字段
+FIELD_RATING = "rating"
+FIELD_MESSAGE_INDEX = "message_index"
+FIELD_COMMENT = "comment"
+FIELD_RECORDED = "recorded"
+
+# 反馈类型
+RATING_POSITIVE = "positive"
+RATING_NEGATIVE = "negative"
+
+# 日志
+LOG_FEEDBACK_STORED = "反馈已存储 | thread=%s rating=%s index=%d"
+LOG_FEEDBACK_FAILED = "反馈存储失败 | thread=%s error=%s"
+LOG_FEEDBACK_INVALID_INDEX = "反馈消息越界 | thread=%s index=%d total=%d"
+
+# 反馈 comment 最大长度
+FEEDBACK_COMMENT_MAX_CHARS = 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 清空对话（Clear）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+LOG_THREAD_CLEARED = "会话已清空 | thread=%s removed=%d"
+LOG_THREAD_CLEAR_SKIP = "会话清空跳过 | thread=%s 不存在"
+LOG_REGENERATE_ERROR = "重新生成失败 | thread=%s error=%s"
+ERROR_NO_USER_MESSAGE = "没有可重新生成的消息"
+ERROR_THREAD_NOT_FOUND = "会话不存在"

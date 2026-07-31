@@ -22,7 +22,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
 from src.agent import constants as C
-from src.agent.action.response import AgentResponse, format_response
+from src.agent.action.response import AgentResponse, enrich_cited_pages, format_response
 from src.agent.action.stream import emit_token
 from src.agent.memory import store as M
 from src.agent.perception.handler import deserialize_messages, extract_event, extract_sources, serialize_messages
@@ -325,6 +325,7 @@ async def chat_stream_session(
         C.FIELD_SOURCES: list(dict.fromkeys(wiki_path_source)),
     }
     if structured:
-        done_event[C.FIELD_CITED_PAGES] = structured.cited_pages
+        # 富化 cited_pages：从路径字符串升级为带元数据的对象
+        done_event[C.FIELD_CITED_PAGES] = enrich_cited_pages(structured.cited_pages)
         done_event[C.FIELD_FOLLOW_UP_QUESTIONS] = structured.follow_up_questions
     yield done_event

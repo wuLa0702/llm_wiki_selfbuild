@@ -42,6 +42,41 @@ STRUCTURED_EXTRACTION_SYSTEM_PROMPT = (
 )
 
 
+# ── 引用富化 ────────────────────────────────────────────────────────────────
+
+
+def enrich_cited_pages(paths: list[str]) -> list[dict]:
+    """将引用的 Wiki 页面路径富化为带元数据的对象
+
+    查询 WikiRepository 获取每个页面的标题和类型，
+    页面不存在或查询失败时降级为 {path, title: 文件名, page_type: unknown}。
+
+    Args:
+        paths: 页面路径列表，如 ["entities/python.md"]
+
+    Returns:
+        [{"path": str, "title": str, "page_type": str}, ...]
+    """
+    from pathlib import Path
+
+    from src.db.repository import WikiRepository
+
+    enriched: list[dict] = []
+    try:
+        repo = WikiRepository()
+        for p in paths:
+            meta = repo.get_page(p)
+            enriched.append({
+                C.FIELD_CITATION_PATH: p,
+                C.FIELD_CITATION_TITLE: (meta.get("title") or Path(p).stem) if meta else Path(p).stem,
+                C.FIELD_CITATION_PAGE_TYPE: (meta.get("page_type") or C.DEFAULT_PAGE_TYPE) if meta else C.DEFAULT_PAGE_TYPE,
+            })
+    except Exception:
+        # 元数据查询失败时降级为纯路径列表（向后兼容）
+        enriched = [p for p in paths]
+    return enriched
+
+
 # ── 格式化 ──────────────────────────────────────────────────────────────────
 
 

@@ -179,6 +179,38 @@ def thread_exists(thread_id: str) -> bool:
     return row is not None
 
 
+def clear_thread(thread_id: str) -> int:
+    """清空会话消息，保留线程本身（thread_id、标题、元数据）
+
+    清空内容包括：
+      - messages → []
+      - attention_sinks → []
+      - working_memory → {}
+
+    Returns:
+        移除的消息数，thread 不存在返回 0
+    """
+    _ensure_table()
+    loaded = load_thread(thread_id)
+    if loaded is None:
+        logger.info(C.LOG_THREAD_CLEAR_SKIP, thread_id)
+        return 0
+    msgs, _sinks, _wm = loaded
+    count = len(msgs)
+    conn = _get_conn()
+    conn.execute(
+        """UPDATE agent_threads
+           SET messages = '[]', attention_sinks = '[]', working_memory = '{}',
+               updated_at = ?
+           WHERE thread_id = ?""",
+        (time.time(), thread_id),
+    )
+    delete_thread_index(thread_id)
+    conn.commit()
+    logger.info(C.LOG_THREAD_CLEARED, thread_id, count)
+    return count
+
+
 def rename_thread(thread_id: str, title: str) -> bool:
     """重命名会话标题
 
@@ -701,3 +733,69 @@ def list_stale_threads(days: int = 30, limit: int = 50) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 反馈表 — Feedback
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+_FEEDBACK_ENSURED = False
+
+
+def _ensure_feedback_table():
+    """确保 feedback 表存在（幂等）"""
+    global _FEEDBACK_ENSURED
+    if _FEEDBACK_ENSURED:
+        return
+    conn = _get_conn()
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {C.TABLE_AGENT_FEEDBACK} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id TEXT NOT NULL,
+            message_index INTEGER NOT NULL,
+            rating TEXT NOT NULL,
+            comment TEXT DEFAULT '',
+            created_at REAL NOT NULL
+        )
+    """)
+    conn.execute(
+        f"CREATE INDEX IF NOT EXISTS idx_feedback_thread ON {C.TABLE_AGENT_FEEDBACK}(thread_id)"
+    )
+    conn.commit()
+    _FEEDBACK_ENSURED = True
+
+
+def store_feedback(thread_id: str, message_index: int, rating: str, comment: str = "") -> bool:
+    """存储用户对某条消息的反馈
+
+    Args:
+        thread_id: 会话 ID
+        message_index: 消息序号（0-based，在 thread 消息列表中的索引）
+        rating: 'positive' 或 'negative'
+        comment: 可选文字反馈，最长 FEEDBACK_COMMENT_MAX_CHARS
+
+    Returns:
+        True 表示存储成功（含越界时返回 False）
+    """
+    _ensure_feedback_table()
+
+    # 校验 message_index 有效性
+    loaded = load_thread(thread_id)
+    if loaded is None:
+        logger.warning(C.LOG_FEEDBACK_FAILED, thread_id, "thread 不存在")
+        return False
+    msgs, _sinks, _wm = loaded
+    if message_index < 0 or message_index >= len(msgs):
+        logger.warning(C.LOG_FEEDBACK_INVALID_INDEX, thread_id, message_index, len(msgs))
+        return False
+
+    trimmed_comment = (comment or "").strip()[:C.FEEDBACK_COMMENT_MAX_CHARS]
+    now = time.time()
+    conn = _get_conn()
+    conn.execute(
+        f"INSERT INTO {C.TABLE_AGENT_FEEDBACK} (thread_id, message_index, rating, comment, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (thread_id, message_index, rating, trimmed_comment, now),
+    )
+    conn.commit()
+    logger.info(C.LOG_FEEDBACK_STORED, thread_id, rating, message_index)
+    return True
