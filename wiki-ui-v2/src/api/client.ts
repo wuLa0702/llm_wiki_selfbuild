@@ -10,6 +10,10 @@
 
 import ky from 'ky';
 
+// 子路径部署前缀（构建时由 vite base 注入：生产 '/llm-wiki'，dev 为空）
+export const API_PREFIX = import.meta.env.BASE_URL.replace(/\/$/, '');
+const p = (path: string) => API_PREFIX + path;
+
 const api = ky.create({
   prefix: '',
   timeout: 30000,
@@ -89,7 +93,7 @@ export async function fetchJson<T>(path: string, options?: FetchOptions): Promis
 
   const promise = (async () => {
     try {
-      const res = await api.get(path);
+      const res = await api.get(p(path));
       const data: T = await res.json();
       if (!options?.skipCache) {
         cacheSet(path, data, options?.ttl, options?.staleTtl);
@@ -115,7 +119,7 @@ function revalidateAsync(path: string, options?: FetchOptions): void {
  * POST 请求 — 自动失效 GET 缓存
  */
 export async function postJson<T>(path: string, body?: unknown): Promise<T> {
-  const res = await api.post(path, { json: body });
+  const res = await api.post(p(path), { json: body });
   invalidateCache(path);  // 失效同一路径的 GET 缓存
   return res.json();
 }
@@ -124,7 +128,7 @@ export async function postJson<T>(path: string, body?: unknown): Promise<T> {
  * PUT 请求 — 自动失效 GET 缓存
  */
 export async function putJson<T>(path: string, body?: unknown): Promise<T> {
-  const res = await api.put(path, { json: body });
+  const res = await api.put(p(path), { json: body });
   invalidateCache(path);
   return res.json();
 }
@@ -133,7 +137,7 @@ export async function putJson<T>(path: string, body?: unknown): Promise<T> {
  * PATCH 请求 — 自动失效 GET 缓存
  */
 export async function patchJson<T>(path: string, body?: unknown): Promise<T> {
-  const res = await api.patch(path, { json: body });
+  const res = await api.patch(p(path), { json: body });
   invalidateCache(path);
   return res.json();
 }
@@ -142,7 +146,7 @@ export async function patchJson<T>(path: string, body?: unknown): Promise<T> {
  * DELETE 请求 — 自动失效 GET 缓存
  */
 export async function deleteJson<T>(path: string): Promise<T> {
-  const res = await api.delete(path);
+  const res = await api.delete(p(path));
   // 从路径中提取资源前缀：/v1/privacy/rules/keyword → /v1/privacy/rules
   const base = path.replace(/\/[^/]+$/, '');
   invalidateCache(base);

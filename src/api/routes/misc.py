@@ -29,7 +29,7 @@ router = APIRouter(tags=["misc"])
 async def root():
     """根路径 → 重定向到 Wiki 首页"""
     logger.debug("root endpoint 被调用，重定向到 /wiki")
-    return RedirectResponse(url="/wiki")
+    return RedirectResponse(url="wiki")
 
 
 @router.get("/health", response_model=HealthResponse)

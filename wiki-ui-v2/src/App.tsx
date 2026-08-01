@@ -174,7 +174,7 @@ export default function App() {
   }, []);
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '') || undefined}>
       <TooltipProvider>
         <SidebarProvider defaultOpen={true} className="h-svh overflow-hidden">
           <AppSidebar />

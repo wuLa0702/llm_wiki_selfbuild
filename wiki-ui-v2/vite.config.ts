@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
 export default defineConfig({
+  base: '/llm-wiki/',   // 子路径部署：https://wulaai.top/llm-wiki/（多项目共用域名）
   plugins: [tailwindcss(), react()],
   resolve: {
     alias: {

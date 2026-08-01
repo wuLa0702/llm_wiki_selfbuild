@@ -132,7 +132,7 @@ async def wiki_settings(request: Request):
 async def wiki_page(page_path: str, request: Request):
     """渲染单个 Wiki 页面，[[双向链接]] 可点击跳转"""
     if not page_path or page_path.endswith("/"):
-        return RedirectResponse(url="/wiki")
+        return RedirectResponse(url="wiki")
 
     if not _check_page_access(request, page_path):
         return templates.TemplateResponse(

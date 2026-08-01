@@ -25,6 +25,8 @@ export interface LogEntry {
 }
 
 const QUEUE: LogEntry[] = [];
+// 子路径部署前缀（构建时由 vite base 注入）
+const API_PREFIX = import.meta.env.BASE_URL.replace(/\/$/, '');
 const FLUSH_INTERVAL_MS = 2000;
 const FLUSH_BATCH_SIZE = 10;
 let timer: number | null = null;
@@ -119,7 +121,7 @@ export function setupGlobalErrorHandlers(): void {
       const body = new Blob([JSON.stringify({ entries: QUEUE.splice(0, QUEUE.length) })], {
         type: 'application/json',
       });
-      navigator.sendBeacon('/v1/frontend/logs', body);
+      navigator.sendBeacon(`${API_PREFIX}/v1/frontend/logs`, body);
     } catch {
       // 静默
     }
