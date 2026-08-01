@@ -6,8 +6,11 @@ Embedding 引擎开关测试 — DB wiki_settings 控制 + 模型完整性检查
   2. 开关开启 + 模型完整 → 正常初始化，模型加载带 local_files_only=True
   3. 开关开启 + 模型缺失/不完整 → 快速降级禁用，绝不触发在线下载
   4. 运行中关闭开关 → 热生效（旧引擎被丢弃）
+  5. 可选重依赖缺失（最小部署集）→ 模块可导入、引擎降级不炸
 """
 import json
+import sys
+import types
 
 import pytest
 
@@ -59,6 +62,20 @@ class _FakeModel:
         return [0.1, 0.2, 0.3]
 
 
+def _make_fake_chroma_module() -> types.ModuleType:
+    """构造假 chromadb 模块（PersistentClient 不落盘）"""
+    mod = types.ModuleType("chromadb")
+    mod.PersistentClient = FakeChromaClient
+    return mod
+
+
+def _make_fake_st_module(recorder: ModelLoaderRecorder) -> types.ModuleType:
+    """构造假 sentence_transformers 模块（SentenceTransformer 被记录）"""
+    mod = types.ModuleType("sentence_transformers")
+    mod.SentenceTransformer = recorder
+    return mod
+
+
 @pytest.fixture(autouse=True)
 def _reset_engine_singleton():
     """每个测试后重置模块级单例，避免跨测试污染"""
@@ -68,7 +85,7 @@ def _reset_engine_singleton():
 
 
 def _isolate(tmp_path, monkeypatch, enabled: bool):
-    """隔离 DB（写入开关）+ 隔离 chroma/模型加载器"""
+    """隔离 DB（写入开关）+ 隔离 chroma/模型加载器（patch sys.modules）"""
     monkeypatch.setattr(
         "src.db.repository.get_db_path", lambda name="wiki.db": str(tmp_path / "wiki.db")
     )
@@ -78,8 +95,9 @@ def _isolate(tmp_path, monkeypatch, enabled: bool):
     repo.set_setting("settings.embedding_enabled", json.dumps(enabled))
 
     recorder = ModelLoaderRecorder()
-    monkeypatch.setattr(embedding_mod, "SentenceTransformer", recorder)
-    monkeypatch.setattr(embedding_mod.chromadb, "PersistentClient", FakeChromaClient)
+    # 延迟 import 在 __init__ 内，通过 sys.modules 注入假模块
+    monkeypatch.setitem(sys.modules, "sentence_transformers", _make_fake_st_module(recorder))
+    monkeypatch.setitem(sys.modules, "chromadb", _make_fake_chroma_module())
     monkeypatch.setattr(
         "src.config.settings.chunk_search_enabled", False
     )
@@ -165,3 +183,42 @@ class TestEmbeddingSwitch:
         engine = embedding_mod.get_embedding_engine()
         assert engine.enabled is True
         assert len(recorder.calls) == 1
+
+
+class TestMinimalDeploy:
+    """最小部署集（无 chromadb / sentence-transformers）兼容性"""
+
+    def test_module_imports_without_heavy_deps(self, tmp_path, monkeypatch):
+        """重依赖缺失时模块仍可导入（ingest 等调用点不炸）"""
+        monkeypatch.setattr(
+            "src.db.repository.get_db_path", lambda name="wiki.db": str(tmp_path / "wiki.db")
+        )
+        # 模拟未安装：sys.modules 置 None → import 抛 ImportError
+        monkeypatch.setitem(sys.modules, "chromadb", None)
+        monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+
+        import importlib
+
+        mod = importlib.reload(embedding_mod)
+        # 关闭状态：正常返回禁用引擎，不触碰重依赖
+        engine = mod.get_embedding_engine()
+        assert engine.enabled is False
+
+    def test_enabled_with_missing_deps_degrades(self, tmp_path, monkeypatch):
+        """开启 + 重依赖缺失 → ImportError 被捕获，快速降级 disabled"""
+        monkeypatch.setattr(
+            "src.db.repository.get_db_path", lambda name="wiki.db": str(tmp_path / "wiki.db")
+        )
+        from src.db.repository import WikiRepository
+
+        repo = WikiRepository(db_path=str(tmp_path / "wiki.db"))
+        repo.set_setting("settings.embedding_enabled", json.dumps(True))
+        monkeypatch.setitem(sys.modules, "chromadb", None)
+        monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+
+        import importlib
+
+        mod = importlib.reload(embedding_mod)
+        engine = mod.get_embedding_engine()
+        assert engine.enabled is False
+        assert engine._model is None

@@ -8,13 +8,14 @@
 开关由 DB wiki_settings 的 settings.embedding_enabled 控制（设置页可开关，
 默认关闭，热生效）。关闭时绝不加载本地模型、绝不触发在线下载。
 使用本地模型，无需 API 调用，隐私安全，离线可用。
+
+注意：chromadb / sentence-transformers 为可选重依赖（最小部署集
+requirements-min.txt 不含它们），必须延迟到 enabled 分支内 import——
+否则最小集上 import 本模块即失败，ingest 等调用点会 ImportError。
 """
 import json
 import logging
 import os
-
-import chromadb
-from sentence_transformers import SentenceTransformer
 
 from src.config import settings
 
@@ -93,6 +94,11 @@ class EmbeddingEngine:
             return
 
         try:
+            # 可选重依赖延迟 import（最小部署集不装它们时，enabled 分支内
+            # ImportError 由下方 except 捕获 → 快速降级 disabled，不影响业务）
+            import chromadb
+            from sentence_transformers import SentenceTransformer
+
             from src.utils.path_resolver import get_app_dir
             chroma_dir = os.path.join(get_app_dir(), "chroma_db")
             os.makedirs(chroma_dir, exist_ok=True)
