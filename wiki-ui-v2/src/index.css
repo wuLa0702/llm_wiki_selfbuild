@@ -136,7 +136,7 @@
 
   --sidebar-background: #0a0a0d;
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary: oklch(0.95 0.005 260);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.22 0.012 260);
   --sidebar-accent-foreground: oklch(0.985 0 0);
@@ -247,6 +247,36 @@ body {
   animation: skeleton-pulse 1.4s ease-in-out infinite;
 }
 
+/* ============================================================
+   Chat UI animations
+   ============================================================ */
+
+/* Message entrance */
+@keyframes msg-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.msg-enter {
+  animation: msg-enter 200ms ease-out both;
+}
+
+/* Staggered delay utility classes */
+.msg-enter-d0  { animation-delay: 0ms; }
+.msg-enter-d1  { animation-delay: 50ms; }
+.msg-enter-d2  { animation-delay: 100ms; }
+.msg-enter-d3  { animation-delay: 150ms; }
+.msg-enter-d4  { animation-delay: 200ms; }
+.msg-enter-d5  { animation-delay: 250ms; }
+
+/* Typing dots */
+@keyframes typing-bounce {
+  0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+  40%           { opacity: 1;   transform: translateY(-3px); }
+}
+.typing-dot {
+  animation: typing-bounce 1.2s ease-in-out infinite;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -261,6 +291,14 @@ body {
   /* Custom border widths (Tailwind v4 only has 0/2/4/8) */
   .border-l-3 {
     border-left-width: 3px;
+  }
+
+  /* Press feedback */
+  .press {
+    transition: transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .press:active {
+    transform: scale(0.97);
   }
 
   /* Card hover elevation */

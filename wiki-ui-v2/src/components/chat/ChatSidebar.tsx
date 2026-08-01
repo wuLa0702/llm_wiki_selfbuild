@@ -2,23 +2,18 @@
  * ChatSidebar — 会话列表侧栏
  *
  * 功能：
- *   - 展示后端持久化会话列表（标题 + 更新时间 + 消息数）
- *   - 「+ 新建对话」按钮
- *   - hover 菜单：重命名 / 删除
- *   - 双击标题进入重命名（inline edit）
- *   - 加载中骨架屏
+ *   - 「+ 新建对话」填充主按钮（顶部）
+ *   - 会话列表：标题 + 时间 + 选中态 3px 左竖条 + 浅背景
+ *   - hover 浮删/改名图标
  */
 
 import { useState } from 'react';
 import {
-  Plus, MoreHorizontal, Pencil, Trash2, Loader2, MessageSquare,
+  Plus, Pencil, Trash2, Loader2, MessageSquare,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { showConfirm } from '@/components/ui/confirm-dialog';
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import type { ThreadMeta } from '@/api/agent';
 
 interface ChatSidebarProps {
@@ -59,11 +54,7 @@ export default function ChatSidebar({
     setEditingId(null);
     if (!v) return;
     setBusyId(id);
-    try {
-      await onRename(id, v);
-    } finally {
-      setBusyId(null);
-    }
+    try { await onRename(id, v); } finally { setBusyId(null); }
   };
 
   const cancelEdit = () => { setEditingId(null); setEditValue(''); };
@@ -71,30 +62,27 @@ export default function ChatSidebar({
   const handleDelete = async (t: ThreadMeta) => {
     if (!(await showConfirm(`删除对话「${t.title || '未命名'}」？此操作不可撤销。`, { title: '确认删除', variant: 'destructive' }))) return;
     setBusyId(t.thread_id);
-    try {
-      await onDelete(t.thread_id);
-    } finally {
-      setBusyId(null);
-    }
+    try { await onDelete(t.thread_id); } finally { setBusyId(null); }
   };
 
   return (
-    <div className="flex flex-col h-full w-[260px] flex-shrink-0 border-r border-border bg-card">
-      <div className="p-3 border-b border-border">
+    <div className="flex flex-col h-full w-[260px] flex-shrink-0 bg-sidebar border-r border-sidebar-border">
+      {/* 顶部新建按钮 */}
+      <div className="p-3 border-b border-sidebar-border">
         <Button
-          variant="outline"
-          className="w-full justify-start gap-2"
+          className="w-full justify-start gap-2 press"
           onClick={onNew}
         >
           <Plus className="h-4 w-4" /> 新建对话
         </Button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2">
+      {/* 会话列表 */}
+      <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
         {loading && threads.length === 0 ? (
           <div className="space-y-2 p-2">
             {[0, 1, 2].map(i => (
-              <div key={i} className="h-12 rounded-md bg-muted/50 animate-pulse" />
+              <div key={i} className="h-12 rounded-lg bg-muted/50 skeleton-pulse" />
             ))}
           </div>
         ) : threads.length === 0 ? (
@@ -111,8 +99,10 @@ export default function ChatSidebar({
             return (
               <div
                 key={t.thread_id}
-                className={`group relative px-3 py-2.5 mb-1 rounded-lg cursor-pointer transition-colors ${
-                  isActive ? 'bg-accent' : 'hover:bg-accent/50'
+                className={`group relative flex items-center px-3 py-2.5 rounded-lg cursor-pointer transition-colors duration-150 ${
+                  isActive
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground border-l-3 border-sidebar-primary pl-[10px]'
+                    : 'hover:bg-sidebar-accent/60'
                 }`}
                 onClick={() => { if (!isEditing && !isBusy) onSelect(t.thread_id); }}
                 onDoubleClick={() => { if (!isBusy) startEdit(t); }}
@@ -134,38 +124,35 @@ export default function ChatSidebar({
                   />
                 ) : (
                   <>
-                    <div className="flex items-center justify-between gap-1">
-                      <div className="text-sm truncate font-medium pr-1">
+                    <div className="flex-1 min-w-0 pr-1">
+                      <div className="text-sm truncate font-medium">
                         {t.title || '未命名对话'}
                       </div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <button
-                              className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded hover:bg-accent-foreground/10 transition-opacity"
-                              onClick={e => e.stopPropagation()}
-                            />
-                          }
-                        >
-                          {isBusy
-                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            : <MoreHorizontal className="h-3.5 w-3.5" />}
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-32">
-                          <DropdownMenuItem onClick={e => { e.stopPropagation(); startEdit(t); }}>
-                            <Pencil className="h-3.5 w-3.5 mr-2" /> 重命名
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={e => { e.stopPropagation(); handleDelete(t); }}
-                            className="text-destructive focus:text-destructive"
-                          >
-                            <Trash2 className="h-3.5 w-3.5 mr-2" /> 删除
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <div className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                        {formatDate(t.updated_at)}
+                      </div>
                     </div>
-                    <div className="text-xs text-muted-foreground mt-0.5 truncate">
-                      {formatDate(t.updated_at)} · {t.message_count} 条消息
+                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {isBusy ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <>
+                          <button
+                            className="p-1 rounded hover:bg-foreground/10 transition-colors"
+                            onClick={e => { e.stopPropagation(); startEdit(t); }}
+                            title="重命名"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          <button
+                            className="p-1 rounded hover:bg-destructive/20 text-destructive transition-colors"
+                            onClick={e => { e.stopPropagation(); handleDelete(t); }}
+                            title="删除"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </>
                 )}
