@@ -74,6 +74,48 @@ P1_TOOLS = registry.list_enabled()
 # ── 图状态定义 ────────────────────────────────────────────────────────────────
 
 
+def working_memory_reducer(old: dict | None, new: dict | None) -> dict:
+    """工作记忆增量合并 reducer
+
+    不同 slot 有不同合并策略：
+      - key_facts / entities_mentioned: dedup 追加 + 上限截断
+      - tool_cache: 最新覆盖 + 上限截断
+      - user_identity: key-level merge
+      - 其他: 直接覆盖
+    """
+    if new is None:
+        return dict(old) if old else {}
+    if old is None:
+        return dict(new)
+
+    merged = dict(old)
+
+    for k, v in new.items():
+        if not v and v not in (False, 0):
+            continue  # skip None/empty values
+
+        if k == C.WM_SLOT_KEY_FACTS:
+            existing = merged.get(k, [])
+            merged[k] = list(dict.fromkeys(existing + v))[:C.WM_MAX_FACTS]
+
+        elif k == C.WM_SLOT_ENTITIES:
+            existing = merged.get(k, [])
+            merged[k] = list(dict.fromkeys(existing + v))[:C.WM_MAX_ENTITIES]
+
+        elif k == C.WM_SLOT_TOOL_CACHE:
+            existing = merged.get(k, {})
+            merged_v = {**existing, **(v or {})}
+            merged[k] = dict(list(merged_v.items())[:C.WM_MAX_TOOL_CACHE_ENTRIES])
+
+        elif k == C.WM_SLOT_USER_IDENTITY:
+            merged[k] = {**merged.get(k, {}), **(v or {})}
+
+        else:
+            merged[k] = v
+
+    return merged
+
+
 class AgentState(TypedDict):
     """LangGraph 图共享状态
 
@@ -118,48 +160,6 @@ class AgentState(TypedDict):
 
 
 # ── 工作记忆 Reducer ─────────────────────────────────────────────────────────
-
-
-def working_memory_reducer(old: dict | None, new: dict | None) -> dict:
-    """工作记忆增量合并 reducer
-
-    不同 slot 有不同合并策略：
-      - key_facts / entities_mentioned: dedup 追加 + 上限截断
-      - tool_cache: 最新覆盖 + 上限截断
-      - user_identity: key-level merge
-      - 其他: 直接覆盖
-    """
-    if new is None:
-        return dict(old) if old else {}
-    if old is None:
-        return dict(new)
-
-    merged = dict(old)
-
-    for k, v in new.items():
-        if not v and v not in (False, 0):
-            continue  # skip None/empty values
-
-        if k == C.WM_SLOT_KEY_FACTS:
-            existing = merged.get(k, [])
-            merged[k] = list(dict.fromkeys(existing + v))[:C.WM_MAX_FACTS]
-
-        elif k == C.WM_SLOT_ENTITIES:
-            existing = merged.get(k, [])
-            merged[k] = list(dict.fromkeys(existing + v))[:C.WM_MAX_ENTITIES]
-
-        elif k == C.WM_SLOT_TOOL_CACHE:
-            existing = merged.get(k, {})
-            merged_v = {**existing, **(v or {})}
-            merged[k] = dict(list(merged_v.items())[:C.WM_MAX_TOOL_CACHE_ENTRIES])
-
-        elif k == C.WM_SLOT_USER_IDENTITY:
-            merged[k] = {**merged.get(k, {}), **(v or {})}
-
-        else:
-            merged[k] = v
-
-    return merged
 
 
 # ── 动作去重键生成 ────────────────────────────────────────────────────────────
