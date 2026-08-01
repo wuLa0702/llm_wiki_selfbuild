@@ -338,12 +338,15 @@ export default function ChatPage() {
 
           case 'tool_end':
             if (currentTool && currentTool.name === event.tool) {
-              currentTool.status = 'done';
-              currentTool.output = event.output;
+              // ⚠️ 闭包陷阱修复：setState updater 是延迟执行的（React 批量更新），
+              // 执行时 currentTool 已被下面的 `currentTool = null` 置空，
+              // updater 内读 currentTool!.id 会抛 null 错误 → React 整树卸载 → 白屏。
+              // 必须先在闭包外做快照，updater 只读快照。
+              const doneTool: ToolCallInfo = { ...currentTool, status: 'done', output: event.output };
               setToolMapByThread(prev => {
                 const map = new Map(prev[threadId] || []);
                 const arr = (map.get(assistantMsgIdx) || []).map(t =>
-                  t.id === currentTool!.id ? { ...currentTool! } : t);
+                  t.id === doneTool.id ? { ...doneTool } : t);
                 map.set(assistantMsgIdx, arr);
                 return { ...prev, [threadId]: map };
               });
