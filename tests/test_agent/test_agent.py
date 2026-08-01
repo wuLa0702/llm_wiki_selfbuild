@@ -1004,11 +1004,69 @@ class TestValidateToolNode:
 
     @pytest.mark.asyncio
     async def test_valid_routes_to_approve(self, mocker):
-        """should_after_validate 在 validated 时路由到 approve"""
+        """should_after_validate 在 validated 时路由到 approve（节点内按风险分级决定是否拦截）"""
         from src.agent.planning.graph import should_after_validate
 
         state = {"self_correction": {"validated": True}}
         assert should_after_validate(state) == "approve"
+
+    def test_readonly_tools_skip_approval(self, mocker):
+        """全部只读工具（requires_approval=False）→ 审批节点直接放行，不 interrupt"""
+        import src.agent.planning.graph as graph_mod
+        from src.agent.action.registry import registry
+
+        # 前置：默认工具已标记只读
+        assert registry.get_metadata("search_wiki", "requires_approval") is False
+        assert registry.get_metadata("read_page", "requires_approval") is False
+
+        mock_interrupt = mocker.patch.object(graph_mod, "interrupt")
+        ai_msg = mocker.MagicMock()
+        ai_msg.tool_calls = [
+            {"name": "search_wiki", "args": {"query": "python"}, "id": "c1"},
+            {"name": "read_page", "args": {"path": "x.md"}, "id": "c2"},
+        ]
+        state = {"messages": [ai_msg]}
+
+        result = graph_mod.human_approval_node(state)
+        assert result == {}  # 放行（走批准路径，后续路由到 tools）
+        mock_interrupt.assert_not_called()
+
+    def test_risky_tool_triggers_interrupt(self, mocker):
+        """含未标记/风险工具 → interrupt 拦整轮等待审批（fail-closed）"""
+        import src.agent.planning.graph as graph_mod
+
+        mock_interrupt = mocker.patch.object(
+            graph_mod, "interrupt", return_value={"approved": True}
+        )
+        ai_msg = mocker.MagicMock()
+        ai_msg.tool_calls = [
+            {"name": "write_tool", "args": {"path": "wiki/x.md"}, "id": "c1"},
+        ]
+        state = {"messages": [ai_msg]}
+
+        result = graph_mod.human_approval_node(state)
+        mock_interrupt.assert_called_once()
+        assert result == {}  # 批准 → 状态不变，路由 tools
+
+    def test_mixed_tools_triggers_interrupt(self, mocker):
+        """只读 + 风险工具混合 → 拦整轮（只要有一个需要审批就审批全部）"""
+        import src.agent.planning.graph as graph_mod
+
+        mock_interrupt = mocker.patch.object(
+            graph_mod, "interrupt", return_value={"approved": False}
+        )
+        ai_msg = mocker.MagicMock()
+        ai_msg.tool_calls = [
+            {"name": "search_wiki", "args": {"query": "python"}, "id": "c1"},
+            {"name": "write_tool", "args": {"path": "wiki/x.md"}, "id": "c2"},
+        ]
+        state = {"messages": [ai_msg]}
+
+        result = graph_mod.human_approval_node(state)
+        mock_interrupt.assert_called_once()
+        # 拒绝 → 注入拒绝 ToolMessage 回 agent
+        assert "messages" in result
+        assert isinstance(result["messages"][0].content, str)
 
     def test_no_tool_calls_returns_validated(self, mocker):
         """无 tool_calls 时直接返回 validated=True"""

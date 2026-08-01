@@ -170,7 +170,7 @@ async def chat_stream_session(
             return
 
         # 用 Command(resume=approval) 恢复图执行
-        logger.info(C.LOG_APPROVAL_RESUMED, thread_id, "approved" if approval.get(C.FIELD_APPROVAL) else "rejected")
+        logger.info(C.LOG_APPROVAL_RESUMED, thread_id, "approved" if approval.get(C.FIELD_APPROVED) else "rejected")
         stream_input = Command(resume=approval)
         input_messages: list[BaseMessage] = []  # 恢复时不传新消息
     else:

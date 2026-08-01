@@ -129,7 +129,8 @@ FIELD_INPUT = "input"
 FIELD_OUTPUT = "output"
 FIELD_SOURCES = "sources"
 FIELD_TOOL_CALLS = "tool_calls"
-FIELD_APPROVAL = "approval"
+FIELD_APPROVAL = "approval"   # 请求体外层字段名（chat.py ChatSessionRequest.approval）
+FIELD_APPROVED = "approved"   # 审批决策内层布尔键（{"approved": true/false}）
 FIELD_MESSAGE = "message"
 FIELD_EVENT = "event"
 FIELD_NAME = "name"
@@ -350,6 +351,13 @@ NEIGHBOR_NODES_LIMIT = 8
 
 # Wiki 路径正则（从 tool 输出中提取 `xxx.md` 引用）
 WIKI_PATH_REGEX = r'`([^`]+\.md)`'
+
+# 工具元数据键名（registry.register 的 metadata 参数）
+# requires_approval: True=调用前必须人工审批；False=只读查询直接放行；未标记默认按需审批（fail-closed）
+METADATA_REQUIRES_APPROVAL = "requires_approval"
+
+# 审批日志
+LOG_APPROVAL_SKIP = "工具调用全部只读，跳过人工审批 | thread=%s tools=%s"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

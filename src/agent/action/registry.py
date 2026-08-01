@@ -288,12 +288,18 @@ def init_default_tools() -> None:
 
     等价于原来的 P1_TOOLS = [search_wiki, read_page]
     在模块导入时自动执行，确保从 registry 获取的工具始终包含默认集。
+
+    metadata.requires_approval — 工具风险分级标记（方案 A，渐进式维护）：
+      False — 只读查询工具，调用前直接放行，不弹审批
+      省略  — 新工具默认按需审批（fail-closed，确认只读后补标 False）
+      未来写操作工具必须显式标记 True（或保持省略），获得审批保护。
     """
+    from src.agent import constants as C
     from src.agent.action.tools import read_page, search_wiki
 
     for tool in (search_wiki, read_page):
         try:
-            registry.register(tool)
+            registry.register(tool, metadata={C.METADATA_REQUIRES_APPROVAL: False})
         except ValueError:
             pass  # 已注册则跳过（幂等）
 

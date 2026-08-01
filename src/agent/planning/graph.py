@@ -26,6 +26,7 @@
             → 步数超限 → summarizer（强制输出）
             → 重复/低置信 → agent（重新思考）
             → 校验通过 → approve
+                → 节点内风险分级（全部只读 → 直接放行；含风险工具 → interrupt 审批）
                 → 批准 → tools → verify_result
                     → 结果有效 → agent（继续）
                     → 结果差 → reflect_node → agent（修正后重试）
@@ -441,8 +442,32 @@ def should_continue(state: AgentState) -> Literal["validate_tool", "summarizer"]
     return C.NODE_SUMMARIZER
 
 
+def _needs_approval(tool_name: str) -> bool:
+    """工具是否需要人工审批（风险分级，fail-closed）
+
+    规则（渐进式维护）：
+      - metadata.requires_approval=False → 只读查询工具，放行
+      - 未标记 / 未注册 → 需要审批（新工具默认保守拦截，确认只读后补标 False）
+      - True → 需要审批（写操作/风险工具）
+
+    Args:
+        tool_name: 工具注册名（如 "search_wiki"）
+
+    Returns:
+        True 表示调用前必须人工审批
+    """
+    meta = registry.get_metadata(tool_name)
+    if meta is None:
+        return True  # 工具未注册（理论上不会出现，fail-closed 兜底）
+    return bool(meta.get(C.METADATA_REQUIRES_APPROVAL, True))
+
+
 def human_approval_node(state: AgentState) -> dict:
-    """人工审批节点：工具调用前暂停，等待用户批准或拒绝
+    """人工审批节点：有风险工具调用前暂停，等待用户批准或拒绝
+
+    风险分级审批（方案 A）：
+      - 本轮 tool_calls 全部为只读工具 → 直接放行（返回 {}，走批准路径执行工具）
+      - 只要有一个工具需要审批（未标记或 requires_approval=True）→ interrupt() 拦整轮
 
     通过 interrupt() 暂停图执行。用户审批结果通过 Command(resume=...) 恢复。
     批准后 → 状态不变 → should_after_approval 路由到 tools 节点
@@ -451,6 +476,12 @@ def human_approval_node(state: AgentState) -> dict:
     last_msg = state[C.STATE_MESSAGES][-1]
     tool_calls = getattr(last_msg, "tool_calls", [])
     if not tool_calls:
+        return {}
+
+    # 风险分级：全部只读 → 直接放行，不 interrupt（省去每轮弹窗）
+    if not any(_needs_approval(tc["name"]) for tc in tool_calls):
+        logger.info(C.LOG_APPROVAL_SKIP, "-",
+                    [tc["name"] for tc in tool_calls])
         return {}
 
     # 暂停图，等待人工审批
@@ -462,7 +493,7 @@ def human_approval_node(state: AgentState) -> dict:
         ],
     })
 
-    if approval and approval.get(C.FIELD_APPROVAL):
+    if approval and approval.get(C.FIELD_APPROVED):
         # 批准：不修改状态，后续 should_after_approval 路由到 tools
         logger.info(C.LOG_APPROVAL_RESUMED, "approve", "approved")
         return {}
@@ -499,10 +530,10 @@ def should_after_validate(state: AgentState) -> Literal["approve", "agent", "sum
     从 self_correction 读取校验结果：
       - step_limit_reached → summarizer（强制输出当前最优解后结束）
       - correction_reason 存在 → agent（带着校验消息回 agent 重新思考）
-      - validated=True → approve（通过校验，进入人工审批）
+      - validated=True → approve（进入审批节点；节点内部按工具风险分级决定是否真正 interrupt）
 
     Returns:
-        "approve" — 校验通过，进入人工审批
+        "approve" — 校验通过，进入审批节点（只读工具放行，风险工具拦审批）
         "agent" — 需要重新思考（重复/低置信）
         "summarizer" — 步数超限，强制结束
     """
