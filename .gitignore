@@ -282,3 +282,6 @@ test_checkpoints.db*
 
 # Temp debug files
 .claude/tmp_*
+
+# Clowder skill 下载产物（锁文件已入库，产物不入库）
+.agents/

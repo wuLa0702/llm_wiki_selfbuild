@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "langgraph-python-quickstart": {
+      "source": "langchain-ai/langchain-skills",
+      "sourceType": "github",
+      "skillPath": "config/skills/langgraph-python-quickstart/SKILL.md",
+      "computedHash": "fa638ecd264eb6f61c9c2233b3f44ffce70b00ed76b5d542c323a5e260f31000"
+    }
+  }
+}
