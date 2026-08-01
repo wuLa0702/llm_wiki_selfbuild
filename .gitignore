@@ -235,6 +235,8 @@ wiki.spec
 user_settings.json
 .codemoss/
 .playwright-mcp/
+# 任意层级 node_modules（含根目录 Vite 缓存）
+node_modules/
 wiki-ui/node_modules/
 wiki-ui/dist/
 
