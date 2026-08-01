@@ -1,0 +1,56 @@
+# 阶段测试报告 — Phase 2 管理链路 + 前端核心页面
+
+| 项 | 值 |
+|----|----|
+| 阶段 | Phase 2 — 管理链路 + 前端核心页面（M3 + M4） |
+| 执行时间 | 2026-08-01 |
+| 执行人 | [ui-deepseek-flash/deepseek-v4-flash🐾] + [后端_v4_flash/deepseek-v4-flash🐾] |
+| 基线 | 后端 738 passed / 前端 24 passed（5 文件） |
+
+## 一、覆盖范围
+
+对应 TEST-PLAN.md Phase 2，模块 M3（管理链路）+ M4（前端核心页面）：
+
+1. **reset-data**：数据表清空、配置表保留、schema 保留、agent_persistence 表级清理（连接持有场景）
+2. **日志轮转**：DailySizeRotatingFileHandler（按日 + 100MB 双重切片 / 保留 15 天）、LOG_ENABLED 默认开
+3. **/v1/logs/tail**：backend/frontend 双源、lines 限制（1~2000）、文件缺失容错
+4. **前端 SourcesPage**：单文件/文件夹（webkitdirectory）上传分支、队列面板（活跃/失败 badge）、预览 403 错误显示、toast 文案、logger 调用
+5. **前端 SettingsPage**：数据管理双重确认流程、执行日志 tab（切换/刷新/空态/轮询）
+
+## 二、执行结果
+
+| 层 | 新增用例 | 全量用例 | 通过 | 失败 | 通过率 |
+|----|---------|---------|------|------|--------|
+| 后端 | 19（test_system_routes 2 + test_logging_config 13 + test_logs_tail 4） | 738 | 738 | 0 | 100% |
+| 前端 | 29（SourcesPage 17 + SettingsPage 12） | **53** | 53 | 0 | 100% |
+
+新增测试文件：
+- `tests/test_api/test_system_routes.py`（2 用例）：reset-data 数据/配置边界
+- `tests/test_core/test_logging_config.py`（13 用例）：双重轮转 / LOG_ENABLED / 文件缺失容错
+- `tests/test_api/test_logs_tail.py`（4 用例）：backend/frontend 双源 / lines 限制
+- `wiki-ui-v2/src/pages/__tests__/SourcesPage.test.tsx`（17 用例）
+- `wiki-ui-v2/src/pages/__tests__/SettingsPage.test.tsx`（12 用例）
+
+前端用例 24 → 53，**超过验收线 ~40+**；tsc 0 错误。
+
+## 三、发现的问题
+
+| # | 严重度 | 问题 | 状态 |
+|---|--------|------|------|
+| 1 | P1 | **reset-data 初版删文件方案数据残留**：运行实例持有 SQLite 连接时，Windows 下删文件会被连接进程重建并写回旧数据（实测残留 12 threads / 28 messages）→ 改表级清理（DELETE 行保留表结构） | 已修（commit `c6089aa`） |
+| 2 | P3 | 观察项：执行日志 tab 切换「自动刷新」checkbox 会触发一次立即加载（effect 依赖重跑），非 bug 但可优化 | 观察（行为可接受） |
+
+## 四、验证证据
+
+- 全量回归：`pytest` → **738 passed**；`vitest run` → **53 passed（7 文件）**；`tsc -b` → 0 错误
+- 前端测试要点：上传分支验证 FormData 文件名（单文件原名 / 文件夹 webkitRelativePath）、队列「2 活跃」「1 失败」badge、预览 403 不再静默空白、删除级联 toast 计数、提取「未变化 → 确认强制 → force=true 二次调用」、数据管理「弹窗确认 → 输入『确认』→ POST /v1/system/reset-data」、日志 10s 轮询与自动刷新开关
+- 真实环境验证（后端猫）：ingest 冒烟 3 页面 + 图谱重建 + 配置保留（14 配置 / 42 模型 / 10 隐私规则）
+
+## 五、遗留事项
+
+- **8766 端口旧实例仍在运行**（无 reset-data 路由、持有连接会继续写数据），需重启服务
+- 旧 Jinja2 模板 `settings.html` 仍只挂全量 `/reset`，与新版 React「数据管理」入口不一致——一致性改造可另起任务（本次不做，避免破坏既有行为）
+
+## 六、结论
+
+✅ **达成**：后端全量绿 + 前端 53 用例绿（≥ ~40 验收线）+ tsc 0 错误。可进入 Phase 3。
