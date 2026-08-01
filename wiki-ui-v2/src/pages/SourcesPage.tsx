@@ -9,6 +9,7 @@ import { Sheet, SheetContent, SheetClose } from '@/components/ui/sheet';
 import { showToast } from '@/components/shared/Toast';
 import MarkdownRenderer from '@/components/shared/MarkdownRenderer';
 import EmptyState from '@/components/shared/EmptyState';
+import { logInfo, logWarn, logError } from '@/utils/logger';
 
 /* ─── Types ─── */
 
@@ -205,8 +206,8 @@ export default function SourcesPage() {
     setLoading(true);
     fetch('/v1/sources/tree')
       .then(r => r.json())
-      .then(d => { setTree(d.tree || []); setLoading(false); })
-      .catch(() => { showToast('加载文件树失败', 'error'); setLoading(false); });
+      .then(d => { setTree(d.tree || []); setLoading(false); logInfo('SourcesPage', `文件树加载完成 | files=${d.total_files ?? 0}`); })
+      .catch(() => { showToast('加载文件树失败', 'error'); logWarn('SourcesPage', '加载文件树失败'); setLoading(false); });
   };
 
   useEffect(() => { loadTree(); }, []);
@@ -220,7 +221,7 @@ export default function SourcesPage() {
       ]).then(([recent, status]) => {
         setJobs(recent.jobs || []);
         setQueueProgress(status);
-      }).catch(() => {});
+      }).catch(() => logWarn('SourcesPage', '导入队列轮询失败'));
     };
     fetchQueue();
     const id = setInterval(fetchQueue, 5000);
@@ -245,8 +246,16 @@ export default function SourcesPage() {
       if (d.content !== undefined) {
         setFileContent(d.content);
         setFileSize(d.size > 10240 ? `${(d.size/1024).toFixed(1)} KB` : `${d.size} B`);
+        logInfo('SourcesPage', `预览文件 | path=${path} size=${d.size}`);
+      } else {
+        // 403/404：不再静默空白（2026-08-01 修复）
+        showToast(`预览失败：${d.error || '无法读取文件'}`, 'error');
+        logWarn('SourcesPage', `预览文件失败 | path=${path} resp=${JSON.stringify(d).slice(0, 200)}`);
       }
-    } catch { showToast('加载文件内容失败', 'error'); }
+    } catch (e) {
+      showToast('加载文件内容失败', 'error');
+      logError('SourcesPage', e, `预览文件 path=${path}`);
+    }
     setPreviewLoading(false);
   };
 
@@ -256,11 +265,12 @@ export default function SourcesPage() {
       const r = await fetch(`/v1/sources/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
       const d = await r.json();
       if (d.status === 'deleted') {
+        logInfo('SourcesPage', `删除源文件 | path=${path} wiki_pages_deleted=${d.wiki_pages_deleted ?? 0}`);
         showToast(`已删除，级联删除 ${d.wiki_pages_deleted} 个页面`, 'success');
         if (selectedFile === path) { setSelectedFile(null); setFileContent(''); }
         loadTree();
       }
-    } catch { showToast('删除请求失败', 'error'); }
+    } catch (e) { showToast('删除请求失败', 'error'); logError('SourcesPage', e, `删除 path=${path}`); }
   };
 
   const extractFile = async (path: string, force = false) => {
@@ -295,6 +305,7 @@ export default function SourcesPage() {
       });
       const d = await r.json();
       if (d.status === 'skipped') {
+        logInfo('SourcesPage', `提取跳过（未变化）| path=${path}`);
         showToast('文件内容无变化，已跳过。勾选"强制生成"可重新提取。', 'info');
       } else if (d.status === 'ok' || d.status === 'success') {
         const created = d.pages_created?.length || 0;
@@ -302,12 +313,17 @@ export default function SourcesPage() {
         const parts = [];
         if (created) parts.push(`${created} 创建`);
         if (updated) parts.push(`${updated} 更新`);
+        logInfo('SourcesPage', `提取成功 | path=${path} created=${created} updated=${updated}`);
         showToast(`提取完成：${parts.join(' · ') || '无变更'}`, 'success');
         loadTree();
       } else if (d.error) {
+        logWarn('SourcesPage', `提取失败 | path=${path} detail=${d.detail || d.error}`);
         showToast(`提取失败：${d.error}`, 'error');
       }
-    } catch { showToast('提取请求失败', 'error'); }
+    } catch (e) {
+      showToast('提取请求失败', 'error');
+      logError('SourcesPage', e, `提取 path=${path}`);
+    }
     setPreviewLoading(false);
   };
 
@@ -328,14 +344,17 @@ export default function SourcesPage() {
       const d = await r.json();
       if (d.status === 'ok') {
         setFileContent(editContent);
+        logInfo('SourcesPage', `编辑保存成功 | path=${selectedFile} ${d.message || ''}`);
         showToast(d.message || '保存成功', 'success');
         setEditing(false);
         loadTree();
       } else {
         showToast(d.error || '保存失败', 'error');
+        logWarn('SourcesPage', `编辑保存失败 | path=${selectedFile} resp=${JSON.stringify(d).slice(0, 200)}`);
       }
-    } catch {
+    } catch (e) {
       showToast('保存请求失败', 'error');
+      logError('SourcesPage', e, `编辑保存 path=${selectedFile}`);
     }
     setSaving(false);
   };
@@ -343,27 +362,39 @@ export default function SourcesPage() {
   const uploadFiles = (files: FileList | null, useRelativePath: boolean) => {
     if (!files?.length) return;
     const fd = new FormData();
+    const names: string[] = [];
     for (let i = 0; i < files.length; i++) {
-      fd.append('files', files[i], useRelativePath
+      const relName = useRelativePath
         ? (files[i] as any).webkitRelativePath || files[i].name
-        : files[i].name);
+        : files[i].name;
+      fd.append('files', files[i], relName);
+      names.push(relName);
     }
+    logInfo('SourcesPage', `上传 ${files.length} 个文件 | mode=${useRelativePath ? 'folder' : 'file'} names=${names.join(', ').slice(0, 300)}`);
     showToast(`上传 ${files.length} 个文件...`, 'info');
     fetch('/v1/ingest/upload', { method: 'POST', body: fd })
       .then(r => r.json())
       .then(d => {
-        showToast(`上传完成，${d.saved || 0} 个文件已加入队列`, 'success');
+        if (d.error) {
+          showToast(`上传失败：${d.error}`, 'error');
+          logError('SourcesPage', new Error(d.error), `上传响应 ${JSON.stringify(d).slice(0, 200)}`);
+          return;
+        }
+        // 文案修正：saved=已保存到磁盘，enqueued=已入队（≠ 已完成提取）
+        showToast(`已上传 ${d.saved || 0} 个文件，${d.enqueued || 0} 个已加入队列`, 'success');
+        logInfo('SourcesPage', `上传成功 | saved=${d.saved} enqueued=${d.enqueued} skipped_unchanged=${d.skipped_unchanged ?? 0}`);
         setTimeout(loadTree, 1000);
       })
-      .catch(() => showToast('上传失败', 'error'));
+      .catch(e => { showToast('上传失败', 'error'); logError('SourcesPage', e, 'POST /v1/ingest/upload'); });
   };
 
   const retryJob = async (jobId: string) => {
     try {
       const r = await fetch(`/v1/ingest/queue/retry/${jobId}`, { method: 'POST' });
       const d = await r.json();
-      if (d.status === 'ok') showToast('已重新加入队列', 'success');
-    } catch { showToast('重试请求失败', 'error'); }
+      if (d.status === 'ok') { showToast('已重新加入队列', 'success'); logInfo('SourcesPage', `重试任务 | job=${jobId}`); }
+      else logWarn('SourcesPage', `重试任务失败 | job=${jobId} resp=${JSON.stringify(d).slice(0, 200)}`);
+    } catch (e) { showToast('重试请求失败', 'error'); logError('SourcesPage', e, `重试 job=${jobId}`); }
   };
 
   const clearFailed = async () => {
@@ -371,7 +402,8 @@ export default function SourcesPage() {
       const r = await fetch('/v1/ingest/queue/failed', { method: 'DELETE' });
       const d = await r.json();
       showToast(`已清理 ${d.deleted || 0} 条失败记录`, 'success');
-    } catch { showToast('清理请求失败', 'error'); }
+      logInfo('SourcesPage', `清理失败记录 | deleted=${d.deleted ?? 0}`);
+    } catch (e) { showToast('清理请求失败', 'error'); logError('SourcesPage', e, '清空失败记录'); }
   };
 
   const renderItem = (items: SourceItem[], depth = 0): React.ReactNode => (
@@ -450,7 +482,15 @@ export default function SourcesPage() {
           </div>
         </div>
         <input type="file" ref={fileInputRef} className="hidden" multiple onChange={e => uploadFiles(e.target.files, false)} />
-        <input type="file" ref={folderInputRef} className="hidden" multiple onChange={e => uploadFiles(e.target.files, true)} />
+        {/* webkitdirectory：文件夹选择（修复 2026-08-01 — 此前缺该属性导致两按钮都是选单文件） */}
+        <input
+          type="file"
+          ref={folderInputRef}
+          className="hidden"
+          multiple
+          {...({ webkitdirectory: '' } as any)}
+          onChange={e => uploadFiles(e.target.files, true)}
+        />
 
         <div className="flex-1 overflow-y-scroll py-1">
           {loading ? (

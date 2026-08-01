@@ -128,6 +128,8 @@ class FolderImporter:
         folder_path: str,
         ingest_queue,
         recurse: bool = True,
+        only_changed: bool = False,
+        cache=None,
     ) -> dict:
         """
         异步导入文件夹 — 文件加入 IngestQueue 逐个处理
@@ -136,9 +138,11 @@ class FolderImporter:
             folder_path: 文件夹路径（相对于 raw/sources/）
             ingest_queue: IngestQueue 实例
             recurse: 是否递归子目录
+            only_changed: 只入队内容已变化的文件（对比 ingest_cache，避免全量重入队）
+            cache: IngestCache 实例（only_changed=True 时使用，None 则内部创建）
 
         Returns:
-            {"total": 12, "enqueued": 12, "queue_id": "xxx"}
+            {"total": 12, "enqueued": 12, "queue_id": "xxx", "skipped_unchanged": 0}
         """
         files = self._scan_folder(folder_path, recurse)
         if not files:
@@ -146,6 +150,22 @@ class FolderImporter:
 
         folder_name = os.path.basename(folder_path.rstrip("/\\"))
         context = {"folder": folder_name}
+
+        # 增量模式：过滤掉内容未变化的文件（新文件/变化文件才入队）
+        skipped_unchanged = 0
+        if only_changed:
+            if cache is None:
+                from src.core.cache import IngestCache
+                cache = IngestCache(sources_dir=self.sources_dir)
+            changed_files = [f for f in files if cache.has_changed(f)]
+            skipped_unchanged = len(files) - len(changed_files)
+            files = changed_files
+            if skipped_unchanged:
+                logger.info(
+                    "文件夹异步导入 | 跳过未变化文件=%d folder=%s", skipped_unchanged, folder_name,
+                )
+            if not files:
+                return {"total": 0, "enqueued": 0, "skipped_unchanged": skipped_unchanged}
 
         enqueued = 0
         job_ids: list[str] = []
@@ -160,6 +180,7 @@ class FolderImporter:
             "enqueued": enqueued,
             "job_ids": job_ids,
             "folder_name": folder_name,
+            "skipped_unchanged": skipped_unchanged,
         }
 
     # ------------------------------------------------------------------
@@ -177,7 +198,9 @@ class FolderImporter:
         Returns:
             相对路径列表，如 ["llm-papers/transformer.md", ...]
         """
-        full_path = os.path.join(self.sources_dir, folder_path)
+        # normpath 消除 "./" 等冗余路径段（修复 2026-08-01：
+        # folder_path="." 时 os.walk 的 root 带 "/./"，导致 rel 路径以 "./" 开头）
+        full_path = os.path.normpath(os.path.join(self.sources_dir, folder_path))
         if not os.path.isdir(full_path):
             logger.warning("文件夹不存在 | path=%s", full_path)
             return []

@@ -180,3 +180,52 @@ def test_import_folder_async_enqueues(sources_dir, importer, mocker):
     assert result["total"] == 2
     assert result["enqueued"] == 2
     assert mock_queue.enqueue.call_count == 2
+
+
+def test_scan_folder_root_no_dot_prefix(sources_dir, importer):
+    """扫描根目录（"."）时返回路径不应带 ./ 前缀（修复 2026-08-01）"""
+    (sources_dir / "a.md").write_text("# A", encoding="utf-8")
+    (sources_dir / "sub").mkdir()
+    (sources_dir / "sub" / "b.md").write_text("# B", encoding="utf-8")
+
+    files = importer._scan_folder(".")
+
+    assert "a.md" in files
+    assert "sub/b.md" in files
+    assert not any(f.startswith("./") for f in files), f"不应有 ./ 前缀: {files}"
+    assert not any("/." in f for f in files), f"不应有 /. 路径段: {files}"
+
+
+def test_import_folder_async_only_changed(sources_dir, importer, mocker):
+    """only_changed=True 时只入队缓存未命中的文件（新文件/已变化文件）"""
+    from src.core.cache import IngestCache
+
+    (sources_dir / "a.md").write_text("# A", encoding="utf-8")  # 新文件 → 入队
+    (sources_dir / "b.md").write_text("# B", encoding="utf-8")
+
+    # 先模拟 b.md 已处理过（写入缓存）
+    cache = IngestCache(db_path=str(sources_dir.parent.parent / "test_cache.db"),
+                        sources_dir=str(sources_dir))
+    cache.mark_ingested("b.md")
+
+    mock_queue = mocker.MagicMock()
+    mock_queue.enqueue.return_value = "job_x"
+
+    result = importer.import_folder_async(".", mock_queue, recurse=True, only_changed=True, cache=cache)
+
+    assert result["total"] == 1, f"应只统计新文件: {result}"
+    assert result["enqueued"] == 1
+    enqueued_paths = [c.args[0] for c in mock_queue.enqueue.call_args_list]
+    assert "a.md" in enqueued_paths
+    assert "b.md" not in enqueued_paths
+
+
+def test_import_folder_async_no_cache_param_keeps_behavior(sources_dir, importer, mocker):
+    """不带 only_changed/cache 参数时行为不变（全量入队）"""
+    (sources_dir / "a.md").write_text("# A", encoding="utf-8")
+    (sources_dir / "b.md").write_text("# B", encoding="utf-8")
+
+    mock_queue = mocker.MagicMock()
+    result = importer.import_folder_async(".", mock_queue)
+
+    assert result["enqueued"] == 2

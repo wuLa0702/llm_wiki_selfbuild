@@ -192,21 +192,28 @@ async def ingest_upload(request: Request):
             with open(full_path, "wb") as fh:
                 fh.write(content)
             saved += 1
+            logger.info("上传文件已保存 | path=%s size=%d", safe_path, len(content))
         except Exception as e:
             logger.error("保存上传文件失败 | path=%s error=%s", safe_path, e)
 
     if saved == 0:
         return JSONResponse(content={"saved": 0, "message": "没有文件被保存"})
 
-    # 异步导入
+    # 异步导入 — only_changed=True：只入队新上传/已变化的文件，
+    # 避免把整个 raw/sources/ 全量重入队（修复 2026-08-01 重复任务堆积）
     queue = get_ingest_queue()
     if queue is None:
         return JSONResponse(status_code=503, content={"saved": saved, "error": "Queue not ready", "detail": "init_services() may not have completed"})
     from src.core.ingest import FolderImporter
     importer = FolderImporter()
-    result = importer.import_folder_async(".", queue, recurse=True)
+    result = importer.import_folder_async(".", queue, recurse=True, only_changed=True)
+    logger.info(
+        "上传完成 | saved=%d enqueued=%d skipped_unchanged=%d",
+        saved, result.get("enqueued", 0), result.get("skipped_unchanged", 0),
+    )
     return JSONResponse(content={
         "saved": saved,
         "total": result.get("total", 0),
         "enqueued": result.get("enqueued", 0),
+        "skipped_unchanged": result.get("skipped_unchanged", 0),
     })

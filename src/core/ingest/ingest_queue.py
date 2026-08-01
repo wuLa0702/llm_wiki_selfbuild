@@ -324,9 +324,17 @@ class IngestQueue:
 
     def _worker_loop(self) -> None:
         """后台轮询，串行处理任务"""
+        tick = 0
         while not self._stop_event.is_set():
             try:
                 self.process_next()
             except Exception as exc:
                 logger.error("IngestQueue 工作循环异常 | %s", exc)
             self._stop_event.wait(self.poll_interval)
+            # 心跳日志：每 60 轮输出一次队列状态（排查"队列一直活跃未消费"问题）
+            tick += 1
+            if tick % 60 == 0:
+                try:
+                    logger.info("IngestQueue 心跳 | %s", self.progress())
+                except Exception:
+                    pass

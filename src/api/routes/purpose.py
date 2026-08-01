@@ -192,9 +192,11 @@ def _resolve_display_path(path: str) -> tuple[str | None, int | None]:
     Returns:
         (abs_path, None) 或 (None, status_code)
     """
-    wiki_dir = get_wiki_dir()
-    raw_dir = get_raw_dir()
-    app_dir = get_app_dir()
+    # normpath 统一分隔符（修复 2026-08-01：Path.cwd() 返回正斜杠、
+    # os.path.join 返回反斜杠，混合分隔符导致 startswith 误判 403）
+    wiki_dir = os.path.normpath(get_wiki_dir())
+    raw_dir = os.path.normpath(get_raw_dir())
+    app_dir = os.path.normpath(get_app_dir())
 
     if path == "purpose.md":
         return os.path.join(app_dir, "purpose.md"), None
@@ -210,6 +212,14 @@ def _resolve_display_path(path: str) -> tuple[str | None, int | None]:
         rel = path[4:]
         abs_path = os.path.normpath(os.path.join(raw_dir, rel))
         if not abs_path.startswith(raw_dir):
+            return None, 403
+        return abs_path, None
+
+    # 兼容旧版文件树返回的 sources/xxx 格式（2026-08-01 起 tree 返回 raw/sources/xxx）
+    if path.startswith("sources/"):
+        rel = path[len("sources/"):]
+        abs_path = os.path.normpath(os.path.join(raw_dir, "sources", rel))
+        if not abs_path.startswith(os.path.normpath(os.path.join(raw_dir, "sources"))):
             return None, 403
         return abs_path, None
 

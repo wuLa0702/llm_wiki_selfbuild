@@ -13,7 +13,7 @@ import { showToast } from '@/components/shared/Toast';
 import { useTheme } from '@/hooks/useTheme';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Package, Timer, FileText, Network as NetworkIcon, ListTodo } from 'lucide-react';
+import { Package, Timer, FileText, Network as NetworkIcon, ListTodo, ScrollText } from 'lucide-react';
 import { fetchJson, postJson, putJson, deleteJson } from '@/api/client';
 import { listModels, createModel, updateModel, deleteModel } from '@/api/models';
 import type { ModelConfig } from '@/api/models';
@@ -32,6 +32,7 @@ const settingsTabs = [
   { key: 'purpose', label: '知识库目标', icon: Target },
   { key: 'health', label: '健康检查', icon: Activity },
   { key: 'data', label: '数据管理', icon: Trash2 },
+  { key: 'logs', label: '执行日志', icon: ScrollText },
 ];
 
 const SEARCH_METHODS = [
@@ -217,6 +218,7 @@ export default function SettingsPage() {
             {tab === 'purpose' && <PurposeSettings />}
             {tab === 'health' && <HealthSettings />}
             {tab === 'data' && <DataSettings />}
+            {tab === 'logs' && <LogsSettings />}
             <div className="h-4" /> {/* 底部间距 */}
           </div>
           <SettingsSaveBar />
@@ -1432,6 +1434,112 @@ function DataSettings() {
 
       <p className="text-xs text-muted-foreground mt-4">
         💡 重置完成后建议重启服务，系统将自动重建图谱与向量索引。
+      </p>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────
+   10. 执行日志（对接 /v1/logs/tail）
+   后端 wiki.log + 前端 frontend.log 尾部查看，10s 自动刷新
+   ────────────────────────────────────────────── */
+
+const LOG_SOURCES = [
+  { key: 'backend', label: '后端日志', file: 'logs/wiki.log' },
+  { key: 'frontend', label: '前端日志', file: '.logs/frontend.log' },
+] as const;
+
+function LogsSettings() {
+  const [source, setSource] = useState<'backend' | 'frontend'>('backend');
+  const [content, setContent] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const preRef = useRef<HTMLPreElement>(null);
+
+  const loadLogs = useCallback(async (src: 'backend' | 'frontend' = source) => {
+    setLoading(true);
+    try {
+      const r = await fetch(`/v1/logs/tail?source=${src}&lines=300`);
+      const d = await r.json();
+      setContent(d.content || '');
+      setError('');
+      if (!d.content) setError('暂无日志（日志文件不存在或日志未开启）');
+    } catch (e) {
+      setError('读取日志失败');
+    }
+    setLoading(false);
+  }, [source]);
+
+  // 首次加载 + 10s 自动轮询
+  useEffect(() => {
+    void loadLogs(source);
+    const id = setInterval(() => {
+      if (autoRefresh) void loadLogs(source);
+    }, 10000);
+    return () => clearInterval(id);
+  }, [source, autoRefresh, loadLogs]);
+
+  // 内容变化时滚到底部
+  useEffect(() => {
+    if (preRef.current) preRef.current.scrollTop = preRef.current.scrollHeight;
+  }, [content]);
+
+  return (
+    <div className="p-6 flex flex-col min-h-0 max-w-3xl">
+      <h2 className="text-lg font-semibold mb-1">执行日志</h2>
+      <p className="text-sm text-muted-foreground mb-4">查看后端 / 前端运行日志，方便排查导入、队列等问题</p>
+
+      <div className="flex items-center gap-2 mb-3">
+        {LOG_SOURCES.map(s => (
+          <Button
+            key={s.key}
+            size="sm"
+            variant={source === s.key ? 'default' : 'outline'}
+            onClick={() => setSource(s.key)}
+          >
+            {s.label}
+          </Button>
+        ))}
+        <div className="flex-1" />
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+          <input
+            type="checkbox"
+            checked={autoRefresh}
+            onChange={e => setAutoRefresh(e.target.checked)}
+            className="accent-blue-500"
+          />
+          自动刷新
+        </label>
+        <Button size="sm" variant="outline" onClick={() => void loadLogs()} disabled={loading}>
+          <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} />
+          刷新
+        </Button>
+      </div>
+
+      <div className="rounded-md border border-border bg-muted/30 overflow-hidden">
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-muted/50">
+          <span className="text-[10px] text-muted-foreground font-mono">
+            {LOG_SOURCES.find(s => s.key === source)?.file}
+          </span>
+          <span className="text-[10px] text-muted-foreground/50">最近 300 行 · 10s 刷新</span>
+        </div>
+        <pre
+          ref={preRef}
+          className="text-[11px] font-mono leading-relaxed p-3 overflow-auto max-h-[480px] whitespace-pre-wrap break-all"
+        >
+          {error && !content ? (
+            <span className="text-muted-foreground">{error}</span>
+          ) : content ? (
+            content
+          ) : (
+            <span className="text-muted-foreground">加载中...</span>
+          )}
+        </pre>
+      </div>
+
+      <p className="text-xs text-muted-foreground mt-3">
+        💡 日志按日 + 100MB 双重切片，保留 15 天。可在 config.yaml 中通过 LOG_ENABLED 开关。
       </p>
     </div>
   );

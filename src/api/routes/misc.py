@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from src.app_state import get_watcher, set_watcher
 from src.core.privacy import PrivacyManager
 from src.utils.config_manager import is_configured, load_config, save_config
-from src.utils.path_resolver import get_raw_sources_dir
+from src.utils.path_resolver import get_log_dir, get_raw_sources_dir
 from src.core.token_tracker import TokenTracker
 from src.core.compiler import WikiCompiler
 from src.models.common import (HealthResponse, PrivacyRuleListResponse,
@@ -618,3 +618,37 @@ async def ingest_frontend_logs(batch: FrontendLogBatch):
     except Exception as exc:  # 日志写入失败不能影响前端
         logger.warning("前端日志写入失败: %s", exc)
         return {"status": "error", "written": 0}
+
+
+@router.get("/v1/logs/tail", tags=["diagnostics"])
+async def logs_tail(source: str = "backend", lines: int = 200):
+    """读取日志尾部（执行日志查看器用）
+
+    Args:
+        source: backend（logs/wiki.log）或 frontend（.logs/frontend.log）
+        lines: 返回行数（1~2000）
+
+    Returns:
+        {"source": ..., "content": "最后 N 行日志"}
+    """
+    import os
+    from collections import deque
+
+    lines = max(1, min(int(lines), 2000))
+
+    if source == "frontend":
+        log_path = os.path.normpath(os.path.join(get_log_dir(), "..", ".logs", "frontend.log"))
+    else:
+        log_path = os.path.join(get_log_dir(), "wiki.log")
+
+    if not os.path.isfile(log_path):
+        return {"source": source, "content": "", "path": log_path}
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            content = "".join(deque(f, maxlen=lines))
+    except OSError as exc:
+        logger.warning("读取日志失败 | path=%s error=%s", log_path, exc)
+        return {"source": source, "content": "", "path": log_path}
+
+    return {"source": source, "content": content, "path": log_path}

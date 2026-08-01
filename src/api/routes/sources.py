@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from src.core.logging_config import get_logger
-from src.utils.path_resolver import get_db_path, get_raw_sources_dir, get_wiki_dir
+from src.utils.path_resolver import get_app_dir, get_db_path, get_raw_sources_dir, get_wiki_dir
 
 logger = get_logger("api.routes.sources")
 router = APIRouter(tags=["sources"])
@@ -34,13 +34,17 @@ def _resolve_source_path(rel_path: str) -> tuple[str | None, int | None]:
     # 统一分隔符
     cleaned = rel_path.strip().lstrip("/").replace("\\", "/")
 
-    # 前端传的路径格式是 raw/sources/xxx，去掉前缀
+    # 前端传的路径格式是 raw/sources/xxx（兼容旧版 tree 的 sources/xxx）
     prefix = "raw/sources/"
-    if not cleaned.startswith(prefix) and cleaned != "raw/sources":
+    if cleaned.startswith(prefix):
+        rel = cleaned[len(prefix):]
+    elif cleaned.startswith("sources/"):
+        rel = cleaned[len("sources/"):]
+    elif cleaned == "raw/sources" or cleaned == "sources":
+        rel = ""
+    else:
         logger.warning("路径安全校验失败: %s (不在 raw/sources/ 下)", cleaned)
         return None, 403
-
-    rel = cleaned[len(prefix):] if cleaned != "raw/sources" else ""
     abs_path = os.path.normpath(os.path.join(_safe_base(), rel))
 
     # 防御路径穿越：最终路径必须在 safe_base 内
@@ -78,7 +82,9 @@ def _list_dir(base: str) -> list[dict]:
     for name, typ, data in entries:
         full = os.path.join(base, name)
         # 返回给前端的路径用 raw/sources/xxx 格式（相对 APP_DATA_DIR）
-        rel_to_appdata = os.path.relpath(full, os.path.dirname(base_prefix))
+        # 修复 2026-08-01：此前误用 dirname(base_prefix) 导致返回 sources/xxx，
+        # 与后端校验前缀（raw/sources/）不匹配 → 预览/提取/删除全部 403
+        rel_to_appdata = os.path.relpath(full, get_app_dir())
         display_path = rel_to_appdata.replace("\\", "/")
         if typ == "directory":
             items.append({"name": name, "type": "directory", "path": display_path, "children": data})

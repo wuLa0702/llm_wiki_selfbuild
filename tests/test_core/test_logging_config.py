@@ -38,13 +38,33 @@ def test_get_logger_root():
     assert logger.name == LOGGER_NAME
 
 
-def test_logger_disabled_by_default(mocker):
-    """默认状态下（无环境变量）logger 处于禁用状态"""
+def test_logger_enabled_by_default(mocker, tmp_path):
+    """默认状态下（无环境变量）logger 处于启用状态（2026-08-01 改为默认开启）"""
     mocker.patch.dict(os.environ, {}, clear=True)
+    # LOG_FILE 指向临时文件，避免写入项目真实日志
+    mocker.patch.dict(os.environ, {"LOG_FILE": str(tmp_path / "wiki.log")})
     reset_logging()
     configure_logging()
     logger = get_logger()
-    assert logger.disabled is True
+    assert logger.disabled is False
+
+
+def test_file_handler_rotating_config(mocker, tmp_path):
+    """文件日志使用双重轮转：按日 midnight + 100MB + 保留 15 天"""
+    import logging.handlers as lh
+
+    log_file = str(tmp_path / "wiki.log")
+    mocker.patch.dict(os.environ, {"LOG_ENABLED": "true", "LOG_FILE": log_file})
+    configure_logging()
+
+    logger = get_logger()
+    handlers = [h for h in logger.handlers if isinstance(h, lh.TimedRotatingFileHandler)]
+    assert handlers, f"应有 TimedRotatingFileHandler: {[type(h).__name__ for h in logger.handlers]}"
+
+    h = handlers[0]
+    assert h.when == "MIDNIGHT", f"应按日轮转: {h.when}"
+    assert h.backupCount == 15, f"应保留 15 天: {h.backupCount}"
+    assert h.maxBytes == 100 * 1024 * 1024, f"应按 100MB 切片: {h.maxBytes}"
 
 
 def test_logger_enabled_when_env_set(mocker):
