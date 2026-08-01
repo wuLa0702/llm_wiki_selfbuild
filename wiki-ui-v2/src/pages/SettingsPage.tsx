@@ -31,6 +31,7 @@ const settingsTabs = [
   // { key: 'security', label: '安全', icon: Lock },  // TODO: 安全设置入口暂时关闭，后续功能完善后开放
   { key: 'purpose', label: '知识库目标', icon: Target },
   { key: 'health', label: '健康检查', icon: Activity },
+  { key: 'data', label: '数据管理', icon: Trash2 },
 ];
 
 const SEARCH_METHODS = [
@@ -215,6 +216,7 @@ export default function SettingsPage() {
             {tab === 'security' && <SecuritySettings />}
             {tab === 'purpose' && <PurposeSettings />}
             {tab === 'health' && <HealthSettings />}
+            {tab === 'data' && <DataSettings />}
             <div className="h-4" /> {/* 底部间距 */}
           </div>
           <SettingsSaveBar />
@@ -1320,6 +1322,117 @@ function HealthSettings() {
           </details>
         </>
       )}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────
+   9. 数据管理（重置数据文件，对接 /v1/system/reset-data）
+   区分系统配置与数据文件：只清数据，配置保留
+   ────────────────────────────────────────────── */
+
+function DataSettings() {
+  const [resetting, setResetting] = useState(false);
+  const [armed, setArmed] = useState(false);
+  const [confirmInput, setConfirmInput] = useState('');
+
+  // 第一层：危险操作确认弹窗
+  const handleArm = async () => {
+    const { showConfirm } = await import('@/components/ui/confirm-dialog');
+    const ok = await showConfirm(
+      '重置将永久删除所有数据文件：Wiki 页面与图谱、导入/任务队列、Agent 对话历史、用户输入文件、向量索引。\n\n系统配置（API 密钥、模型配置、schema 规范、隐私规则）将保留。',
+      { title: '重置数据文件', confirmLabel: '继续', variant: 'destructive' },
+    );
+    if (ok) setArmed(true);
+  };
+
+  // 第二层：输入「确认」后执行
+  const executeReset = async () => {
+    setResetting(true);
+    try {
+      await postJson('/v1/system/reset-data');
+      showToast('数据文件已重置，请重启服务', 'success');
+      setArmed(false);
+      setConfirmInput('');
+    } catch {
+      showToast('重置失败，请检查服务', 'error');
+    }
+    setResetting(false);
+  };
+
+  const cancelArm = () => {
+    setArmed(false);
+    setConfirmInput('');
+  };
+
+  return (
+    <div className="p-6 flex flex-col min-h-0 max-w-2xl">
+      <h2 className="text-lg font-semibold mb-1">数据管理</h2>
+      <p className="text-sm text-muted-foreground mb-6">重置数据文件 — 只清数据，系统配置保留</p>
+
+      <SectionHeader title="重置范围" desc="本操作不影响系统配置" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+        <Card className="border-l-3 border-l-red-500 bg-red-500/5">
+          <CardContent className="p-4">
+            <p className="text-xs font-semibold text-destructive mb-2">🗑️ 将删除</p>
+            <ul className="text-xs text-muted-foreground space-y-1">
+              <li>· Wiki 页面与图谱数据</li>
+              <li>· 导入队列 / 任务队列</li>
+              <li>· Agent 对话历史</li>
+              <li>· 用户输入文件（raw/sources）</li>
+              <li>· 向量索引（重启后自动重建）</li>
+            </ul>
+          </CardContent>
+        </Card>
+        <Card className="border-l-3 border-l-green-500 bg-green-500/5">
+          <CardContent className="p-4">
+            <p className="text-xs font-semibold text-green-600 dark:text-green-400 mb-2">✅ 将保留</p>
+            <ul className="text-xs text-muted-foreground space-y-1">
+              <li>· Wiki schema 构建规范</li>
+              <li>· API 密钥与模型配置</li>
+              <li>· 隐私规则与定价表</li>
+              <li>· purpose.md / config.yaml</li>
+            </ul>
+          </CardContent>
+        </Card>
+      </div>
+
+      {!armed ? (
+        <Button variant="destructive" onClick={handleArm} className="w-full">
+          <Trash2 className="h-4 w-4 mr-2" />
+          重置数据文件
+        </Button>
+      ) : (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-4 space-y-3">
+          <p className="text-sm font-medium text-destructive">⚠️ 危险操作 — 数据删除不可恢复</p>
+          <p className="text-xs text-muted-foreground">
+            此操作将永久删除左侧列出的所有数据文件。请输入「确认」两字后执行。
+          </p>
+          <div className="flex gap-2">
+            <Input
+              className="text-sm font-mono"
+              placeholder="输入：确认"
+              value={confirmInput}
+              onChange={e => setConfirmInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && confirmInput === '确认') executeReset(); }}
+            />
+            <Button
+              variant="destructive"
+              onClick={executeReset}
+              disabled={resetting || confirmInput !== '确认'}
+              className="shrink-0"
+            >
+              {resetting ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Trash2 className="h-3.5 w-3.5 mr-1" />}
+              执行重置
+            </Button>
+            <Button variant="outline" onClick={cancelArm} disabled={resetting} className="shrink-0">取消</Button>
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-muted-foreground mt-4">
+        💡 重置完成后建议重启服务，系统将自动重建图谱与向量索引。
+      </p>
     </div>
   );
 }
