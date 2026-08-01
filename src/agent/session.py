@@ -152,7 +152,12 @@ async def chat_stream_session(
     Yields:
         与 chat_stream() 相同的事件格式 + tool_approval_needed
     """
-    config: dict = {C.CONFIG_CONFIGURABLE: {C.CONFIG_THREAD_ID: thread_id}}
+    config: dict = {
+        C.CONFIG_CONFIGURABLE: {C.CONFIG_THREAD_ID: thread_id},
+        # 必须显式设置：默认 25 对本图太小（每轮 7-8 个节点，25 只够 3.5 轮），
+        # 会先于 validate_tool 的 MAX_STEPS 熔断触发 GRAPH_RECURSION_LIMIT
+        "recursion_limit": C.RECURSION_LIMIT,
+    }
 
     # ── Step 0: 检测是否处于 interrupt 状态（需审批恢复） ───────────────
     state_snapshot = agent.get_state(config)

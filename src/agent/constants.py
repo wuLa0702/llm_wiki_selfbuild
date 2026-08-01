@@ -103,6 +103,12 @@ INTENT_CATEGORY_MAP = {
 CONFIG_CONFIGURABLE = "configurable"
 CONFIG_THREAD_ID = "thread_id"
 
+# LangGraph 图执行上限（recursion_limit）
+# 必须 > MAX_STEPS × 每轮节点数(≈7-8)，否则 GRAPH_RECURSION_LIMIT 先于
+# validate_tool 的步数熔断触发，熔断器形同虚设（线上事故：25 默认值只够 3.5 轮）
+# 15 轮 × 8 节点 = 120，留 30 余量
+RECURSION_LIMIT = 150
+
 # astream_events 版本
 ASTREAM_EVENTS_VERSION = "v1"
 
