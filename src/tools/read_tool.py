@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from src.core.logging_config import get_logger
-from src.tools.path_utils import safe_path
+from src.tools.path_utils import _resolve_alias, safe_path
 
 logger = get_logger("read_tool")
 
@@ -33,8 +33,13 @@ class ReadTool:
         """
         Args:
             base_dir: 允许读取的根目录（默认 "raw"），可注入用于测试
+
+        修复 2026-08-01：构造时解析 "wiki"/"raw" 别名 → get_wiki_dir()/get_raw_dir()。
+        此前 base_dir 裸存相对字符串，os.walk(reader.base_dir) 相对 CWD，
+        与写入侧（get_wiki_dir，尊重 LLM_WIKI_DATA_DIR）目录不一致 →
+        LLM_WIKI_DATA_DIR 隔离/打包模式下 /v1/pages、/v1/lint 等读不到数据。
         """
-        self.base_dir = base_dir
+        self.base_dir = _resolve_alias(base_dir)
 
     # ------------------------------------------------------------------
     # 公开方法

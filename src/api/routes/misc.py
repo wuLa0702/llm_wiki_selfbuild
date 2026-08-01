@@ -597,7 +597,10 @@ async def ingest_frontend_logs(batch: FrontendLogBatch):
     if not batch.entries:
         return {"status": "ok", "written": 0}
 
-    log_path = os.path.join(".logs", "frontend.log")
+    # 与 /v1/logs/tail 读取路径保持一致（修复 2026-08-01）：
+    # 此前写入用相对 CWD 的 ".logs/frontend.log"，读取用 get_log_dir()/../.logs/，
+    # 在 LLM_WIKI_DATA_DIR 隔离/打包环境下两处指向不同目录 → 上报后永远读不到。
+    log_path = os.path.normpath(os.path.join(get_log_dir(), "..", ".logs", "frontend.log"))
     try:
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")

@@ -4,7 +4,7 @@
 import os
 
 from src.core.validator import WikiValidator
-from src.tools.path_utils import safe_path
+from src.tools.path_utils import _resolve_alias, safe_path
 
 
 class WriteTool:
@@ -14,8 +14,12 @@ class WriteTool:
         """
         Args:
             base_dir: 允许写入的根目录（默认 "wiki"），可注入用于测试
+
+        修复 2026-08-01：构造时解析 "wiki" 别名 → get_wiki_dir()，
+        与 ReadTool 保持一致（此前 base_dir 裸存相对字符串，依赖 safe_path
+        内部别名解析才能写到正确目录）。
         """
-        self.base_dir = base_dir
+        self.base_dir = _resolve_alias(base_dir)
 
     def write_page(self, relative_path: str, content: str, validate: bool = True) -> str:
         """

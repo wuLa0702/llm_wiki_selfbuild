@@ -364,3 +364,39 @@ class TestErrorPaths:
         tool = ReadTool(base_dir=str(raw_dir))
         with pytest.raises(NotADirectoryError):
             tool.list_directory("nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# 别名解析（2026-08-01 修复：LLM_WIKI_DATA_DIR 隔离模式下读侧目录一致性）
+# ---------------------------------------------------------------------------
+
+
+class TestAliasResolution:
+    """base_dir 别名 "wiki"/"raw" 必须解析到数据目录（尊重 LLM_WIKI_DATA_DIR）"""
+
+    def test_wiki_alias_resolves_to_data_dir(self, monkeypatch, tmp_path):
+        import src.utils.path_resolver as pr
+        app_dir = str(tmp_path)
+        monkeypatch.setattr(pr, "APP_DATA_DIR", app_dir)
+
+        from src.tools.read_tool import ReadTool
+        tool = ReadTool("wiki")
+        expected = os.path.join(app_dir, "wiki")
+        assert os.path.normpath(tool.base_dir) == os.path.normpath(expected), (
+            f"ReadTool('wiki').base_dir 应为 {expected}，实际 {tool.base_dir}"
+        )
+
+    def test_raw_alias_resolves_to_data_dir(self, monkeypatch, tmp_path):
+        import src.utils.path_resolver as pr
+        app_dir = str(tmp_path)
+        monkeypatch.setattr(pr, "APP_DATA_DIR", app_dir)
+
+        from src.tools.read_tool import ReadTool
+        tool = ReadTool("raw")
+        expected = os.path.join(app_dir, "raw")
+        assert os.path.normpath(tool.base_dir) == os.path.normpath(expected)
+
+    def test_absolute_base_dir_untouched(self):
+        from src.tools.read_tool import ReadTool
+        tool = ReadTool(base_dir="/abs/path")
+        assert tool.base_dir == "/abs/path"
