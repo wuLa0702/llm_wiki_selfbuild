@@ -1,0 +1,117 @@
+{
+  "no_llm": false,
+  "checks": [
+    {
+      "name": "L0 健康检查 /health",
+      "ok": true,
+      "detail": "pages=0 graph=1"
+    },
+    {
+      "name": "L0 根路径重定向 / → /wiki",
+      "ok": true,
+      "detail": "status=307 location=/wiki"
+    },
+    {
+      "name": "L1.1 上传入队 /v1/ingest/upload",
+      "ok": true,
+      "detail": "saved=1 enqueued=1"
+    },
+    {
+      "name": "L1.2 队列消费 /v1/ingest/queue/status",
+      "ok": true,
+      "detail": "state={'total': 1, 'pending': 0, 'processing': 0, 'done': 1, 'failed': 0, 'cancelled': 0, 'message': ''}"
+    },
+    {
+      "name": "L1.3 页面生成 /v1/pages",
+      "ok": true,
+      "detail": "pages=2"
+    },
+    {
+      "name": "L2.1 文件树前缀契约 /v1/sources/tree",
+      "ok": true,
+      "detail": "files=1"
+    },
+    {
+      "name": "L2.2 文件预览 /v1/file-content",
+      "ok": true,
+      "detail": "size=197"
+    },
+    {
+      "name": "L2.3 提取预检 /v1/sources/check-changed",
+      "ok": true,
+      "detail": "changed=False"
+    },
+    {
+      "name": "L2.4 资料源分页 /v1/sources",
+      "ok": true,
+      "detail": "total=1"
+    },
+    {
+      "name": "L3.1 BM25 搜索 /v1/search",
+      "ok": true,
+      "detail": "results=0 method=bm25"
+    },
+    {
+      "name": "L3.2 知识库体检 /v1/lint",
+      "ok": true,
+      "detail": "health_score=90"
+    },
+    {
+      "name": "L4.1 图谱数据 /v1/graph",
+      "ok": true,
+      "detail": "nodes=1 edges=0"
+    },
+    {
+      "name": "L4.2 社区发现 /v1/communities",
+      "ok": true,
+      "detail": "communities=1"
+    },
+    {
+      "name": "L4.3 洞察 /v1/insights",
+      "ok": true,
+      "detail": "surprising=0 gaps=0"
+    },
+    {
+      "name": "L5.1 模型列表 /v1/agent/models",
+      "ok": true,
+      "detail": "models=4"
+    },
+    {
+      "name": "L5.2 Chat SSE 流式对话 /v1/agent/chat/session",
+      "ok": true,
+      "detail": "status=200 events=46"
+    },
+    {
+      "name": "L6.1 系统设置 /v1/settings",
+      "ok": true,
+      "detail": "provider=deepseek"
+    },
+    {
+      "name": "L6.2 后端日志 /v1/logs/tail",
+      "ok": true,
+      "detail": "chars=3856"
+    },
+    {
+      "name": "L6.3 前端日志上报 /v1/frontend/logs",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "L6.4 前端日志回读",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "L6.5 数据重置 /v1/system/reset-data",
+      "ok": true,
+      "detail": "数据文件已重置，请手动重启服务"
+    },
+    {
+      "name": "L6.6 重置后数据清空 /v1/pages",
+      "ok": true,
+      "detail": "pages=0"
+    }
+  ],
+  "passed": 22,
+  "total": 22
+}

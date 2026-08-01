@@ -1,0 +1,59 @@
+# 阶段测试报告 — Phase 4 端到端全链路冒烟
+
+| 项 | 值 |
+|----|----|
+| 阶段 | Phase 4 — 端到端冒烟（M6） |
+| 执行时间 | 2026-08-01 |
+| 执行人 | [ui-deepseek-flash/deepseek-v4-flash🐾] |
+| 基线 | 后端 754 passed / 前端 81 passed |
+
+## 一、覆盖范围
+
+对应 TEST-PLAN.md Phase 4：真实服务启动（隔离数据目录）→ 6 条主链路逐条冒烟。
+
+**冒烟脚本**：`scripts/smoke_e2e.py`（可重复执行）
+
+```
+python scripts/smoke_e2e.py           # 全链路（含真实 LLM：ingest/chat）
+python scripts/smoke_e2e.py --no-llm  # 跳过真实 LLM 链路
+```
+
+隔离机制：子进程 uvicorn + `LLM_WIKI_DATA_DIR=临时目录`，不碰生产数据；结果落盘
+`docs/testing/reports/phase-4-e2e-results.json`。
+
+## 二、执行结果
+
+| 链路 | 检查点 | 结果 |
+|------|--------|------|
+| L0 健康 | /health 状态 + / 重定向 /wiki | ✅ 2/2 |
+| L1 导入 | 上传入队 → 队列消费 → 页面生成 | ✅ 3/3 |
+| L2 浏览 | tree 前缀契约 → file-content 预览 → check-changed → sources 分页 | ✅ 4/4 |
+| L3 搜索/Lint | BM25 搜索 → lint 健康分 | ✅ 2/2 |
+| L4 图谱 | graph → communities → insights | ✅ 3/3 |
+| L5 Chat | 模型列表 → SSE 流式对话（真实 LLM，46 事件） | ✅ 2/2 |
+| L6 管理 | settings → 后端日志 → 前端日志上报/回读 → reset-data → 清空验证 | ✅ 6/6 |
+
+**总计：22/22 通过**（真实 LLM 场景：ingest 生成 2 页面 + chat SSE 46 事件）
+
+## 三、发现的问题（冒烟暴露 → 已修复）
+
+| # | 严重度 | 问题 | 状态 |
+|---|--------|------|------|
+| 1 | P0 | **ReadTool/WriteTool base_dir 相对字符串**：`os.walk(reader.base_dir)` 相对 CWD，与写入侧 `get_wiki_dir()`（尊重 LLM_WIKI_DATA_DIR）不一致 → 隔离/打包模式下 `/v1/pages`、`/v1/lint` 读不到任何数据（同步 ingest 成功但 API 返回空） | 已修（`3ba13f5`：构造时 `_resolve_alias` + 3 回归测试） |
+| 2 | P1 | **前端日志上报/回读路径不一致**：misc.py 写入 `CWD/.logs/frontend.log`、读取 `data_dir/.logs/frontend.log` → 上报成功但永远读不到 | 已修（`3ba13f5`：写入端统一路径解析） |
+| 3 | P1 | 冒烟脚本未覆盖 `LOG_FILE`（.env 相对 CWD）→ 隔离实例日志写项目根 | 已修（`3ba13f5`：env 显式指向 data_dir/logs） |
+
+## 四、验证证据
+
+- 冒烟结果：`22/22 通过`（见 phase-4-e2e-results.json）
+- 修复前后对比：L1.3 pages 0 → 2；L6.2 日志 chars 0 → 3856；L6.4 回读 False → True
+- 修复后全量回归：`pytest` → **754 passed**；`vitest run` → **81 passed**；`tsc -b` → 0 错误
+
+## 五、遗留事项
+
+- 无阻塞项。可选：GraphPage insights 防御性空值判断（Phase 3 观察项，非阻塞）
+
+## 六、结论
+
+✅ **达成**：6 条主链路全部通过（含真实 LLM），冒烟暴露的 3 个问题已修复并回归，
+最终全量基线：后端 754 / 前端 81 / tsc 0 错误。
