@@ -363,6 +363,8 @@ class SettingsResponse(BaseModel):
     output_language: str = "zh"
     search_method: str = "bm25"
     theme: str = "light"
+    # 语义搜索（默认关闭；开启后才加载本地 embedding 模型，可热生效）
+    embedding_enabled: bool = False
     # 隐私过滤
     privacy_enabled: bool = False
     # 资料监控

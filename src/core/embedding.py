@@ -5,9 +5,11 @@
   1. wiki_pages — 整页编码（原有，保持兼容）
   2. wiki_chunks — 章节级 chunk 编码（新增，需要 CHUNK_SEARCH_ENABLED）
 
-根据配置开关（EMBEDDING_ENABLED）决定是否启用。
+开关由 DB wiki_settings 的 settings.embedding_enabled 控制（设置页可开关，
+默认关闭，热生效）。关闭时绝不加载本地模型、绝不触发在线下载。
 使用本地模型，无需 API 调用，隐私安全，离线可用。
 """
+import json
 import logging
 import os
 
@@ -20,12 +22,53 @@ logger = logging.getLogger("embedding")
 
 _engine: "EmbeddingEngine | None" = None
 
+# sentence-transformers 模型必需的权重文件（任一存在即可）
+_MODEL_WEIGHT_FILES = ("model.safetensors", "pytorch_model.bin", "tf_model.h5")
+
+
+def _is_enabled_from_db() -> bool:
+    """从 DB wiki_settings 读取语义搜索开关（默认关闭，env 已废弃）
+
+    设置页保存后即时生效（热生效），无需重启服务。
+    """
+    try:
+        from src.db.repository import WikiRepository
+
+        raw = WikiRepository().get_setting("settings.embedding_enabled")
+        if raw is None:
+            return False
+        return bool(json.loads(raw))
+    except Exception:
+        logger.warning("读取 embedding 开关失败，默认关闭")
+        return False
+
+
+def _is_model_complete(model_path: str) -> bool:
+    """检查本地模型目录完整性（需 config.json + 任一权重文件）
+
+    防止空目录放行：isdir 通过但模型缺失时，若不加检查会触发
+    SentenceTransformer 在线下载（可挂死 worker）。
+    """
+    if not os.path.isdir(model_path):
+        return False
+    if not os.path.exists(os.path.join(model_path, "config.json")):
+        return False
+    return any(
+        os.path.exists(os.path.join(model_path, w)) for w in _MODEL_WEIGHT_FILES
+    )
+
 
 def get_embedding_engine() -> "EmbeddingEngine":
-    """获取全局 EmbeddingEngine 单例"""
+    """获取全局 EmbeddingEngine 单例（开关从 DB 读，热生效）
+
+    关闭时返回禁用引擎（所有方法安全 no-op），不加载本地模型。
+    """
     global _engine
+    if not _is_enabled_from_db():
+        _engine = None
+        return EmbeddingEngine(enabled=False)
     if _engine is None:
-        _engine = EmbeddingEngine()
+        _engine = EmbeddingEngine(enabled=True)
     return _engine
 
 
@@ -39,10 +82,10 @@ class EmbeddingEngine:
     chunk 搜索通过配置 CHUNK_SEARCH_ENABLED 开启关闭，默认关闭。
     """
 
-    def __init__(self) -> None:
-        self.enabled = settings.embedding_enabled
+    def __init__(self, enabled: bool) -> None:
+        self.enabled = enabled
         if not self.enabled:
-            logger.info("Embedding 引擎未启用（EMBEDDING_ENABLED=false）")
+            logger.info("Embedding 引擎未启用（设置页开关关闭）")
             self.client = None
             self.collection = None
             self.chunk_collection = None
@@ -66,9 +109,14 @@ class EmbeddingEngine:
             )
 
             model_path = settings.embedding_model_path
-            if not os.path.isdir(model_path):
-                logger.warning("Embedding 模型路径不存在，尝试在线加载 | path=%s", model_path)
-            self._model = SentenceTransformer(model_path)
+            if not _is_model_complete(model_path):
+                logger.error(
+                    "Embedding 模型不完整（缺 config.json/权重）| path=%s "
+                    "请到设置页关闭语义搜索，或手动补齐模型文件", model_path,
+                )
+                raise ValueError(f"Embedding 模型不完整: {model_path}")
+            # local_files_only=True：本地模型缺失时立即抛错降级，绝不触发在线下载
+            self._model = SentenceTransformer(model_path, local_files_only=True)
             logger.info(
                 "Embedding 引擎已初始化 | dir=%s model=%s chunks=%s",
                 chroma_dir, model_path,

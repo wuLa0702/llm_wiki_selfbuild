@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     debug_max_chars: int = 0
 
     # Embedding 向量搜索（sentence-transformers 本地模型）
+    # 注意：embedding_enabled 已废弃（不再读取）——开关改由 DB wiki_settings
+    # 的 settings.embedding_enabled 控制（设置页可开关、默认关闭、热生效），
+    # 见 src/core/embedding.py 的 _is_enabled_from_db()。
     embedding_enabled: bool = False
     chroma_persist_dir: str = "chroma_db"
     embedding_model_path: str = ".models/all-MiniLM-L6-v2"
