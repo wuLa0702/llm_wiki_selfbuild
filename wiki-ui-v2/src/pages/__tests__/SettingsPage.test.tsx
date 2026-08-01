@@ -290,29 +290,35 @@ describe('SettingsPage — 语义搜索开关（通用设置）', () => {
     vi.useRealTimers();
   });
 
-  it('通用设置显示「启用语义搜索」开关，默认关闭', async () => {
+  it('通用设置显示「启用语义搜索」开关，当前版本禁用并提示暂未开放', async () => {
     renderTab('general');
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
     expect(screen.getByText('启用语义搜索')).toBeInTheDocument();
-    expect(screen.getByText(/关闭时默认不加载本地模型/)).toBeInTheDocument();
+    expect(screen.getByText('暂未开放')).toBeInTheDocument(); // 徽标
+    expect(screen.getByText(/当前版本暂未开放，搜索使用 BM25/)).toBeInTheDocument();
     const sw = screen.getByRole('checkbox');
-    expect(sw).not.toBeChecked(); // embedding_enabled=false 默认关闭
+    expect(sw).toBeDisabled(); // 当前版本语义搜索关闭，开关不可操作
+    expect(sw).not.toBeChecked();
   });
 
-  it('打开开关并保存 → postJson 携带 embedding_enabled=true', async () => {
+  it('开关禁用不可点击，保存其他设置时 embedding_enabled 保持 false', async () => {
     renderTab('general');
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
+    // 开关 disabled：点击无效果
     fireEvent.click(screen.getByRole('checkbox'));
-    expect(screen.getByRole('checkbox')).toBeChecked();
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
 
+    // 修改其他设置制造 dirty 后保存（输出语言切换为英文）
+    fireEvent.click(screen.getByText('English'));
     fireEvent.click(screen.getByRole('button', { name: /保存设置/ }));
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
+    // 当前版本语义搜索关闭：保存时 embedding_enabled 保持 false
     expect(postJson).toHaveBeenCalledWith(
       '/v1/settings',
-      expect.objectContaining({ embedding_enabled: true }),
+      expect.objectContaining({ embedding_enabled: false }),
     );
   });
 });

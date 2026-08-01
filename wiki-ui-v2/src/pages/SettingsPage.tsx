@@ -446,15 +446,22 @@ function GeneralSettings({ settings, setSettings }: BackendTabProps) {
         ))}
       </div>
 
-      <SectionHeader title="语义搜索" desc="基于本地向量模型（sentence-transformers）的语义匹配，首次使用需下载模型（约 90MB）" />
+      <SectionHeader
+        title="语义搜索"
+        desc="⚠️ 当前版本暂未开放（本地向量模型依赖未内置，云服务器资源有限），未来版本启用"
+      />
       <SettingRow
         label="启用语义搜索"
-        desc="关闭时默认不加载本地模型，搜索仅用 BM25 关键词匹配"
+        desc="当前版本暂未开放，搜索使用 BM25 关键词匹配"
       >
-        <Switch
-          checked={settings.embedding_enabled ?? false}
-          onChange={v => update({ embedding_enabled: v })}
-        />
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="text-[10px] text-muted-foreground">暂未开放</Badge>
+          <Switch
+            checked={false}
+            disabled
+            onChange={() => {}}
+          />
+        </div>
       </SettingRow>
 
       <SectionHeader title="搜索方式" desc="默认检索算法（可在检索页临时切换）" />

@@ -20,5 +20,9 @@ python-pptx>=1.0.0
 openpyxl>=3.1.0
 pyyaml>=6.0
 rank-bm25>=0.2.0
-chromadb>=1.5.0
-sentence-transformers>=3.0.0
+# 语义搜索（chromadb/sentence-transformers）依赖暂不纳入：
+#   - 触发 torch 全家桶（~2GB+ 内存），云服务器资源有限
+#   - 当前版本语义搜索关闭（前端提示 + 后端降级 BM25）
+#   - 未来版本启用：取消注释 + 设置页开关 + embedding.py 延迟 import 已就绪
+# chromadb>=1.5.0
+# sentence-transformers>=3.0.0

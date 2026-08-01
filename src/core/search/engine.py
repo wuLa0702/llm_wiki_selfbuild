@@ -148,11 +148,21 @@ class SearchEngine:
 
         当 CHUNK_SEARCH_ENABLED=true 时，使用 chunk 级搜索（wiki_chunks），
         结果按 path 聚合到 page 级。
+
+        语义搜索不可用（未启用/依赖未安装/引擎降级）时：
+        自动降级为 BM25 关键词搜索，不返回空结果。
         """
         try:
             from src.core.embedding import get_embedding_engine
 
             engine = get_embedding_engine()
+
+            if not engine.enabled:
+                logger.warning("语义搜索不可用，向量搜索降级为关键词搜索 | query=%s", query)
+                results, _ = self._search_bm25(query, k=k)
+                for r in results:
+                    r["search_method"] = "bm25"
+                return results
 
             if settings.chunk_search_enabled and engine.chunk_collection is not None:
                 return self._search_vector_chunks(engine, query, k)
@@ -257,8 +267,24 @@ class SearchEngine:
         return results
 
     def _search_hybrid(self, query: str, k: int = 10) -> list[dict]:
-        """RRF 融合搜索（始终在 page 级融合）"""
-        bm25_results = self._search_bm25(query, k=k * 2)
+        """RRF 融合搜索（始终在 page 级融合）
+
+        语义搜索不可用时自动降级为纯 BM25（不返回空结果、不伪标 hybrid）。
+        """
+        try:
+            from src.core.embedding import get_embedding_engine
+
+            engine = get_embedding_engine()
+        except Exception:
+            engine = None
+        if engine is None or not engine.enabled:
+            logger.warning("语义搜索不可用，混合搜索降级为关键词搜索 | query=%s", query)
+            results, _ = self._search_bm25(query, k=k)
+            for r in results:
+                r["search_method"] = "bm25"
+            return results
+
+        bm25_results, _ = self._search_bm25(query, k=k * 2)
         vector_results = self._search_vector(query, k=k * 2)
         results = rrf_fuse(bm25_results, vector_results, top_n=k)
         for r in results:

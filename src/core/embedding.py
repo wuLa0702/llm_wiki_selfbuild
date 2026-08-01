@@ -9,9 +9,14 @@
 默认关闭，热生效）。关闭时绝不加载本地模型、绝不触发在线下载。
 使用本地模型，无需 API 调用，隐私安全，离线可用。
 
-注意：chromadb / sentence-transformers 为可选重依赖（最小部署集
-requirements-min.txt 不含它们），必须延迟到 enabled 分支内 import——
-否则最小集上 import 本模块即失败，ingest 等调用点会 ImportError。
+【版本状态】当前版本（v0.10 起）语义搜索整体关闭：
+  - requirements.txt 已注释 chromadb / sentence-transformers（torch 全家桶太重）
+  - 本模块保留为「开关」结构：依赖缺失时 enabled 分支 ImportError → 快速降级
+  - 搜索调用点已降级：vector/hybrid 请求自动回退 BM25（见 search/engine.py）
+  - 未来版本启用步骤：取消 requirements 注释 → 设置页开关恢复可操作 → 本模块零改动
+
+注意：chromadb / sentence-transformers 为可选重依赖，必须延迟到 enabled
+分支内 import——否则未安装时 import 本模块即失败，ingest 等调用点会 ImportError。
 """
 import json
 import logging

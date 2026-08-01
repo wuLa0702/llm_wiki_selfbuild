@@ -161,7 +161,7 @@ export default function SearchPage() {
 
   const selectMethod = (next: SearchMethod) => {
     if (VECTOR_METHODS.includes(next) && !embeddingEnabled) {
-      showToast('语义搜索未开启：请到「设置 → 通用设置」开启后使用', 'info');
+      showToast('语义搜索暂未开放（当前版本），已使用关键词搜索', 'info');
       return;
     }
     setMethod(next);
@@ -191,7 +191,7 @@ export default function SearchPage() {
               return (
                 <button
                   key={m}
-                  title={disabled ? '语义搜索未开启（设置 → 通用设置）' : meta.desc}
+                  title={disabled ? '语义搜索暂未开放（当前版本）' : meta.desc}
                   className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border transition-all cursor-pointer ${
                     method === m
                       ? 'bg-primary text-primary-foreground border-primary'
@@ -206,7 +206,7 @@ export default function SearchPage() {
             })}
             <span className="text-[11px] text-muted-foreground/60">
               {methodInfo.desc}
-              {!embeddingEnabled && ' · 向量/混合需在设置页开启语义搜索'}
+              {!embeddingEnabled && ' · 向量/混合暂未开放（当前版本）'}
             </span>
           </div>
 

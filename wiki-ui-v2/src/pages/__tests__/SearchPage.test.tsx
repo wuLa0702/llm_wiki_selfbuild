@@ -161,27 +161,14 @@ describe('SearchPage — 模式切换与分页', () => {
     vi.restoreAllMocks();
   });
 
-  it('开启语义搜索后，切换到 hybrid 搜索请求带 method=hybrid', async () => {
-    const fetchMock = mockFetchRoutes({ method: 'hybrid' }, { embedding_enabled: true });
-    renderSearch();
-    await flushSettings();
-
-    // 三态按钮直接点击「混合搜索」
-    fireEvent.click(screen.getByText('混合搜索'));
-    await doSearch(fetchMock);
-
-    const call = fetchMock.mock.calls.find(c => String(c[0]) === '/v1/search');
-    expect(JSON.parse(String((call![1] as RequestInit).body)).method).toBe('hybrid');
-  });
-
-  it('语义搜索未开启时，点击向量/混合被拦截并提示，搜索仍用 bm25', async () => {
+  it('语义搜索未开放时，点击向量/混合被拦截并提示，搜索仍用 bm25', async () => {
     const fetchMock = mockSearchResponse(); // settings 默认 embedding_enabled=false
     renderSearch();
     await flushSettings();
 
     fireEvent.click(screen.getByText('混合搜索'));
-    // 提示引导去设置页
-    expect(document.body.textContent).toContain('语义搜索未开启');
+    // 提示暂未开放（当前版本），方法不切换
+    expect(document.body.textContent).toContain('语义搜索暂未开放');
     // 方法未切换（仍显示 BM25 关键词选中态），搜索请求仍带 bm25
     expect(screen.getByText('BM25 关键词')).toBeInTheDocument();
     await doSearch(fetchMock);
