@@ -67,7 +67,6 @@ const CACHEABLE_PAGES = [
   { path: '/graph', element: <GraphPage /> },
   { path: '/sources', element: <SourcesPage /> },
   { path: '/search', element: <SearchPage /> },
-  { path: '/lint', element: <LintPage /> },
 ];
 
 function CachedPageHost({ currentPath }: { currentPath: string }) {
@@ -118,6 +117,7 @@ function CachedPageHost({ currentPath }: { currentPath: string }) {
         <Routes>
           <Route path="/settings" element={<Navigate to="/settings/interface" replace />} />
           <Route path="/settings/:tab" element={<SettingsPage />} />
+          <Route path="/lint" element={<LintPage />} />
           <Route path="/health" element={<HealthPage />} />
           <Route path="/" element={<Navigate to="/home" replace />} />
           <Route path="*" element={<Navigate to="/home" replace />} />

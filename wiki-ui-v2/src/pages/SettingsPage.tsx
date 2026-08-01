@@ -14,7 +14,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Package, Timer, FileText, Network as NetworkIcon, ListTodo, ScrollText } from 'lucide-react';
-import { fetchJson, postJson, putJson, deleteJson } from '@/api/client';
+import { fetchJson, postJson, putJson, deleteJson, invalidateCache } from '@/api/client';
 import { listModels, createModel, updateModel, deleteModel } from '@/api/models';
 import type { ModelConfig } from '@/api/models';
 
@@ -1365,7 +1365,9 @@ function DataSettings() {
     setResetting(true);
     try {
       await postJson('/v1/system/reset-data');
-      showToast('数据文件已重置，请重启服务', 'success');
+      // 全清 GET 缓存：其他页面（Sources/Graph/Home 等）导航后即拿到新数据，无需手动刷新
+      invalidateCache();
+      showToast('数据已重置，页面数据已刷新', 'success');
       setArmed(false);
       setConfirmInput('');
     } catch {

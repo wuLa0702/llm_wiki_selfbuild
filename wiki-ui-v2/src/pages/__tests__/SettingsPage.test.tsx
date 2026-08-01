@@ -18,7 +18,7 @@ vi.mock('@/components/shared/Toast', () => ({ showToast: vi.fn() }));
 vi.mock('@/components/ui/confirm-dialog', () => ({ showConfirm: vi.fn() }));
 vi.mock('@/utils/logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }));
 
-import { fetchJson, postJson } from '@/api/client';
+import { fetchJson, postJson, invalidateCache } from '@/api/client';
 import { showToast } from '@/components/shared/Toast';
 import { showConfirm } from '@/components/ui/confirm-dialog';
 
@@ -136,7 +136,8 @@ describe('SettingsPage — 数据管理（重置数据文件双重确认）', ()
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
     expect(postJson).toHaveBeenCalledWith('/v1/system/reset-data');
-    expect(showToast).toHaveBeenCalledWith('数据文件已重置，请重启服务', 'success');
+    expect(invalidateCache).toHaveBeenCalledWith(); // 全清 GET 缓存，其他页面导航后即新数据
+    expect(showToast).toHaveBeenCalledWith('数据已重置，页面数据已刷新', 'success');
     // 执行后回到初始态
     expect(screen.getByRole('button', { name: /重置数据文件/ })).toBeInTheDocument();
   });
