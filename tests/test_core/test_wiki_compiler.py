@@ -43,6 +43,28 @@ tags: [AI]
 AI 常用 [[entities/python.md|Python]]。
 ---END---"""
 
+# LLM 偶发输出带 wiki/ 前缀的路径（真实故障：2026-08-01 提取失败
+# 日志 error="Path must be under entities/...: wiki/index.md"）
+MOCK_GENERATE_WIKI_PREFIX = """---PAGE:wiki/entities/python.md---
+---
+title: "Python"
+type: entity
+tags: [编程语言]
+---
+# Python
+
+Python 用于 [[concepts/ai.md|人工智能]]。
+---END---
+---PAGE:wiki/index.md---
+---
+title: "Python 索引"
+type: overview
+---
+# 索引
+
+Python 常用 [[entities/python.md|Python]]。
+---END---"""
+
 
 @pytest.fixture
 def compiler(tmp_path):
@@ -94,6 +116,20 @@ def test_ingest_two_step_records_links(compiler, mocker):
     compiler.ingest("test.md")
     page = compiler.repo.get_page("entities/python.md")
     assert "concepts/ai.md" in page["links"]
+
+
+def test_ingest_normalizes_wiki_prefix_paths(compiler, mocker):
+    """LLM 输出带 wiki/ 前缀的路径时，归一化后仍成功写入（回归 2026-08-01 提取失败）"""
+    _mock_cot(mocker, compiler, generate=MOCK_GENERATE_WIKI_PREFIX)
+
+    result = compiler.ingest("test.md")
+    assert result["status"] == "success"
+    # wiki/entities/python.md → entities/python.md
+    assert "entities/python.md" in result["pages_created"]
+    assert os.path.exists(os.path.join(compiler.writer.base_dir, "entities", "python.md"))
+    # wiki/index.md → index.md（根文件合法）
+    assert "index.md" in result["pages_created"]
+    assert os.path.exists(os.path.join(compiler.writer.base_dir, "index.md"))
 
 
 # ============================================================================

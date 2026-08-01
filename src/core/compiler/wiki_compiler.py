@@ -66,6 +66,10 @@ class WikiCompiler:
         if "|" in path:
             path = path.split("|")[0]
         path = path.replace("\n", "").replace("\r", "").strip()
+        # 归一化 LLM 偶发输出的 wiki/ 前缀（修复 2026-08-01 提取失败：
+        # 真实日志 error="Path must be under entities/...: wiki/index.md"）
+        # wiki/entities/x.md → entities/x.md；./wiki/x.md、/wiki/x.md 同理
+        path = re.sub(r"^\.?/?wiki/", "", path)
         return path
 
     @staticmethod
@@ -75,7 +79,13 @@ class WikiCompiler:
         for match in pattern.finditer(response):
             path = WikiCompiler._sanitize_path(match.group(1))
             content = match.group(2).strip()
-            if not path or "/" not in path or len(path) > 120:
+            # 根文件（index/log/overview/purpose）是合法页面，无需目录前缀；
+            # 其余路径必须带目录前缀（修复 2026-08-01：wiki/index.md 归一化为
+            # index.md 后不再含 "/"，被旧条件误丢弃）
+            root_files = {"index.md", "log.md", "overview.md", "purpose.md"}
+            if not path or len(path) > 120:
+                continue
+            if path not in root_files and "/" not in path:
                 continue
             if content:
                 pages[path] = content
