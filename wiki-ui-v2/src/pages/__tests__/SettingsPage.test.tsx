@@ -29,6 +29,7 @@ const DEFAULT_SETTINGS = {
   output_language: 'zh',
   search_method: 'bm25',
   theme: 'light',
+  embedding_enabled: false,
   privacy_enabled: false,
   watcher_enabled: false,
   watcher_auto_extract: true,
@@ -273,6 +274,45 @@ describe('SettingsPage — 执行日志', () => {
     // 之后推进 30s 不再触发轮询
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(fetchMock).toHaveBeenCalledTimes(afterToggle);
+  });
+});
+
+describe('SettingsPage — 语义搜索开关（通用设置）', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(fetchJson).mockResolvedValue(DEFAULT_SETTINGS as never);
+    vi.mocked(postJson).mockResolvedValue(DEFAULT_SETTINGS as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('通用设置显示「启用语义搜索」开关，默认关闭', async () => {
+    renderTab('general');
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(screen.getByText('启用语义搜索')).toBeInTheDocument();
+    expect(screen.getByText(/关闭时默认不加载本地模型/)).toBeInTheDocument();
+    const sw = screen.getByRole('checkbox');
+    expect(sw).not.toBeChecked(); // embedding_enabled=false 默认关闭
+  });
+
+  it('打开开关并保存 → postJson 携带 embedding_enabled=true', async () => {
+    renderTab('general');
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(screen.getByRole('checkbox')).toBeChecked();
+
+    fireEvent.click(screen.getByRole('button', { name: /保存设置/ }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(postJson).toHaveBeenCalledWith(
+      '/v1/settings',
+      expect.objectContaining({ embedding_enabled: true }),
+    );
   });
 });
 

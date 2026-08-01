@@ -16,19 +16,42 @@ const RESULT = {
   ],
 };
 
+/** 按 URL 分发 mock：/v1/settings 返回设置（默认语义搜索关闭），其余视为 /v1/search */
+function mockFetchRoutes(
+  overrides: Record<string, unknown> = {},
+  settings: Record<string, unknown> = {},
+) {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation((input: unknown) => {
+    const url = String(input);
+    if (url === '/v1/settings') {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ embedding_enabled: false, ...settings }),
+      } as Response);
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({
+        results: [RESULT],
+        total: 1,
+        has_more: false,
+        method: 'bm25',
+        enabled: true,
+        ...overrides,
+      }),
+    } as Response);
+  });
+}
+
 function mockSearchResponse(overrides: Record<string, unknown> = {}) {
-  return vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: () => Promise.resolve({
-      results: [RESULT],
-      total: 1,
-      has_more: false,
-      method: 'bm25',
-      enabled: true,
-      ...overrides,
-    }),
-  } as Response);
+  return mockFetchRoutes(overrides);
+}
+
+/** 等待 /v1/settings 的 effect 完成（fetchFresh 有多层 promise，用宏任务兜底） */
+async function flushSettings() {
+  await act(async () => { await new Promise(r => setTimeout(r, 0)); });
 }
 
 function renderSearch() {
@@ -62,9 +85,9 @@ describe('SearchPage — 初始与搜索', () => {
     renderSearch();
     await doSearch(fetchMock);
 
-    const call = fetchMock.mock.calls[0];
-    expect(call[0]).toBe('/v1/search');
-    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({
+    const call = fetchMock.mock.calls.find(c => String(c[0]) === '/v1/search');
+    expect(call).toBeDefined();
+    expect(JSON.parse(String((call![1] as RequestInit).body))).toEqual({
       query: 'Python', k: 10, offset: 0, method: 'bm25',
     });
 
@@ -138,22 +161,38 @@ describe('SearchPage — 模式切换与分页', () => {
     vi.restoreAllMocks();
   });
 
-  it('切换到 hybrid 后搜索请求带 method=hybrid', async () => {
-    const fetchMock = mockSearchResponse({ method: 'hybrid' });
+  it('开启语义搜索后，切换到 hybrid 搜索请求带 method=hybrid', async () => {
+    const fetchMock = mockFetchRoutes({ method: 'hybrid' }, { embedding_enabled: true });
     renderSearch();
+    await flushSettings();
 
-    // 初始按钮显示当前模式：BM25 关键词；点击切换为混合搜索
-    fireEvent.click(screen.getByText('BM25 关键词'));
-    expect(screen.getByText('混合搜索')).toBeInTheDocument();
+    // 三态按钮直接点击「混合搜索」
+    fireEvent.click(screen.getByText('混合搜索'));
     await doSearch(fetchMock);
 
-    const call = fetchMock.mock.calls[0];
-    expect(JSON.parse(String((call[1] as RequestInit).body)).method).toBe('hybrid');
+    const call = fetchMock.mock.calls.find(c => String(c[0]) === '/v1/search');
+    expect(JSON.parse(String((call![1] as RequestInit).body)).method).toBe('hybrid');
+  });
+
+  it('语义搜索未开启时，点击向量/混合被拦截并提示，搜索仍用 bm25', async () => {
+    const fetchMock = mockSearchResponse(); // settings 默认 embedding_enabled=false
+    renderSearch();
+    await flushSettings();
+
+    fireEvent.click(screen.getByText('混合搜索'));
+    // 提示引导去设置页
+    expect(document.body.textContent).toContain('语义搜索未开启');
+    // 方法未切换（仍显示 BM25 关键词选中态），搜索请求仍带 bm25
+    expect(screen.getByText('BM25 关键词')).toBeInTheDocument();
+    await doSearch(fetchMock);
+
+    const call = fetchMock.mock.calls.find(c => String(c[0]) === '/v1/search');
+    expect(JSON.parse(String((call![1] as RequestInit).body)).method).toBe('bm25');
   });
 
   it('超过一页时显示分页并可翻页（offset 递增）', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: unknown, init?: RequestInit) => {
-      const body = JSON.parse(String((init as RequestInit).body ?? '{}'));
+      const body = JSON.parse(String((init as RequestInit | undefined)?.body ?? '{}'));
       const offset = (body as { offset: number }).offset;
       return Promise.resolve({
         ok: true,
@@ -177,8 +216,8 @@ describe('SearchPage — 模式切换与分页', () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(screen.getByText('第二页')).toBeInTheDocument();
-    const secondCall = fetchMock.mock.calls[1];
-    expect(JSON.parse(String((secondCall[1] as RequestInit).body)).offset).toBe(10);
+    const searchCalls = fetchMock.mock.calls.filter(c => String(c[0]) === '/v1/search');
+    expect(JSON.parse(String((searchCalls[1][1] as RequestInit).body)).offset).toBe(10);
   });
 
   it('有结果时显示置信度图例条', async () => {

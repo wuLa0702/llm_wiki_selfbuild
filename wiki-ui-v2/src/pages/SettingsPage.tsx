@@ -362,6 +362,7 @@ interface BackendSettings {
   output_language: string;
   search_method: string;
   theme: string;
+  embedding_enabled: boolean;
   privacy_enabled: boolean;
   watcher_enabled: boolean;
   watcher_auto_extract: boolean;
@@ -444,6 +445,17 @@ function GeneralSettings({ settings, setSettings }: BackendTabProps) {
           </button>
         ))}
       </div>
+
+      <SectionHeader title="语义搜索" desc="基于本地向量模型（sentence-transformers）的语义匹配，首次使用需下载模型（约 90MB）" />
+      <SettingRow
+        label="启用语义搜索"
+        desc="关闭时默认不加载本地模型，搜索仅用 BM25 关键词匹配"
+      >
+        <Switch
+          checked={settings.embedding_enabled ?? false}
+          onChange={v => update({ embedding_enabled: v })}
+        />
+      </SettingRow>
 
       <SectionHeader title="搜索方式" desc="默认检索算法（可在检索页临时切换）" />
       <div className="space-y-2 mb-4">

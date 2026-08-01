@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, Search, ChevronDown, ChevronRight, ArrowUpRight, Sparkles, Zap, Target } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Card } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import EmptyState from '@/components/shared/EmptyState';
+import { showToast } from '@/components/shared/Toast';
 
 /** 单条命中位置（多命中时按章节切分） */
 interface MatchPosition {
@@ -29,7 +30,10 @@ interface SearchResult {
   match_positions?: MatchPosition[];
 }
 
-type SearchMethod = 'bm25' | 'hybrid';
+type SearchMethod = 'bm25' | 'vector' | 'hybrid';
+
+/** 需要 embedding 引擎的搜索方式 */
+const VECTOR_METHODS: SearchMethod[] = ['vector', 'hybrid'];
 
 /** 置信度等级：high / medium / low（后端 score 已归一化 [0,1]） */
 function confidenceLevel(score: number): 'high' | 'medium' | 'low' {
@@ -98,6 +102,8 @@ export default function SearchPage() {
   const [actualMethod, setActualMethod] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [method, setMethod] = useState<SearchMethod>('bm25');
+  /** 语义搜索开关（来自 /v1/settings，后端默认关闭） */
+  const [embeddingEnabled, setEmbeddingEnabled] = useState(false);
   /** 展开/收起多命中详情：key=index */
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   /** 翻页状态 */
@@ -109,6 +115,14 @@ export default function SearchPage() {
 
   const effectiveMethod = actualMethod || method;
   const methodInfo = methodMeta[effectiveMethod] || methodMeta[method];
+
+  /** 进入页面读取语义搜索开关；未返回时按关闭处理（默认不加载模型） */
+  useEffect(() => {
+    fetch('/v1/settings')
+      .then(r => r.json())
+      .then((s: { embedding_enabled?: boolean }) => setEmbeddingEnabled(s.embedding_enabled ?? false))
+      .catch(() => setEmbeddingEnabled(false));
+  }, []);
 
   const highlightSnippet = (text: string, keyword: string): React.ReactNode => {
     if (!keyword.trim() || !text) return text;
@@ -145,7 +159,16 @@ export default function SearchPage() {
     setLoading(false);
   };
 
-  const toggleMethod = () => setMethod(method === 'hybrid' ? 'bm25' : 'hybrid');
+  const selectMethod = (next: SearchMethod) => {
+    if (VECTOR_METHODS.includes(next) && !embeddingEnabled) {
+      showToast('语义搜索未开启：请到「设置 → 通用设置」开启后使用', 'info');
+      return;
+    }
+    setMethod(next);
+    if (VECTOR_METHODS.includes(next)) {
+      showToast('首次使用向量语义将自动下载本地模型（约 90MB），请耐心等待', 'info');
+    }
+  };
   const toggleCard = (i: number) => setExpanded(prev => ({ ...prev, [i]: !prev[i] }));
 
   const goToPage = (path: string, line?: number) => {
@@ -159,21 +182,31 @@ export default function SearchPage() {
       {/* Search bar area */}
       <div className="flex-shrink-0 border-b border-border bg-card">
         <div className="max-w-2xl mx-auto p-4 space-y-3">
-          {/* Semantic search toggle */}
-          <div className="flex items-center gap-3">
-            <button
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border transition-all cursor-pointer ${
-                method === 'hybrid'
-                  ? 'bg-primary text-primary-foreground border-primary'
-                  : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'
-              }`}
-              onClick={toggleMethod}
-            >
-              <methodInfo.icon className={`h-3.5 w-3.5 ${method === 'hybrid' ? '' : 'opacity-50'}`} />
-              {methodInfo.label}
-            </button>
+          {/* Search method pills: BM25 / 向量语义 / 混合 */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {(Object.keys(methodMeta) as SearchMethod[]).map(m => {
+              const meta = methodMeta[m];
+              const Icon = meta.icon;
+              const disabled = VECTOR_METHODS.includes(m) && !embeddingEnabled;
+              return (
+                <button
+                  key={m}
+                  title={disabled ? '语义搜索未开启（设置 → 通用设置）' : meta.desc}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border transition-all cursor-pointer ${
+                    method === m
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'
+                  } ${disabled ? 'opacity-40 hover:opacity-60' : ''}`}
+                  onClick={() => selectMethod(m)}
+                >
+                  <Icon className={`h-3.5 w-3.5 ${method === m ? '' : 'opacity-50'}`} />
+                  {meta.label}
+                </button>
+              );
+            })}
             <span className="text-[11px] text-muted-foreground/60">
               {methodInfo.desc}
+              {!embeddingEnabled && ' · 向量/混合需在设置页开启语义搜索'}
             </span>
           </div>
 
