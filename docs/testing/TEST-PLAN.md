@@ -1,0 +1,94 @@
+# LLM Wiki 全量测试计划
+
+> 创建：2026-08-01 | 状态：进行中
+> 背景：导入链路修复（路径契约/文件夹导入/队列/日志轮转）后，启动全量测试工程。
+> 原则：分模块、分步骤、分阶段执行；每阶段结束产出本地测试报告（docs/testing/reports/）。
+
+---
+
+## 一、目标与范围
+
+- **目标**：覆盖项目 6 条主业务流程链路，后端 + 前端全量回归，形成可追溯的分阶段测试报告。
+- **基线**：后端 738 passed（38 文件）、前端 24 passed（5 文件）、tsc 0 错误。
+- **范围**：后端 API/核心逻辑、前端页面组件、端到端冒烟。
+- **不在范围**：生产数据、真实用户环境、性能压测。
+
+## 二、模块划分
+
+| 模块 | 内容 | 相关代码 |
+|------|------|----------|
+| **M1 导入链路（后端）** | 上传（文件/文件夹）、增量过滤、入队、worker 消费、ingest 两步 CoT 状态机、失败/重试/崩溃恢复 | `src/api/routes/ingest.py`、`src/core/ingest/`、`src/core/compiler/` |
+| **M2 浏览与提取链路（后端）** | tree 路径契约、file-content 预览、extract-to-wiki、编辑、删除级联 | `src/api/routes/sources.py`、`purpose.py`、`pages.py` |
+| **M3 管理链路（后端）** | settings、reset-data（数据/配置边界）、日志双重轮转、/v1/logs/tail、前端日志上报 | `src/api/routes/system.py`、`misc.py`、`src/core/logging_config.py` |
+| **M4 前端核心页面** | SourcesPage（上传/队列/预览）、SettingsPage（数据管理/执行日志）——本次大改页面 | `wiki-ui-v2/src/pages/SourcesPage.tsx`、`SettingsPage.tsx` |
+| **M5 前端其余页面 + 边界补漏** | WikiPage/SearchPage/GraphPage/HomePage；后端边界（超大/空/非法扩展名/路径穿越/并发） | 各页面 + 后端校验层 |
+| **M6 端到端冒烟** | 6 条主链路真实服务全流程（含可选真实 LLM） | 全项目 |
+
+## 三、阶段划分与步骤
+
+### Phase 1 — 后端导入 + 浏览闭环（M1 + M2）
+
+**步骤清单**：
+1. ingest 状态机：upload 保存 → 入队 → worker 消费 → done/failed → retry → 崩溃恢复（processing→pending）
+2. 增量过滤：only_changed 命中/未命中、新文件、变化文件、失败不写 cache（可重试语义）
+3. 路径契约：tree 返回 `raw/sources/` 前缀、file-content/extract/delete 全链路 200、旧格式 `sources/` 兼容、分隔符混用防御
+4. 边界：中文文件名、嵌套目录、空文件、非法扩展名、`./` 前缀、路径穿越拒绝
+5. 删除级联：源文件删除 → wiki 页面 + page_links 清理
+
+**验收**：新增用例全绿；全量 pytest 回归 ≥ 738 无新增失败。
+**报告**：`reports/phase-1-后端导入浏览.md`
+
+### Phase 2 — 管理链路 + 前端核心页面（M3 + M4）
+
+**步骤清单**：
+1. reset-data：数据表清空、配置表保留、schema 保留、agent_persistence 表级清理（连接持有场景）
+2. 日志轮转：DailySizeRotatingFileHandler 配置（midnight/100MB/15 天）、LOG_ENABLED 默认开
+3. /v1/logs/tail：backend/frontend 双源、lines 限制、文件缺失容错
+4. 前端 SourcesPage：单文件/文件夹（webkitdirectory）上传分支、队列面板（活跃/失败 badge）、预览 403 显示错误、toast 文案、logger 调用
+5. 前端 SettingsPage：数据管理双重确认流程、执行日志 tab（切换/刷新/空态）
+
+**验收**：新增用例全绿；前端 24 → ~40+ 用例；build + tsc 通过。
+**报告**：`reports/phase-2-管理前端核心.md`
+
+### Phase 3 — 前端其余页面 + 边界补漏（M5）
+
+**步骤清单**：
+1. WikiPage：Markdown 渲染、wikilink 导航、加载/空/错误态
+2. SearchPage / GraphPage / HomePage：渲染 + 数据态 + 错误态
+3. 后端边界：超大文件截断、空内容跳过、并发上传、特殊字符路径
+
+**验收**：前端 ~50+ 用例；后端全量回归。
+**报告**：`reports/phase-3-前端其余边界.md`
+
+### Phase 4 — 端到端冒烟（M6）
+
+**步骤清单**：
+1. 真实服务启动（隔离数据目录）→ 6 条链路逐条冒烟：
+   导入（上传→队列→页面生成）→ 浏览（tree→预览→提取）→ Chat（SSE）→ 搜索 → Lint → 图谱 → 管理（重置/日志查看）
+2. 冒烟脚本化（scripts/ 下可重复执行），真实 LLM 用 `@real` 标记可选跑
+3. 全量最终回归 + 报告聚合
+
+**验收**：6 条链路全部通过；生成最终总报告。
+**报告**：`reports/phase-4-e2e-全链路.md` + `reports/SUMMARY.md`
+
+## 四、执行约定
+
+1. **TDD**：先红后绿，每个测试点独立可验证
+2. **隔离**：测试用 tmp_path / 隔离数据目录（LLM_WIKI_DATA_DIR），不碰生产数据
+3. **真实 LLM**：统一 `@pytest.mark.real` 标记，默认不跑（不消耗额度）
+4. **统计口径**：每阶段报告记录 新增用例 / 全量用例 / 通过率 / 发现的问题 / 遗留事项
+5. **完成定义**：全量绿 + 报告落盘 + 无新增遗留
+
+## 五、交付物
+
+```
+docs/testing/
+├── TEST-PLAN.md          # 本计划
+└── reports/
+    ├── _TEMPLATE.md      # 阶段报告模板
+    ├── phase-1-后端导入浏览.md
+    ├── phase-2-管理前端核心.md
+    ├── phase-3-前端其余边界.md
+    ├── phase-4-e2e-全链路.md
+    └── SUMMARY.md        # 最终汇总
+```
