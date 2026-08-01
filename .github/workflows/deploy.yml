@@ -1,77 +1,67 @@
-# 远程服务器部署（GitHub Actions self-hosted runner）
+# ============================================================
+# LLM Wiki 自动部署工作流（self-hosted runner）
+# 触发：push 到 main 即自动部署（原版为 tag 触发，已按需求修改）
 #
-# 用法：
-#   1. 在服务器上注册 self-hosted runner（Settings → Actions → Runners → New self-hosted runner）
-#   2. 确保服务器已配置 systemd 服务 `llm-wiki`（见下方服务模板注释）
-#   3. 打 tag（如 v0.9）触发部署，或在 Actions 页面手动运行（workflow_dispatch）
+# 环境事实（与本机部署一致）：
+#   - 部署目录: /home/ubuntu/app
+#   - 服务:     systemd llm-wiki（venv Python 3.12 + uvicorn :8000）
+#   - 依赖:     requirements-min.txt（最小集，无 chromadb/sentence-transformers）
 #
-# 部署内容：
-#   - 拉取 tag 对应代码 → 安装最小依赖（requirements-min.txt，不装语义搜索重依赖）
-#   - 构建前端（wiki-ui-v2/dist）→ 同步到 /opt/llm-wiki → 重启服务
+# 数据保护：rsync 排除 .env/.venv/*.db/wiki/raw/logs
+#   → --delete 不会误删服务器上的数据和密钥
 #
-# systemd 服务模板（/etc/systemd/system/llm-wiki.service）：
-#   [Unit]
-#   Description=LLM Wiki
-#   After=network.target
-#   [Service]
-#   WorkingDirectory=/opt/llm-wiki
-#   ExecStart=/usr/bin/python3 -m uvicorn src.main:app --host 0.0.0.0 --port 8766
-#   Restart=always
-#   Environment=EMBEDDING_ENABLED=false
-#   [Install]
-#   WantedBy=multi-user.target
-#
-# 注意：Windows 服务器需改用 .bat 脚本重启，且端口/路径按实际调整。
-
-name: Deploy to Server
+# 公开仓库安全：只监听 push 到 main，绝不监听 PR 事件
+# ============================================================
+name: Deploy
 
 on:
   push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
+    branches: [main]        # 仅 main 分支推送触发
+  workflow_dispatch:        # 手动触发（仓库 Actions 页）
 
 jobs:
   deploy:
-    name: Deploy (self-hosted)
-    runs-on: self-hosted
+    runs-on: [self-hosted, deploy]   # 匹配本机 runner 标签
+    concurrency: deploy              # 同一时间只跑一个部署
     steps:
-      - name: Checkout tag
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_name }}
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install minimal dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-min.txt
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Build frontend
+      - name: 构建前端（wiki-ui-v2 → dist）
         working-directory: wiki-ui-v2
         run: |
+          set -e
           npm install
           npm run build
 
-      - name: Sync to deploy directory
+      - name: 同步代码到部署目录（排除运行数据与密钥）
         run: |
-          sudo rsync -a --delete \
-            --exclude '.git' \
-            --exclude 'node_modules' \
-            --exclude '.models' \
-            --exclude 'chroma_db' \
-            ./ /opt/llm-wiki/
+          set -e
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='.venv' \
+            --exclude='.env' \
+            --exclude='*.db' \
+            --exclude='wiki/' \
+            --exclude='raw/' \
+            --exclude='logs/' \
+            --exclude='node_modules' \
+            --exclude='__pycache__' \
+            --exclude='.pytest_cache' \
+            ./ /home/ubuntu/app/
 
-      - name: Restart service
+      - name: 安装依赖（最小集，幂等）
         run: |
+          set -e
+          cd /home/ubuntu/app
+          [ -d .venv ] || python3.12 -m venv .venv
+          .venv/bin/pip install -r requirements-min.txt
+
+      - name: 重启服务
+        run: |
+          set -e
           sudo systemctl restart llm-wiki
-          sudo systemctl --no-pager --lines=10 status llm-wiki || true
+
+# 以后需要语义搜索时：
+#   1. 取消 requirements-min.txt 中 chromadb/sentence-transformers 注释
+#      （本机无 GPU，务必用 CPU 版 torch：pip install torch --index-url https://download.pytorch.org/whl/cpu）
+#   2. 在设置页打开语义搜索开关
