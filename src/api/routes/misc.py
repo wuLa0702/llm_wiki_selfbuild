@@ -4,7 +4,7 @@ import sqlite3
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.app_state import get_watcher, set_watcher
 from src.core.privacy import PrivacyManager
@@ -564,3 +564,57 @@ async def delete_model(model_id: int):
     if not ok:
         raise HTTPException(status_code=404, detail="Model config not found")
     return {"status": "ok", "deleted_id": model_id}
+
+
+# ── 前端错误日志接收 ──────────────────────────────────────────────────────────
+
+class FrontendLogEntry(BaseModel):
+    """前端上报的单条日志"""
+    level: str = Field(default="info", description="info / warn / error")
+    source: str = Field(default="", description="日志来源（组件/模块名）")
+    message: str = Field(default="", description="日志内容")
+    stack: str = Field(default="", description="错误堆栈（可选）")
+    url: str = Field(default="", description="发生错误的页面 URL（可选）")
+    ts: float = Field(default=0.0, description="前端时间戳（epoch 秒）")
+
+
+class FrontendLogBatch(BaseModel):
+    """前端批量上报的日志条目"""
+    entries: list[FrontendLogEntry] = Field(default_factory=list)
+
+
+@router.post("/v1/frontend/logs", tags=["diagnostics"])
+async def ingest_frontend_logs(batch: FrontendLogBatch):
+    """接收前端上报的错误/警告日志，追加写入 .logs/frontend.log（与后端日志同目录）
+
+    前端发生运行时错误时调用（window.onerror / ErrorBoundary / 业务 catch），
+    让前端问题在后端日志目录里可追溯。写入失败不影响前端主流程。
+    """
+    import datetime
+    import json
+    import os
+
+    if not batch.entries:
+        return {"status": "ok", "written": 0}
+
+    log_path = os.path.join(".logs", "frontend.log")
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(log_path, "a", encoding="utf-8") as f:
+            for e in batch.entries:
+                line = {
+                    "ts": now,
+                    "client_ts": e.ts,
+                    "level": e.level,
+                    "source": e.source,
+                    "message": e.message,
+                    "stack": e.stack[:2000] if e.stack else "",
+                    "url": e.url,
+                }
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+        logger.info("前端日志已写入 %d 条 | file=%s", len(batch.entries), log_path)
+        return {"status": "ok", "written": len(batch.entries)}
+    except Exception as exc:  # 日志写入失败不能影响前端
+        logger.warning("前端日志写入失败: %s", exc)
+        return {"status": "error", "written": 0}

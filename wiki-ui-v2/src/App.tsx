@@ -20,6 +20,7 @@ import {
 import { useTheme } from '@/hooks/useTheme';
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { prefetch } from '@/api/client';
+import ErrorBoundary from '@/components/shared/ErrorBoundary';
 
 // Pages
 import HomePage from '@/pages/HomePage';
@@ -61,7 +62,7 @@ const navGroups = [
  */
 const CACHEABLE_PAGES = [
   { path: '/home', element: <HomePage /> },
-  { path: '/chat', element: <ChatPage /> },
+  { path: '/chat', element: <ErrorBoundary name="ChatPage"><ChatPage /></ErrorBoundary> },
   { path: '/wiki', element: <WikiPage /> },
   { path: '/graph', element: <GraphPage /> },
   { path: '/sources', element: <SourcesPage /> },
